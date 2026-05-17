@@ -1,14 +1,27 @@
 <resources>
-    <color name="basir_primary">#0D47A1</color>
-    <color name="basir_primary_dark">#002171</color>
-    <color name="basir_accent">#1976D2</color>
-    <color name="basir_bg">#F5F7FA</color>
+    <!-- Brand: deep navy + warm gold accent. Higher contrast for accessibility. -->
+    <color name="basir_primary">#0B3A82</color>
+    <color name="basir_primary_dark">#062356</color>
+    <color name="basir_primary_soft">#E6EEFB</color>
+    <color name="basir_accent">#C99A2A</color>
+
+    <!-- Surfaces -->
+    <color name="basir_bg">#F4F6FB</color>
     <color name="basir_surface">#FFFFFF</color>
+    <color name="basir_surface_alt">#F8FAFE</color>
+
+    <!-- Text -->
     <color name="basir_text">#0F172A</color>
-    <color name="basir_text_secondary">#475569</color>
-    <color name="basir_divider">#E2E8F0</color>
-    <color name="basir_danger">#C62828</color>
-    <color name="basir_success">#2E7D32</color>
-    <color name="basir_warning">#EF6C00</color>
-    <color name="basir_card_stroke">#E5E7EB</color>
+    <color name="basir_text_secondary">#52607A</color>
+    <color name="basir_text_muted">#7A879D</color>
+
+    <!-- Borders / dividers -->
+    <color name="basir_divider">#DEE3EE</color>
+    <color name="basir_card_stroke">#E2E7F1</color>
+
+    <!-- Status -->
+    <color name="basir_danger">#B91C1C</color>
+    <color name="basir_success">#15803D</color>
+    <color name="basir_warning">#B45309</color>
+    <color name="basir_info">#0369A1</color>
 </resources>

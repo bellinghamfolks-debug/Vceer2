@@ -37,6 +37,7 @@ import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.Spinner;
 import android.widget.Switch;
@@ -219,6 +220,13 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
     // ============================================================
 
     private void resetScreen(String title, String subtitle) {
+        // Clear any cached references to widgets that belonged to the previous
+        // screen — otherwise the conversion listener could try to update a
+        // detached TextView/ProgressBar.
+        convertProgressText = null;
+        convertStageText = null;
+        convertProgressBar = null;
+
         ScrollView scroll = new ScrollView(this);
         scroll.setBackgroundColor(colorBg());
         scroll.setFillViewport(true);
@@ -269,30 +277,35 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
     private void addCard(String title, String description, View.OnClickListener listener) {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(18), dp(18), dp(18), dp(18));
+        card.setPadding(dp(20), dp(18), dp(20), dp(20));
         card.setClickable(true);
         card.setFocusable(true);
 
         GradientDrawable bg = new GradientDrawable();
         bg.setShape(GradientDrawable.RECTANGLE);
         bg.setColor(colorSurface());
-        bg.setCornerRadius(dp(16));
+        bg.setCornerRadius(dp(18));
         bg.setStroke(dp(1), colorStroke());
         card.setBackground(bg);
+        // Soft elevation (Android 5+; programmatic styles can't use stateListAnimator).
+        if (Build.VERSION.SDK_INT >= 21) {
+            card.setElevation(dp(2));
+        }
 
         TextView t = new TextView(this);
         t.setText(title);
-        t.setTextSize(textSize(20));
+        t.setTextSize(textSize(19));
         t.setTypeface(null, Typeface.BOLD);
         t.setTextColor(colorText());
+        t.setLetterSpacing(0.005f);
         card.addView(t, fullWidth());
 
         if (description != null && !description.isEmpty()) {
             TextView d = new TextView(this);
             d.setText(description);
-            d.setTextSize(textSize(15));
+            d.setTextSize(textSize(14));
             d.setTextColor(colorTextSec());
-            d.setLineSpacing(dp(2), 1.1f);
+            d.setLineSpacing(dp(2), 1.2f);
             LinearLayout.LayoutParams dp_ = fullWidth();
             dp_.setMargins(0, dp(6), 0, 0);
             card.addView(d, dp_);
@@ -302,7 +315,7 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
         card.setOnClickListener(listener);
 
         LinearLayout.LayoutParams p = fullWidth();
-        p.setMargins(0, dp(8), 0, dp(8));
+        p.setMargins(0, dp(7), 0, dp(7));
         root.addView(card, p);
     }
 
@@ -413,6 +426,163 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
         tv.setPadding(0, dp(4), 0, dp(4));
         tv.setLineSpacing(dp(2), 1.15f);
         root.addView(tv, fullWidth());
+    }
+
+    /** Compact info card (lighter than a primary action card). Used to surface
+     *  short context lines like supported formats or tips. */
+    private void addInfoCard(String label, String body) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(14), dp(12), dp(14), dp(12));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setShape(GradientDrawable.RECTANGLE);
+        bg.setColor(getColor(R.color.basir_primary_soft));
+        bg.setCornerRadius(dp(12));
+        card.setBackground(bg);
+
+        TextView l = new TextView(this);
+        l.setText(label);
+        l.setAllCaps(false);
+        l.setLetterSpacing(0.02f);
+        l.setTextSize(textSize(13));
+        l.setTypeface(null, Typeface.BOLD);
+        l.setTextColor(colorPrimary());
+        card.addView(l, fullWidth());
+
+        TextView b = new TextView(this);
+        b.setText(body);
+        b.setTextSize(textSize(15));
+        b.setTextColor(colorText());
+        b.setLineSpacing(dp(2), 1.1f);
+        LinearLayout.LayoutParams bp = fullWidth();
+        bp.setMargins(0, dp(2), 0, 0);
+        card.addView(b, bp);
+
+        card.setContentDescription(label + ". " + body);
+        LinearLayout.LayoutParams p = fullWidth();
+        p.setMargins(0, dp(4), 0, dp(8));
+        root.addView(card, p);
+    }
+
+    /**
+     * Three-option segmented picker used for the conversion Quality and Output-mode
+     * choices. Highlights the active option; tapping any option calls the listener
+     * and re-styles the row.
+     */
+    private interface PickerListener { void onPicked(String id); }
+
+    private void addSegmentedPicker(String[] ids, String[] labels, String[] subtitles,
+                                    String selectedId, PickerListener listener) {
+        LinearLayout container = new LinearLayout(this);
+        container.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams cp = fullWidth();
+        cp.setMargins(0, dp(2), 0, dp(8));
+        root.addView(container, cp);
+
+        Button[] buttons = new Button[ids.length];
+        final String[] active = { selectedId };
+        for (int i = 0; i < ids.length; i++) {
+            final int idx = i;
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.VERTICAL);
+            row.setPadding(dp(14), dp(12), dp(14), dp(12));
+            row.setClickable(true);
+            row.setFocusable(true);
+
+            TextView title = new TextView(this);
+            title.setText(labels[i]);
+            title.setTextSize(textSize(16));
+            title.setTypeface(null, Typeface.BOLD);
+            row.addView(title, fullWidth());
+
+            if (subtitles != null && subtitles[i] != null && !subtitles[i].isEmpty()) {
+                TextView sub = new TextView(this);
+                sub.setText(subtitles[i]);
+                sub.setTextSize(textSize(13));
+                sub.setTextColor(colorTextSec());
+                sub.setLineSpacing(dp(2), 1.05f);
+                LinearLayout.LayoutParams sp = fullWidth();
+                sp.setMargins(0, dp(2), 0, 0);
+                row.addView(sub, sp);
+            }
+
+            row.setContentDescription(labels[i] + ". " + (subtitles == null ? "" : subtitles[i]));
+            LinearLayout.LayoutParams rp = fullWidth();
+            rp.setMargins(0, dp(4), 0, dp(4));
+            container.addView(row, rp);
+
+            row.setOnClickListener(v -> {
+                active[0] = ids[idx];
+                for (int k = 0; k < container.getChildCount(); k++) {
+                    styleSegmentRow(container.getChildAt(k),
+                            ids[k].equals(active[0]));
+                }
+                listener.onPicked(ids[idx]);
+            });
+
+            styleSegmentRow(row, ids[i].equals(selectedId));
+        }
+    }
+
+    private void styleSegmentRow(View row, boolean selected) {
+        GradientDrawable bg = new GradientDrawable();
+        bg.setShape(GradientDrawable.RECTANGLE);
+        bg.setCornerRadius(dp(14));
+        if (selected) {
+            bg.setColor(getColor(R.color.basir_primary_soft));
+            bg.setStroke(dp(2), colorPrimary());
+        } else {
+            bg.setColor(colorSurface());
+            bg.setStroke(dp(1), colorStroke());
+        }
+        row.setBackground(bg);
+        // Color the first child (title TextView) to reflect selection.
+        if (row instanceof LinearLayout) {
+            LinearLayout ll = (LinearLayout) row;
+            if (ll.getChildCount() > 0 && ll.getChildAt(0) instanceof TextView) {
+                ((TextView) ll.getChildAt(0)).setTextColor(
+                        selected ? colorPrimary() : colorText());
+            }
+        }
+    }
+
+    private void addQualityPicker(String selected, PickerListener listener) {
+        String[] ids   = { AiClient.QUALITY_FAST, AiClient.QUALITY_BALANCED, AiClient.QUALITY_BEST };
+        String[] names = {
+                t("سريع", "Fast"),
+                t("متوازن", "Balanced"),
+                t("الأفضل", "Best")
+        };
+        String[] subs = {
+                t("Flash Lite · أقل تكلفة وأسرع، مناسب للملفات القصيرة.",
+                  "Flash Lite · Cheapest and fastest. Good for short files."),
+                t("Flash · توازن بين السرعة والدقة. الخيار الموصى به.",
+                  "Flash · Balance of speed and accuracy. Recommended."),
+                t("Pro · أعلى دقة، أبطأ، مناسب للمستندات المهمة.",
+                  "Pro · Highest accuracy, slower, suited for important documents.")
+        };
+        addSegmentedPicker(ids, names, subs, selected, listener);
+    }
+
+    private void addOutputModePicker(String selected, PickerListener listener) {
+        String[] ids   = { "full", "text_only", "descriptions_only", "simple" };
+        String[] names = {
+                t("كامل", "Full"),
+                t("نص فقط", "Text only"),
+                t("أوصاف فقط", "Descriptions only"),
+                t("مبسّط", "Simple")
+        };
+        String[] subs = {
+                t("نصوص، وعناوين، وأوصاف للصور والجداول.",
+                  "Text, headings, image and table descriptions."),
+                t("استخراج النصوص والجداول فقط، بدون أوصاف للصور.",
+                  "Extract text and tables only; skip image descriptions."),
+                t("أوصاف الصور فقط، بدون نصوص.",
+                  "Image descriptions only; skip the text body."),
+                t("نص واضح وموجز، مُحسَّن لقارئات الشاشة.",
+                  "Clear, concise text optimised for screen readers.")
+        };
+        addSegmentedPicker(ids, names, subs, selected, listener);
     }
 
     private void addBackButton() {
@@ -875,9 +1045,28 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
 
     private void showConvertScreen() {
         resetScreen(t("تحويل إلى Word", "Convert to Word"),
-                t("حوّل ملفات PDF أو PowerPoint إلى ملف Word منظم ومتوافق مع قارئات الشاشة. سيُرفع الملف إلى خادم المعالجة ثم تُحذف النسخة المرفوعة بعد انتهاء التحويل.", "Convert PDF or PowerPoint files into a structured, screen-reader-friendly Word document. The file will be uploaded for processing and the uploaded copy will be deleted after conversion."));
+                t("حوّل ملفات PDF و PowerPoint إلى مستند Word منظم ومتوافق مع قارئات الشاشة، يتضمن وصفًا تفصيليًا للصور والجداول.",
+                  "Convert PDF and PowerPoint files into a structured, screen-reader-friendly Word document with detailed image and table descriptions."));
 
-        addPlainText(t("الملفات المدعومة: PDF، وPPT، وPPTX.", "Supported formats: PDF, PPT, and PPTX."));
+        addInfoCard(t("الملفات المدعومة", "Supported formats"),
+                t("PDF · PPT · PPTX — حتى 200 ميجابايت.",
+                  "PDF · PPT · PPTX — up to 200 MB."));
+
+        // ----- Quality picker -----
+        addSection(t("جودة التحويل", "Conversion quality"));
+        String currentQuality = prefs.getString("doc_quality", AiClient.QUALITY_BEST);
+        addQualityPicker(currentQuality, picked -> {
+            prefs.edit().putString("doc_quality", picked).apply();
+            speak(qualitySpoken(picked));
+        });
+
+        // ----- Output mode picker -----
+        addSection(t("وضع الإخراج", "Output mode"));
+        String currentMode = prefs.getString("convert_output_mode", "full");
+        addOutputModePicker(currentMode, picked -> {
+            prefs.edit().putString("convert_output_mode", picked).apply();
+            speak(outputModeSpoken(picked));
+        });
 
         addPrimaryButton(t("اختر ملفًا للتحويل", "Choose a file to convert"), v -> {
             if (!AiClient.isConfigured(prefs)) {
@@ -891,9 +1080,15 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
     }
 
     private void confirmAndPickFile() {
+        boolean direct = AiClient.MODE_DIRECT.equals(AiClient.getMode(prefs));
+        String message = direct
+                ? t("سيُرسَل هذا الملف مباشرة إلى Gemini التابع لـ Google عبر مفتاحك الشخصي. لا يحفظ بصير أي نسخة منه. هل تريد المتابعة؟",
+                    "This file will be sent directly to Google's Gemini API using your personal key. Basir does not keep any copy. Do you want to continue?")
+                : t("سيُرفع هذا الملف إلى خادم بصير لمعالجته وتحويله إلى Word، ثم تُحذف النسخة المرفوعة فور انتهاء العملية. هل تريد المتابعة؟",
+                    "This file will be uploaded to the Basir server for conversion, then deleted from the server as soon as the process completes. Do you want to continue?");
         new AlertDialog.Builder(this)
                 .setTitle(t("تأكيد الخصوصية", "Privacy confirmation"))
-                .setMessage(t("سيتم رفع هذا الملف إلى خادم المعالجة لتحويله إلى Word. لا تُحفظ النسخة المرفوعة بعد انتهاء العملية. هل تريد المتابعة؟", "This file will be uploaded to the processing server and converted into a Word document. The uploaded copy will not be kept after the process is complete. Do you want to continue?"))
+                .setMessage(message)
                 .setPositiveButton(t("متابعة", "Continue"), (d, w) -> {
                     Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
                     i.addCategory(Intent.CATEGORY_OPENABLE);
@@ -913,7 +1108,42 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
                 .show();
     }
 
+    private String qualitySpoken(String q) {
+        switch (q == null ? "" : q) {
+            case AiClient.QUALITY_FAST:
+                return t("الجودة: سريع. أسرع وأقل تكلفة، مناسب للملفات القصيرة.",
+                         "Quality: Fast. Quickest and cheapest, suited for short files.");
+            case AiClient.QUALITY_BEST:
+                return t("الجودة: الأفضل. أعلى دقة، مناسب للمستندات المهمة.",
+                         "Quality: Best. Highest accuracy, suited for important documents.");
+            default:
+                return t("الجودة: متوازن. توازن بين السرعة والدقة.",
+                         "Quality: Balanced. A balance between speed and accuracy.");
+        }
+    }
+
+    private String outputModeSpoken(String m) {
+        switch (m == null ? "" : m) {
+            case "text_only":
+                return t("وضع الإخراج: النص فقط. بدون وصف للصور.",
+                         "Output mode: Text only. No image descriptions.");
+            case "descriptions_only":
+                return t("وضع الإخراج: أوصاف فقط. وصف الصور بدون نص.",
+                         "Output mode: Descriptions only. Image descriptions without text.");
+            case "simple":
+                return t("وضع الإخراج: مبسّط. نص واضح لقارئ الشاشة.",
+                         "Output mode: Simple. Plain text for screen readers.");
+            default:
+                return t("وضع الإخراج: كامل. نص ووصف الصور والجداول.",
+                         "Output mode: Full. Text, images, and tables.");
+        }
+    }
+
     private TextView convertProgressText;
+    private TextView convertStageText;
+    private ProgressBar convertProgressBar;
+    private long lastAnnounceMs = 0L;
+    private int  lastAnnouncedPage = -1;
     private final ConversionState.Listener conversionListener = state -> onConversionStateChanged(state);
 
     private void handleConvertFile(Uri uri) {
@@ -930,12 +1160,13 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
                     Intent.FLAG_GRANT_READ_URI_PERMISSION);
         } catch (Exception ignore) {}
 
+        String outputMode = prefs.getString("convert_output_mode", "full");
         Intent svc = new Intent(this, ConversionService.class);
         svc.setData(uri); // grants read access to the service
         svc.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
         svc.putExtra(ConversionService.EXTRA_SOURCE_URI, uri);
         svc.putExtra(ConversionService.EXTRA_LANGUAGE, lang);
-        svc.putExtra(ConversionService.EXTRA_MODE, "full");
+        svc.putExtra(ConversionService.EXTRA_MODE, outputMode);
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(svc);
@@ -948,59 +1179,157 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
     /** Live progress screen, kept in sync with {@link ConversionState}. */
     private void showConvertingScreen() {
         resetScreen(t("جاري التحويل", "Converting"),
-                t("يمكنك إغلاق التطبيق أو استخدامه بشكل عادي، وسيستمر التحويل في الخلفية مع إشعار حي بالتقدم.",
-                  "You can close the app or keep using it - the conversion continues in the background with a live progress notification."));
+                t("يمكنك إبقاء التطبيق مفتوحًا أو استخدامه بشكل طبيعي. سيستمر التحويل في الخلفية مع إشعار حي بالتقدم.",
+                  "You can keep the app open or use it normally. The conversion continues in the background with a live progress notification."));
+
+        // Stage label ("Preparing file..." / "Page 4 of 12" / ...)
+        convertStageText = new TextView(this);
+        convertStageText.setTextSize(textSize(15));
+        convertStageText.setTextColor(colorTextSec());
+        convertStageText.setPadding(0, dp(4), 0, dp(2));
+        root.addView(convertStageText, fullWidth());
+
+        // Big page counter
         convertProgressText = new TextView(this);
-        convertProgressText.setTextSize(textSize(17));
+        convertProgressText.setTextSize(textSize(28));
+        convertProgressText.setTypeface(null, Typeface.BOLD);
         convertProgressText.setTextColor(colorText());
-        convertProgressText.setPadding(0, dp(8), 0, dp(8));
+        convertProgressText.setPadding(0, dp(2), 0, dp(8));
         root.addView(convertProgressText, fullWidth());
-        speak(t("جاري تحويل الملف...", "Converting file..."));
-        // The listener will populate the text immediately with current state.
+
+        // Determinate progress bar
+        convertProgressBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        convertProgressBar.setIndeterminate(true);
+        convertProgressBar.setMax(100);
+        LinearLayout.LayoutParams pp = fullWidth();
+        pp.setMargins(0, dp(4), 0, dp(16));
+        pp.height = dp(8);
+        root.addView(convertProgressBar, pp);
+
+        addInfoCard(t("نصيحة", "Tip"),
+                t("ينقسم الملف إلى دفعات صغيرة من الصفحات لزيادة الموثوقية. أنماط الإخراج المختلفة (كامل، نص فقط، إلخ) قابلة للتعديل من شاشة التحويل.",
+                  "The file is processed in small page batches for reliability. The output mode (full, text only, etc.) can be adjusted from the convert screen."));
+
+        addDangerButton(t("إلغاء التحويل", "Cancel conversion"), v -> {
+            Intent cancel = new Intent(MainActivity.this, ConversionService.class);
+            cancel.setAction(ConversionService.ACTION_CANCEL);
+            try { startService(cancel); } catch (Exception ignore) {}
+            ConversionState.get().requestCancel();
+            speak(t("جاري إلغاء التحويل.", "Cancelling conversion."));
+        });
+
+        speak(t("بدأ التحويل.", "Conversion started."));
     }
 
     /** Called by ConversionState on the main thread. */
     private void onConversionStateChanged(ConversionState state) {
-        if (convertProgressText != null) {
-            int cur = state.current();
-            int tot = state.total();
-            String line;
-            if (state.status() == ConversionState.Status.RUNNING) {
-                if (tot > 0) {
-                    line = t("جاري المعالجة... الصفحة ", "Processing... page ")
-                            + cur + t(" من ", " of ") + tot;
-                } else {
-                    line = t("جاري المعالجة...", "Processing...");
-                }
-                convertProgressText.setText(line);
-            } else if (state.status() == ConversionState.Status.SUCCESS) {
-                convertProgressText.setText(t("اكتمل التحويل.", "Conversion complete."));
-                File temp = state.result();
-                state.clear();
-                if (temp != null && temp.exists()) {
-                    aiExecutor.execute(() -> {
-                        try {
-                            String fileName = "Basir-" + System.currentTimeMillis() + ".docx";
-                            Uri publicUri = publishDocxToDownloads(temp, fileName);
-                            temp.delete();
-                            log("convert", fileName);
-                            runOnUiThread(() -> showConvertResult(publicUri, fileName));
-                        } catch (Exception e) {
-                            final String msg = safeError(e.getMessage());
-                            log("convert_error", msg);
-                            runOnUiThread(() -> {
-                                resetScreen(t("تعذر إكمال التحويل", "Conversion could not be completed"), msg);
-                                addBackButton();
-                            });
-                        }
-                    });
-                }
-            } else if (state.status() == ConversionState.Status.FAILED) {
-                final String msg = safeError(state.error());
-                state.clear();
-                log("convert_error", msg);
-                resetScreen(t("تعذر إكمال التحويل", "Conversion could not be completed"), msg);
-                addBackButton();
+        // Only react when we're actually on the converting screen.
+        if (convertProgressText == null) return;
+
+        int cur = state.current();
+        int tot = state.total();
+        ConversionState.Status status = state.status();
+        ConversionState.Stage stage = state.stage();
+
+        if (status == ConversionState.Status.RUNNING) {
+            updateConvertingUi(cur, tot, stage);
+        } else if (status == ConversionState.Status.SUCCESS) {
+            if (convertProgressBar != null) {
+                convertProgressBar.setIndeterminate(false);
+                convertProgressBar.setProgress(100);
+            }
+            convertStageText.setText(t("اكتمل التحويل", "Conversion complete"));
+            convertProgressText.setText(t("جاري حفظ الملف...", "Saving file..."));
+            File temp = state.result();
+            state.clear();
+            if (temp != null && temp.exists()) {
+                aiExecutor.execute(() -> {
+                    try {
+                        String fileName = "Basir-" + System.currentTimeMillis() + ".docx";
+                        Uri publicUri = publishDocxToDownloads(temp, fileName);
+                        temp.delete();
+                        log("convert", fileName);
+                        runOnUiThread(() -> showConvertResult(publicUri, fileName));
+                    } catch (Exception e) {
+                        final String msg = safeError(e.getMessage());
+                        log("convert_error", msg);
+                        runOnUiThread(() -> {
+                            resetScreen(t("تعذر إكمال التحويل", "Conversion could not be completed"), msg);
+                            addBackButton();
+                        });
+                    }
+                });
+            }
+        } else if (status == ConversionState.Status.FAILED) {
+            final String msg = safeError(state.error());
+            state.clear();
+            log("convert_error", msg);
+            resetScreen(t("تعذر إكمال التحويل", "Conversion could not be completed"), msg);
+            addPlainText(t("جرّب جودة \"سريع\" أو وضع \"النص فقط\"، أو قسّم الملف إلى أجزاء أصغر.",
+                           "Try the \"Fast\" quality, the \"Text only\" output mode, or split the file into smaller parts."));
+            addOutlineButton(t("إعادة المحاولة", "Try again"), v -> showConvertScreen());
+            addBackButton();
+        } else if (status == ConversionState.Status.CANCELLED) {
+            state.clear();
+            resetScreen(t("تم إلغاء التحويل", "Conversion cancelled"),
+                    t("تم إيقاف عملية التحويل بناءً على طلبك.",
+                      "The conversion was stopped at your request."));
+            addOutlineButton(t("بدء تحويل جديد", "Start a new conversion"), v -> showConvertScreen());
+            addBackButton();
+        }
+    }
+
+    private void updateConvertingUi(int cur, int tot, ConversionState.Stage stage) {
+        String stageLabel;
+        boolean indeterminate;
+        switch (stage) {
+            case PREPARING:
+                stageLabel = t("تحضير الملف...", "Preparing file...");
+                indeterminate = true;
+                break;
+            case UPLOADING:
+                stageLabel = t("رفع الملف إلى Gemini...", "Uploading file to Gemini...");
+                indeterminate = true;
+                break;
+            case FINALISING:
+                stageLabel = t("حفظ مستند Word...", "Saving the Word document...");
+                indeterminate = true;
+                break;
+            case DONE:
+                stageLabel = t("اكتمل التحويل", "Conversion complete");
+                indeterminate = false;
+                break;
+            case PROCESSING:
+            default:
+                stageLabel = t("جاري تحليل الصفحات", "Analysing pages");
+                indeterminate = (tot <= 0);
+        }
+        convertStageText.setText(stageLabel);
+
+        if (tot > 0 && stage == ConversionState.Stage.PROCESSING) {
+            convertProgressText.setText(t("الصفحة ", "Page ")
+                    + cur + t(" من ", " of ") + tot);
+            if (convertProgressBar != null) {
+                convertProgressBar.setIndeterminate(false);
+                int pct = Math.min(100, Math.max(0, (int) ((cur * 100L) / Math.max(1, tot))));
+                convertProgressBar.setProgress(pct);
+            }
+        } else {
+            convertProgressText.setText(tot > 0
+                    ? (cur + " / " + tot)
+                    : t("جاري المعالجة...", "Processing..."));
+            if (convertProgressBar != null) convertProgressBar.setIndeterminate(indeterminate);
+        }
+
+        // Accessibility: announce page changes, but rate-limited so we don't
+        // spam the screen reader.
+        long now = System.currentTimeMillis();
+        if (cur != lastAnnouncedPage && tot > 0 && (now - lastAnnounceMs) > 3000) {
+            lastAnnounceMs = now;
+            lastAnnouncedPage = cur;
+            String msg = t("الصفحة ", "Page ") + cur + t(" من ", " of ") + tot;
+            if (convertProgressText != null) {
+                convertProgressText.announceForAccessibility(msg);
             }
         }
     }
@@ -1411,27 +1740,27 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
         scroll.addView(box);
 
         TextView info = new TextView(this);
-        info.setText(t("اختر طريقة اتصال بصير بـ Gemini. الاتصال المباشر يستخدم مفتاح API من Google AI Studio دون خادم وسيط.", "Choose how Basir connects to Gemini. Direct connection uses a Google AI Studio API key without a proxy server."));
+        info.setText(t("اختر طريقة اتصال بصير بـ Gemini ومستوى الجودة المفضّل لكل نوع من المهام.",
+                       "Choose how Basir connects to Gemini and your preferred quality level for each task type."));
         info.setTextSize(textSize(14));
         info.setTextColor(colorTextSec());
+        info.setLineSpacing(dp(2), 1.1f);
         box.addView(info, fullWidth());
 
         // ----- Mode selector -----
-        final TextView modeLabel = new TextView(this);
-        modeLabel.setText(t("وضع الاتصال", "Connection mode"));
-        modeLabel.setTextColor(colorText());
-        modeLabel.setTextSize(textSize(15));
-        modeLabel.setTypeface(Typeface.DEFAULT_BOLD);
-        LinearLayout.LayoutParams ml = fullWidth(); ml.setMargins(0, dp(14), 0, dp(6));
+        TextView modeLabel = boldLabel(t("وضع الاتصال", "Connection mode"));
+        LinearLayout.LayoutParams ml = fullWidth(); ml.setMargins(0, dp(16), 0, dp(6));
         box.addView(modeLabel, ml);
 
         final boolean[] directMode = { AiClient.MODE_DIRECT.equals(AiClient.getMode(prefs)) };
         final Switch modeSwitch = new Switch(this);
-        modeSwitch.setText(t("الاتصال المباشر بـ Gemini بدون خادم وسيط", "Direct Gemini connection without a proxy server"));
+        modeSwitch.setText(t("استخدام مفتاح Gemini الخاص بي", "Use my own Gemini API key"));
         modeSwitch.setTextSize(textSize(14));
         modeSwitch.setTextColor(colorText());
         modeSwitch.setChecked(directMode[0]);
-        modeSwitch.setContentDescription(t("زر تبديل وضع الاتصال. عند التفعيل يكون الاتصال مباشرًا، وعند التعطيل يكون الاتصال عبر خادم وسيط.", "Connection mode toggle. When enabled, the connection is direct. When disabled, the connection uses a proxy server."));
+        modeSwitch.setContentDescription(t(
+                "زر تبديل وضع الاتصال. عند التفعيل يتصل التطبيق مباشرة بـ Gemini باستخدام مفتاحك. وعند التعطيل يمر الاتصال عبر خادم بصير.",
+                "Connection mode toggle. When enabled, the app talks to Gemini directly using your key. When disabled, the connection goes through the Basir proxy server."));
         box.addView(modeSwitch, fullWidth());
 
         // ----- Direct mode fields -----
@@ -1439,7 +1768,8 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
         directGroup.setOrientation(LinearLayout.VERTICAL);
 
         TextView directHelp = new TextView(this);
-        directHelp.setText(t("احصل على مفتاح API من Google AI Studio: aistudio.google.com", "Get an API key from Google AI Studio: aistudio.google.com"));
+        directHelp.setText(t("احصل على مفتاح API من Google AI Studio: aistudio.google.com",
+                             "Get an API key from Google AI Studio: aistudio.google.com"));
         directHelp.setTextSize(textSize(13));
         directHelp.setTextColor(colorTextSec());
         LinearLayout.LayoutParams dh = fullWidth(); dh.setMargins(0, dp(10), 0, 0);
@@ -1451,16 +1781,6 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
         LinearLayout.LayoutParams gk = fullWidth(); gk.setMargins(0, dp(8), 0, 0);
         directGroup.addView(geminiKey, gk);
 
-        final EditText modelFast = makeInput(t("النموذج السريع اختياري", "Fast model, optional"), false);
-        modelFast.setText(prefs.getString("gemini_model_fast", GeminiDirectClient.DEFAULT_FLASH));
-        LinearLayout.LayoutParams mf = fullWidth(); mf.setMargins(0, dp(8), 0, 0);
-        directGroup.addView(modelFast, mf);
-
-        final EditText modelPro = makeInput(t("النموذج المتقدم اختياري", "Advanced model, optional"), false);
-        modelPro.setText(prefs.getString("gemini_model_pro", GeminiDirectClient.DEFAULT_PRO));
-        LinearLayout.LayoutParams mp = fullWidth(); mp.setMargins(0, dp(8), 0, 0);
-        directGroup.addView(modelPro, mp);
-
         box.addView(directGroup, fullWidth());
 
         // ----- Proxy mode fields -----
@@ -1468,7 +1788,8 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
         proxyGroup.setOrientation(LinearLayout.VERTICAL);
 
         TextView proxyHelp = new TextView(this);
-        proxyHelp.setText(t("أدخل رابط الخادم الوسيط الذي يدير الاتصال بـ Gemini.", "Enter the proxy server URL that manages the connection to Gemini."));
+        proxyHelp.setText(t("أدخل رابط خادم بصير الذي يدير الاتصال بـ Gemini نيابة عنك.",
+                             "Enter the Basir server URL that manages the connection to Gemini on your behalf."));
         proxyHelp.setTextSize(textSize(13));
         proxyHelp.setTextColor(colorTextSec());
         LinearLayout.LayoutParams ph = fullWidth(); ph.setMargins(0, dp(10), 0, 0);
@@ -1487,6 +1808,37 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
 
         box.addView(proxyGroup, fullWidth());
 
+        // ----- Quality presets (apply to both modes) -----
+        TextView qSectionLabel = boldLabel(t("جودة النماذج", "Model quality"));
+        LinearLayout.LayoutParams qsl = fullWidth(); qsl.setMargins(0, dp(20), 0, dp(4));
+        box.addView(qSectionLabel, qsl);
+
+        TextView qHelp = new TextView(this);
+        qHelp.setText(t("اختر مستوى الجودة لكل نوع من المهام. يمكنك تجاوز هذا الاختيار مؤقتًا من شاشة التحويل.",
+                        "Pick the quality level for each task type. You can override this temporarily from the convert screen."));
+        qHelp.setTextSize(textSize(13));
+        qHelp.setTextColor(colorTextSec());
+        qHelp.setLineSpacing(dp(2), 1.1f);
+        box.addView(qHelp, fullWidth());
+
+        TextView qLabel = boldLabel(t("المهام السريعة (سؤال · ترجمة · رد)",
+                                      "Quick tasks (ask · translate · reply)"));
+        LinearLayout.LayoutParams qlp = fullWidth(); qlp.setMargins(0, dp(12), 0, dp(4));
+        box.addView(qLabel, qlp);
+
+        final Spinner quickSpinner = makeQualitySpinner(
+                prefs.getString("quick_quality", AiClient.QUALITY_BALANCED));
+        box.addView(quickSpinner, fullWidth());
+
+        TextView dLabel = boldLabel(t("تحويل المستندات إلى Word",
+                                      "Document conversion to Word"));
+        LinearLayout.LayoutParams dlp = fullWidth(); dlp.setMargins(0, dp(14), 0, dp(4));
+        box.addView(dLabel, dlp);
+
+        final Spinner docSpinner = makeQualitySpinner(
+                prefs.getString("doc_quality", AiClient.QUALITY_BEST));
+        box.addView(docSpinner, fullWidth());
+
         directGroup.setVisibility(directMode[0] ? View.VISIBLE : View.GONE);
         proxyGroup.setVisibility(directMode[0] ? View.GONE : View.VISIBLE);
 
@@ -1495,8 +1847,10 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
             directGroup.setVisibility(isChecked ? View.VISIBLE : View.GONE);
             proxyGroup.setVisibility(isChecked ? View.GONE : View.VISIBLE);
             speak(isChecked
-                    ? t("الاتصال المباشر بـ Gemini مفعّل.", "Direct Gemini connection is enabled.")
-                    : t("الاتصال عبر خادم وسيط مفعّل.", "Proxy server connection is enabled."));
+                    ? t("تم تفعيل الاتصال المباشر بـ Gemini.",
+                        "Direct connection to Gemini is enabled.")
+                    : t("تم تفعيل الاتصال عبر خادم بصير.",
+                        "Connection through the Basir server is enabled."));
         });
 
         new AlertDialog.Builder(this)
@@ -1505,10 +1859,10 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
                 .setPositiveButton(t("حفظ", "Save"), (d, w) -> {
                     SharedPreferences.Editor e = prefs.edit();
                     e.putString("ai_mode", directMode[0] ? AiClient.MODE_DIRECT : AiClient.MODE_PROXY);
+                    e.putString("quick_quality", qualityIdAt(quickSpinner.getSelectedItemPosition()));
+                    e.putString("doc_quality",   qualityIdAt(docSpinner.getSelectedItemPosition()));
                     if (directMode[0]) {
                         e.putString("gemini_api_key", geminiKey.getText().toString().trim());
-                        e.putString("gemini_model_fast", modelFast.getText().toString().trim());
-                        e.putString("gemini_model_pro",  modelPro.getText().toString().trim());
                     } else {
                         e.putString("ai_server_url", url.getText().toString().trim());
                         e.putString("ai_app_token", token.getText().toString().trim());
@@ -1521,6 +1875,41 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
                 })
                 .setNegativeButton(t("إلغاء", "Cancel"), null)
                 .show();
+    }
+
+    private TextView boldLabel(String text) {
+        TextView tv = new TextView(this);
+        tv.setText(text);
+        tv.setTextColor(colorText());
+        tv.setTextSize(textSize(15));
+        tv.setTypeface(Typeface.DEFAULT_BOLD);
+        return tv;
+    }
+
+    /** Pre-populated dropdown for the Quality preset. */
+    private Spinner makeQualitySpinner(String selectedId) {
+        Spinner sp = new Spinner(this);
+        String[] labels = {
+                t("سريع · Flash Lite", "Fast · Flash Lite"),
+                t("متوازن · Flash (موصى به)", "Balanced · Flash (recommended)"),
+                t("الأفضل · Pro", "Best · Pro")
+        };
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_dropdown_item, labels);
+        sp.setAdapter(adapter);
+        int pos = 1;
+        if (AiClient.QUALITY_FAST.equals(selectedId)) pos = 0;
+        else if (AiClient.QUALITY_BEST.equals(selectedId)) pos = 2;
+        sp.setSelection(pos);
+        return sp;
+    }
+
+    private String qualityIdAt(int position) {
+        switch (position) {
+            case 0: return AiClient.QUALITY_FAST;
+            case 2: return AiClient.QUALITY_BEST;
+            default: return AiClient.QUALITY_BALANCED;
+        }
     }
 
     // ============================================================

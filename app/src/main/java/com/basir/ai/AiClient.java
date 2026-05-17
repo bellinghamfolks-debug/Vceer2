@@ -3,7 +3,9 @@ package com.basir.ai;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.graphics.pdf.PdfRenderer;
 import android.net.Uri;
+import android.os.ParcelFileDescriptor;
 import android.util.Base64;
 
 import org.json.JSONArray;
@@ -27,18 +29,28 @@ import java.nio.charset.StandardCharsets;
  *   - "proxy"  mode: talk to the Basir Node.js proxy server (which holds the Gemini key).
  *   - "direct" mode: talk to Google's Gemini API directly from the device.
  *
- * Settings live in SharedPreferences under:
- *   ai_mode            = "direct" | "proxy"   (default "proxy")
- *   ai_server_url      = base URL of the proxy (only used in proxy mode)
- *   ai_app_token       = optional shared secret with the proxy
- *   gemini_api_key     = Google AI Studio key (only used in direct mode)
- *   gemini_model_fast  = override for the flash model (optional)
- *   gemini_model_pro   = override for the pro model (optional)
+ * Settings (SharedPreferences keys):
+ *   ai_mode              "direct" | "proxy" (default "proxy")
+ *   ai_server_url        base URL of the proxy
+ *   ai_app_token         optional shared secret with the proxy
+ *   gemini_api_key       Google AI Studio key (direct mode)
+ *   gemini_model_quick   model preset for quick text tasks  (default flash)
+ *   gemini_model_doc     model preset for document conversion (default pro)
+ *   convert_output_mode  "full" | "simple" | "text_only" | "descriptions_only"
+ *
+ * Legacy keys (still honoured as fallback):
+ *   gemini_model_fast → gemini_model_quick
+ *   gemini_model_pro  → gemini_model_doc
  */
 public final class AiClient {
 
     public static final String MODE_PROXY  = "proxy";
     public static final String MODE_DIRECT = "direct";
+
+    // Quality presets exposed in the UI.
+    public static final String QUALITY_FAST     = "fast";      // Flash Lite
+    public static final String QUALITY_BALANCED = "balanced";  // Flash
+    public static final String QUALITY_BEST     = "best";      // Pro
 
     private AiClient() {}
 
@@ -58,13 +70,46 @@ public final class AiClient {
         return url.startsWith("http://") || url.startsWith("https://");
     }
 
-    public static String pickModel(SharedPreferences prefs, String task) {
-        boolean fast = "ask".equals(task) || "translate".equals(task)
-                    || "reply".equals(task) || "quick".equals(task) || "health".equals(task);
-        if (fast) {
-            return prefs.getString("gemini_model_fast", GeminiDirectClient.DEFAULT_FLASH).trim();
+    /**
+     * Resolve a quality preset id to a real Gemini model id, taking custom
+     * overrides into account. Returns the user's override if provided, else the
+     * preset default.
+     */
+    public static String modelForQuality(SharedPreferences prefs, String quality) {
+        String q = quality == null ? QUALITY_BALANCED : quality;
+        switch (q) {
+            case QUALITY_FAST: {
+                String override = prefs.getString("gemini_model_fast_lite", "").trim();
+                return override.isEmpty() ? GeminiDirectClient.DEFAULT_FLASH_LITE : override;
+            }
+            case QUALITY_BEST: {
+                // Legacy key: gemini_model_pro
+                String override = prefs.getString("gemini_model_doc",
+                        prefs.getString("gemini_model_pro", "")).trim();
+                return override.isEmpty() ? GeminiDirectClient.DEFAULT_PRO : override;
+            }
+            case QUALITY_BALANCED:
+            default: {
+                // Legacy key: gemini_model_fast
+                String override = prefs.getString("gemini_model_quick",
+                        prefs.getString("gemini_model_fast", "")).trim();
+                return override.isEmpty() ? GeminiDirectClient.DEFAULT_FLASH : override;
+            }
         }
-        return prefs.getString("gemini_model_pro", GeminiDirectClient.DEFAULT_PRO).trim();
+    }
+
+    /**
+     * Pick a model for the given task. Quick tasks (chat/translate/etc.) use the
+     * "quick" preset; document conversion uses the "doc" preset. Both can be
+     * tuned via the model picker UI.
+     */
+    public static String pickModel(SharedPreferences prefs, String task) {
+        boolean quick = "ask".equals(task) || "translate".equals(task)
+                    || "reply".equals(task) || "quick".equals(task) || "health".equals(task);
+        String preset = quick
+                ? prefs.getString("quick_quality", QUALITY_BALANCED)
+                : prefs.getString("doc_quality",   QUALITY_BEST);
+        return modelForQuality(prefs, preset);
     }
 
     // ---------------- public API ----------------
@@ -77,10 +122,6 @@ public final class AiClient {
     public static String ask(SharedPreferences prefs, String task,
                              String input, String instruction, String language,
                              String imageBase64, String mimeType) throws Exception {
-        // Build a strict, task-oriented prompt so the model never treats the
-        // input as a casual chat message. This fixes the bug where typing
-        // "Mayar Jani" into the Translate screen returned a greeting instead
-        // of a translation.
         String userMessage = buildUserMessage(task, input, instruction, imageBase64 != null);
         if (MODE_DIRECT.equals(getMode(prefs))) {
             String key = prefs.getString("gemini_api_key", "");
@@ -91,11 +132,6 @@ public final class AiClient {
         return proxyAsk(prefs, task, userMessage, instruction, language, imageBase64, mimeType);
     }
 
-    /**
-     * Builds an unambiguous instruction block that wraps the user-supplied
-     * content inside explicit DATA tags. Gemini reliably treats the wrapped
-     * payload as material to process rather than as a turn in a conversation.
-     */
     private static String buildUserMessage(String task, String input, String instruction, boolean hasImage) {
         String t = task == null ? "ask" : task;
         StringBuilder sb = new StringBuilder();
@@ -131,8 +167,7 @@ public final class AiClient {
 
     /**
      * Same as {@link #convertToDocx} but reports progress for long PDFs so the
-     * UI / notification can show a live page counter. Pass {@code null} for
-     * {@code progress} to disable callbacks.
+     * UI / notification can show a live page counter.
      */
     public static String convertToDocx(Context ctx, SharedPreferences prefs, Uri sourceUri,
                                        String mode, String language, File outFile,
@@ -140,12 +175,17 @@ public final class AiClient {
         if (MODE_DIRECT.equals(getMode(prefs))) {
             return directConvertToDocx(ctx, prefs, sourceUri, mode, language, outFile, progress);
         }
-        return proxyConvertToDocx(ctx, prefs, sourceUri, mode, language, outFile);
+        return proxyConvertToDocx(ctx, prefs, sourceUri, mode, language, outFile, progress);
     }
 
-    /** Reports incremental conversion progress (page-based) to the caller. */
+    /** Reports incremental conversion progress to the caller. */
     public interface ProgressCallback {
-        /** Called whenever {@code currentPage} of {@code totalPages} has finished. */
+        /**
+         * Called whenever progress changes.
+         *   currentPage  - last page processed so far (>= 0)
+         *   totalPages   - total page count if known, else 0
+         *   stage        - "preparing" | "uploading" | "processing" | "finalising" | "done"
+         */
         void onProgress(int currentPage, int totalPages, String stage);
     }
 
@@ -187,12 +227,12 @@ public final class AiClient {
 
         HttpURLConnection conn = (HttpURLConnection) new URL(chatEndpoint(baseUrl)).openConnection();
         conn.setRequestMethod("POST");
-        conn.setConnectTimeout(30000);
-        conn.setReadTimeout(120000);
+        conn.setConnectTimeout(30_000);
+        conn.setReadTimeout(120_000);
         conn.setDoOutput(true);
         conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
         conn.setRequestProperty("Accept", "application/json");
-        conn.setRequestProperty("User-Agent", "Basir-Android/1.0.2");
+        conn.setRequestProperty("User-Agent", "Basir-Android/1.0.7");
         if (!appToken.trim().isEmpty()) {
             conn.setRequestProperty("X-Basir-Client-Token", appToken.trim());
         }
@@ -219,10 +259,13 @@ public final class AiClient {
     }
 
     private static String proxyConvertToDocx(Context ctx, SharedPreferences prefs, Uri sourceUri,
-                                             String mode, String language, File outFile) throws Exception {
+                                             String mode, String language, File outFile,
+                                             ProgressCallback progress) throws Exception {
         String baseUrl = prefs.getString("ai_server_url", "");
         String appToken = prefs.getString("ai_app_token", "");
         if (baseUrl.trim().isEmpty()) throw new Exception("Proxy URL is empty");
+
+        if (progress != null) progress.onProgress(0, 0, "uploading");
 
         String boundary = "----BasirBoundary" + System.currentTimeMillis();
         ContentResolver resolver = ctx.getContentResolver();
@@ -232,13 +275,18 @@ public final class AiClient {
         if (mime.contains("pdf")) filename = "document.pdf";
         else if (mime.contains("presentation")) filename = "document.pptx";
 
+        // Pick the same model the user chose for direct mode, so proxy mode honours
+        // the Quality picker. The server reads this optional field.
+        String quality = prefs.getString("doc_quality", QUALITY_BEST);
+        String model = modelForQuality(prefs, quality);
+
         HttpURLConnection conn = (HttpURLConnection) new URL(convertEndpoint(baseUrl)).openConnection();
         conn.setRequestMethod("POST");
-        conn.setConnectTimeout(30000);
-        conn.setReadTimeout(300000);
+        conn.setConnectTimeout(30_000);
+        conn.setReadTimeout(600_000);
         conn.setDoOutput(true);
         conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
-        conn.setRequestProperty("User-Agent", "Basir-Android/1.0.2");
+        conn.setRequestProperty("User-Agent", "Basir-Android/1.0.7");
         if (!appToken.trim().isEmpty()) {
             conn.setRequestProperty("X-Basir-Client-Token", appToken.trim());
         }
@@ -246,18 +294,22 @@ public final class AiClient {
         try (DataOutputStream out = new DataOutputStream(conn.getOutputStream())) {
             writeFormField(out, boundary, "language", language == null ? "ar" : language);
             writeFormField(out, boundary, "mode", mode == null ? "full" : mode);
+            writeFormField(out, boundary, "quality", quality);
+            writeFormField(out, boundary, "model",   model);
             out.writeBytes("--" + boundary + "\r\n");
             out.writeBytes("Content-Disposition: form-data; name=\"file\"; filename=\"" + filename + "\"\r\n");
             out.writeBytes("Content-Type: " + mime + "\r\n\r\n");
             try (InputStream in = resolver.openInputStream(sourceUri)) {
                 if (in == null) throw new Exception("Could not open the chosen file");
-                byte[] buf = new byte[8192];
+                byte[] buf = new byte[16 * 1024];
                 int n;
                 while ((n = in.read(buf)) != -1) out.write(buf, 0, n);
             }
             out.writeBytes("\r\n");
             out.writeBytes("--" + boundary + "--\r\n");
         }
+
+        if (progress != null) progress.onProgress(0, 0, "processing");
 
         int code = conn.getResponseCode();
         if (code < 200 || code >= 300) {
@@ -267,10 +319,11 @@ public final class AiClient {
 
         try (InputStream in = conn.getInputStream();
              FileOutputStream fos = new FileOutputStream(outFile)) {
-            byte[] buf = new byte[8192];
+            byte[] buf = new byte[16 * 1024];
             int n;
             while ((n = in.read(buf)) != -1) fos.write(buf, 0, n);
         }
+        if (progress != null) progress.onProgress(0, 0, "done");
         return outFile.getAbsolutePath();
     }
 
@@ -278,10 +331,10 @@ public final class AiClient {
     //                      DIRECT IMPLEMENTATION
     // ============================================================
 
-    /** Pages per Gemini call. Tuned to stay safely below the 8K output token cap. */
-    private static final int PDF_PAGES_PER_BATCH = 12;
+    /** Pages per Gemini call. Small so each batch finishes in ~10-20 s. */
+    private static final int PDF_PAGES_PER_BATCH = 4;
     /** Hard upper bound to protect us from runaway loops on malformed responses. */
-    private static final int PDF_MAX_BATCHES = 60; // up to ~720 pages
+    private static final int PDF_MAX_BATCHES = 250; // up to ~1000 pages
 
     private static String directConvertToDocx(Context ctx, SharedPreferences prefs, Uri sourceUri,
                                               String mode, String language, File outFile,
@@ -291,15 +344,17 @@ public final class AiClient {
         String mimeType = ctx.getContentResolver().getType(sourceUri);
         if (mimeType == null) mimeType = "application/octet-stream";
 
-        boolean isPdf = mimeType.contains("pdf");
+        boolean isPdf  = mimeType.contains("pdf");
         boolean isPptx = mimeType.contains("presentation");
+
+        if (progress != null) progress.onProgress(0, 0, "preparing");
 
         if (isPptx) {
             return directConvertPptx(ctx, sourceUri, key, model, mode, language, outFile, progress);
         }
         if (!isPdf) {
             // Generic binary - one-shot, no chunking.
-            byte[] bytes = readUriBytesRaw(ctx, sourceUri, 25 * 1024 * 1024);
+            byte[] bytes = readUriBytesRaw(ctx, sourceUri, 50 * 1024 * 1024);
             String langName = (language != null && language.toLowerCase().startsWith("ar")) ? "Arabic" : "English";
             String prompt = buildDocPrompt(langName, mode);
             JSONObject parsed = GeminiDirectClient.generateJsonWithFile(
@@ -307,53 +362,64 @@ public final class AiClient {
                     "You are Basir, an assistant for blind and low-vision users.",
                     prompt, bytes, mimeType);
             renderDocxFromJson(parsed, language, outFile);
+            if (progress != null) progress.onProgress(0, 0, "done");
             return outFile.getAbsolutePath();
         }
 
         // ===== PDF chunked conversion =====
-        // Sending the entire PDF and expecting one JSON back fails on long
-        // documents because Gemini's per-response output is capped at ~8K
-        // tokens. So we loop, asking Gemini to process a small page range
-        // each call, and we merge everything into a single .docx.
-        byte[] bytes = readUriBytesRaw(ctx, sourceUri, 50 * 1024 * 1024);
+
+        // 1) Determine the REAL total page count up front, using Android's
+        //    built-in PdfRenderer. This fixes the "shows 1 of 12 forever"
+        //    bug: the UI knows the total before any Gemini call.
+        int totalPages = countPdfPages(ctx, sourceUri);
+        if (totalPages <= 0) totalPages = 1;
+        if (progress != null) progress.onProgress(0, totalPages, "preparing");
+
+        // 2) Read the PDF bytes once. For big files we'll route through the
+        //    Files API (handled inside GeminiDirectClient.fileDataOrInlinePart).
+        byte[] bytes = readUriBytesRaw(ctx, sourceUri, 200 * 1024 * 1024);
+        if (progress != null) progress.onProgress(0, totalPages, "uploading");
+
+        // 3) Build a single file part (uploads once if needed). Reusing the
+        //    same fileData across all batches avoids re-uploading the PDF for
+        //    every Gemini call.
+        JSONObject filePart = GeminiDirectClient.fileDataOrInlinePart(key, bytes, "application/pdf");
+
         boolean arabic = language != null && language.toLowerCase().startsWith("ar");
         String langName = arabic ? "Arabic" : "English";
 
         DocxBuilder doc = new DocxBuilder(arabic ? "ar" : "en");
-        int totalPages = -1;
+        boolean wroteHeader = false;
         int nextPage = 1;
         int batchCounter = 0;
-        boolean wroteHeader = false;
 
-        while (batchCounter < PDF_MAX_BATCHES) {
+        // 4) Loop in small page-batches. Each batch processes ~4 pages so a
+        //    single Gemini call takes seconds, not minutes — the UI counter
+        //    advances visibly.
+        while (nextPage <= totalPages && batchCounter < PDF_MAX_BATCHES) {
+            if (Thread.currentThread().isInterrupted()) throw new Exception("Cancelled");
             batchCounter++;
             int startPage = nextPage;
-            int endPage = (totalPages > 0)
-                    ? Math.min(startPage + PDF_PAGES_PER_BATCH - 1, totalPages)
-                    : startPage + PDF_PAGES_PER_BATCH - 1;
+            int endPage = Math.min(startPage + PDF_PAGES_PER_BATCH - 1, totalPages);
+
+            if (progress != null) progress.onProgress(startPage - 1, totalPages, "processing");
 
             String chunkPrompt = buildChunkedDocPrompt(langName, mode, startPage, endPage,
-                    totalPages <= 0);
+                    totalPages, !wroteHeader);
 
-            if (progress != null) {
-                int known = totalPages > 0 ? totalPages : Math.max(endPage, startPage);
-                progress.onProgress(startPage, known, "processing");
+            JSONObject parsed;
+            try {
+                parsed = GeminiDirectClient.generateJsonWithFilePart(
+                        key, model,
+                        "You are Basir, an assistant for blind and low-vision users.",
+                        chunkPrompt, filePart);
+            } catch (Exception batchErr) {
+                // Surface a friendly message that identifies the failing range
+                // — far more useful than the raw Gemini error.
+                throw new Exception(batchErr.getMessage()
+                        + " (pages " + startPage + "-" + endPage + ")");
             }
 
-            JSONObject parsed = GeminiDirectClient.generateJsonWithFile(
-                    key, model,
-                    "You are Basir, an assistant for blind and low-vision users.",
-                    chunkPrompt, bytes, "application/pdf");
-
-            // Capture the total page count from the first valid response.
-            if (totalPages <= 0) {
-                int reportedTotal = parsed.optInt("total_pages", -1);
-                if (reportedTotal > 0 && reportedTotal < 5000) {
-                    totalPages = reportedTotal;
-                }
-            }
-
-            // Header (title + summary) appears only on the very first batch.
             if (!wroteHeader) {
                 String title = parsed.optString("title", "");
                 if (!title.isEmpty()) doc.title(title);
@@ -365,25 +431,40 @@ public final class AiClient {
             JSONArray sections = parsed.optJSONArray("sections");
             renderSectionsInto(doc, sections, language);
 
-            // Determine if there is more to do.
             int effectiveEnd = parsed.optInt("end_page", endPage);
             if (effectiveEnd < startPage) effectiveEnd = endPage;
+            if (effectiveEnd > totalPages) effectiveEnd = totalPages;
 
-            if (totalPages > 0 && effectiveEnd >= totalPages) break;
-            if (totalPages <= 0 && (sections == null || sections.length() == 0)) {
-                // No data and we still don't know totals -> assume done.
-                break;
-            }
+            if (progress != null) progress.onProgress(effectiveEnd, totalPages, "processing");
 
             nextPage = effectiveEnd + 1;
         }
 
-        if (progress != null && totalPages > 0) {
-            progress.onProgress(totalPages, totalPages, "done");
-        }
-
+        if (progress != null) progress.onProgress(totalPages, totalPages, "finalising");
         doc.writeTo(outFile);
+        if (progress != null) progress.onProgress(totalPages, totalPages, "done");
         return outFile.getAbsolutePath();
+    }
+
+    /**
+     * Use Android's PdfRenderer to count the pages in the given content Uri.
+     * Returns 0 if the file cannot be opened (e.g. password-protected); callers
+     * fall back to the legacy "ask Gemini for total_pages" path in that case.
+     */
+    private static int countPdfPages(Context ctx, Uri uri) {
+        ParcelFileDescriptor pfd = null;
+        PdfRenderer renderer = null;
+        try {
+            pfd = ctx.getContentResolver().openFileDescriptor(uri, "r");
+            if (pfd == null) return 0;
+            renderer = new PdfRenderer(pfd);
+            return renderer.getPageCount();
+        } catch (Throwable t) {
+            return 0;
+        } finally {
+            try { if (renderer != null) renderer.close(); } catch (Throwable ignore) {}
+            try { if (pfd != null) pfd.close(); } catch (Throwable ignore) {}
+        }
     }
 
     private static String directConvertPptx(Context ctx, Uri sourceUri, String apiKey, String model,
@@ -400,8 +481,8 @@ public final class AiClient {
 
         int total = deck.slides.size();
         int idx = 0;
-        // Process each slide separately so very large decks still succeed.
         for (PptxExtractor.Slide slide : deck.slides) {
+            if (Thread.currentThread().isInterrupted()) throw new Exception("Cancelled");
             idx++;
             if (progress != null) progress.onProgress(idx, total, "processing");
             doc.heading(1, (arabic ? "الشريحة " : "Slide ") + slide.index);
@@ -410,7 +491,6 @@ public final class AiClient {
             }
 
             if (!slide.images.isEmpty()) {
-                // Build a single Gemini call containing all slide images.
                 JSONArray parts = new JSONArray();
                 String prompt =
                         "Describe each of the following images from a PowerPoint slide for a blind user. "
@@ -443,7 +523,6 @@ public final class AiClient {
                         }
                     }
                 } catch (Exception ignored) {
-                    // Skip image batch on error; keep generating the rest.
                     doc.paragraph(arabic
                             ? "(تعذر وصف الصور في هذه الشريحة.)"
                             : "(Could not describe the images on this slide.)");
@@ -455,22 +534,9 @@ public final class AiClient {
         return outFile.getAbsolutePath();
     }
 
-    /** Build the structured-JSON prompt used for PDF conversion. */
+    /** Build the structured-JSON prompt used for single-shot doc conversion. */
     private static String buildDocPrompt(String langName, String mode) {
-        String modeNote;
-        switch (mode == null ? "full" : mode.toLowerCase()) {
-            case "simple":
-                modeNote = "Plain-text version optimized for screen readers; no decorative elements.";
-                break;
-            case "descriptions_only":
-                modeNote = "Output ONLY image descriptions, one per heading.";
-                break;
-            case "text_only":
-                modeNote = "Output ONLY extracted text and tables; skip image descriptions.";
-                break;
-            default:
-                modeNote = "Include all text, tables, and detailed image descriptions.";
-        }
+        String modeNote = modeNote(mode);
         return  "You are processing a document for a blind user.\n"
               + "Respond strictly in " + langName + ".\n"
               + modeNote + "\n\n"
@@ -494,7 +560,19 @@ public final class AiClient {
               + "- Output valid JSON only, no other prose.";
     }
 
-    /** Render the JSON tree returned by Gemini into a .docx file. */
+    private static String modeNote(String mode) {
+        switch (mode == null ? "full" : mode.toLowerCase()) {
+            case "simple":
+                return "Plain-text version optimized for screen readers; no decorative elements.";
+            case "descriptions_only":
+                return "Output ONLY image descriptions, one per heading.";
+            case "text_only":
+                return "Output ONLY extracted text and tables; skip image descriptions.";
+            default:
+                return "Include all text, tables, and detailed image descriptions.";
+        }
+    }
+
     private static void renderDocxFromJson(JSONObject parsed, String language, File outFile) throws Exception {
         boolean arabic = language != null && language.toLowerCase().startsWith("ar");
         DocxBuilder doc = new DocxBuilder(arabic ? "ar" : "en");
@@ -506,7 +584,6 @@ public final class AiClient {
         doc.writeTo(outFile);
     }
 
-    /** Append a JSON "sections" array onto an existing DocxBuilder. */
     private static void renderSectionsInto(DocxBuilder doc, JSONArray sections, String language) {
         if (sections == null) return;
         boolean arabic = language != null && language.toLowerCase().startsWith("ar");
@@ -559,40 +636,27 @@ public final class AiClient {
     }
 
     /**
-     * Prompt for a single chunk in the PDF batch loop. We instruct Gemini to
-     * (a) only process the requested page range and (b) always report
-     * total_pages so we know when to stop.
+     * Prompt for one chunk of pages. Since we now know totalPages up front from
+     * PdfRenderer, we hard-code it in the prompt — that prevents the model from
+     * guessing a wrong total and breaking the outer loop.
      */
     private static String buildChunkedDocPrompt(String langName, String mode,
                                                 int startPage, int endPage,
-                                                boolean isFirstBatch) {
-        String modeNote;
-        switch (mode == null ? "full" : mode.toLowerCase()) {
-            case "simple":
-                modeNote = "Plain-text version optimized for screen readers; no decorative elements.";
-                break;
-            case "descriptions_only":
-                modeNote = "Output ONLY image descriptions, one per heading.";
-                break;
-            case "text_only":
-                modeNote = "Output ONLY extracted text and tables; skip image descriptions.";
-                break;
-            default:
-                modeNote = "Include all text, tables, and detailed image descriptions.";
-        }
+                                                int totalPages, boolean isFirstBatch) {
+        String modeNote = modeNote(mode);
         StringBuilder p = new StringBuilder();
         p.append("You are processing a PDF for a blind user.\n");
         p.append("Respond strictly in ").append(langName).append(".\n");
         p.append(modeNote).append("\n\n");
         p.append("CRITICAL RULES:\n");
+        p.append("- The PDF has ").append(totalPages).append(" pages in total.\n");
         p.append("- Process ONLY pages ").append(startPage).append(" to ").append(endPage)
                 .append(" of the attached PDF.\n");
         p.append("- Do NOT skip any page in that range. If a page is blank or empty, still emit a page_marker for it.\n");
         p.append("- Do NOT include content from pages outside the requested range.\n");
-        p.append("- ALWAYS include the field \"total_pages\" with the TOTAL page count of the entire PDF (not just this batch).\n");
-        p.append("- Also include the field \"end_page\" with the last page number you actually processed in this response.\n");
+        p.append("- Include the field \"end_page\" with the last page you actually processed.\n");
         if (!isFirstBatch) {
-            p.append("- This is a continuation batch: do NOT repeat the document title or summary; leave them out.\n");
+            p.append("- This is a continuation batch: do NOT repeat the document title or summary.\n");
         }
         p.append("\nReturn a SINGLE JSON object (no markdown, no code fences):\n");
         p.append("{\n");
@@ -600,7 +664,6 @@ public final class AiClient {
             p.append("  \"title\": \"...\",\n");
             p.append("  \"summary\": \"short summary 1-3 sentences\",\n");
         }
-        p.append("  \"total_pages\": <integer>,\n");
         p.append("  \"end_page\": <integer>,\n");
         p.append("  \"sections\": [\n");
         p.append("    { \"type\": \"page_marker\", \"label\": \"Page X\" },\n");
@@ -643,7 +706,7 @@ public final class AiClient {
         try (InputStream input = resolver.openInputStream(uri);
              ByteArrayOutputStream out = new ByteArrayOutputStream()) {
             if (input == null) throw new Exception("Could not read the file stream");
-            byte[] buffer = new byte[8192];
+            byte[] buffer = new byte[16 * 1024];
             int total = 0;
             int read;
             while ((read = input.read(buffer)) != -1) {

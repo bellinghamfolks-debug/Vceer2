@@ -12,12 +12,14 @@ import java.util.List;
  * UI can survive {@link ConversionService} starting/stopping and the user
  * backgrounding/foregrounding the app at any moment.
  *
- * The state object is intentionally tiny and synchronous: every mutation is
- * immediately broadcast to all registered listeners on the main thread.
+ * Every mutation is broadcast on the main thread.
  */
 public final class ConversionState {
 
-    public enum Status { IDLE, RUNNING, SUCCESS, FAILED }
+    public enum Status { IDLE, RUNNING, SUCCESS, FAILED, CANCELLED }
+
+    /** Coarse-grained progress phase, shown in the UI as a friendly label. */
+    public enum Stage { PREPARING, UPLOADING, PROCESSING, FINALISING, DONE }
 
     public interface Listener {
         void onConversionStateChanged(ConversionState state);
@@ -30,25 +32,30 @@ public final class ConversionState {
     private final List<Listener> listeners = new ArrayList<>();
 
     private Status status = Status.IDLE;
+    private Stage stage = Stage.PREPARING;
     private int currentPage = 0;
     private int totalPages = 0;
     private File resultFile;
     private String errorMessage;
+    /** Set by the service when a cancel request arrives. The worker checks it
+     *  on its next progress callback. */
+    private volatile boolean cancelRequested = false;
 
     private ConversionState() {}
 
     public synchronized Status status() { return status; }
+    public synchronized Stage  stage()   { return stage; }
     public synchronized int current() { return currentPage; }
     public synchronized int total()   { return totalPages; }
     public synchronized File result() { return resultFile; }
     public synchronized String error() { return errorMessage; }
     public synchronized boolean isRunning() { return status == Status.RUNNING; }
+    public boolean isCancelRequested() { return cancelRequested; }
 
     public void addListener(Listener l) {
         synchronized (this) {
             if (!listeners.contains(l)) listeners.add(l);
         }
-        // Immediately deliver current snapshot.
         notifyOne(l);
     }
 
@@ -59,18 +66,21 @@ public final class ConversionState {
     void start() {
         synchronized (this) {
             status = Status.RUNNING;
+            stage = Stage.PREPARING;
             currentPage = 0;
             totalPages = 0;
             resultFile = null;
             errorMessage = null;
+            cancelRequested = false;
         }
         broadcast();
     }
 
-    void updateProgress(int current, int total) {
+    void updateProgress(int current, int total, Stage newStage) {
         synchronized (this) {
             this.currentPage = current;
             this.totalPages = total;
+            if (newStage != null) this.stage = newStage;
         }
         broadcast();
     }
@@ -78,6 +88,7 @@ public final class ConversionState {
     void success(File file) {
         synchronized (this) {
             status = Status.SUCCESS;
+            stage = Stage.DONE;
             resultFile = file;
             if (totalPages > 0) currentPage = totalPages;
         }
@@ -92,14 +103,31 @@ public final class ConversionState {
         broadcast();
     }
 
+    void cancelled() {
+        synchronized (this) {
+            status = Status.CANCELLED;
+            errorMessage = null;
+            cancelRequested = false;
+        }
+        broadcast();
+    }
+
+    /** Asks the running job to stop at its next checkpoint. Picked up by the
+     *  worker thread; the HTTP request may still complete its current batch. */
+    public void requestCancel() {
+        cancelRequested = true;
+    }
+
     /** Consumed by the UI after it handles a terminal state. */
     public void clear() {
         synchronized (this) {
             status = Status.IDLE;
+            stage = Stage.PREPARING;
             currentPage = 0;
             totalPages = 0;
             resultFile = null;
             errorMessage = null;
+            cancelRequested = false;
         }
         broadcast();
     }
