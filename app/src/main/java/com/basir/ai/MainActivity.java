@@ -9,6 +9,7 @@ import android.content.SharedPreferences;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
+import android.database.Cursor;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -18,10 +19,12 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
+import android.os.ParcelFileDescriptor;
 import android.os.StrictMode;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.provider.MediaStore;
+import android.provider.OpenableColumns;
 import android.speech.RecognizerIntent;
 import android.speech.tts.TextToSpeech;
 import android.text.InputType;
@@ -86,8 +89,7 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
 
     // Pending image
     private String pendingTask, pendingTitle, pendingInstruction, pendingPrompt;
-    private Uri pendingCameraUri; // file:// Uri pointing at our private photo
-    private File pendingCameraFile; // the underlying file we own
+    private Uri pendingCameraUri; // MediaStore content:// Uri reserved for the next photo
 
     // Pending file attachment for task screens (invoice/legal/health/document_analysis)
     private String pendingTaskKey, pendingTaskTitle, pendingTaskInstruction, pendingTaskPrompt;
@@ -1633,22 +1635,52 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
             return;
         }
         try {
-            // Save into our own app-private files dir. Using a file we own
-            // (not a MediaStore pending row) lets us reliably check the file
-            // size after the camera returns - so we can detect a successful
-            // capture even when the camera app returns RESULT_CANCELED
-            // (Samsung / MIUI / some OEM cameras do this).
-            File photoDir = new File(getCacheDir(), "camera");
-            if (!photoDir.exists()) photoDir.mkdirs();
-            pendingCameraFile = new File(photoDir,
+            // Create a MediaStore row up-front and hand the resulting content://
+            // Uri to the camera. This is the ONLY approach that:
+            //   1) Works on all Android versions (API 23..34+).
+            //   2) Is accepted by every camera app (file:// Uris are blocked
+            //      since Android 7 and our private cacheDir is not writable
+            //      by other apps).
+            //   3) Lets us reliably detect a successful capture by querying
+            //      the row's SIZE column afterwards - independent of the
+            //      camera app's resultCode (Samsung/MIUI return CANCELED
+            //      even on success).
+            ContentValues values = new ContentValues();
+            values.put(MediaStore.Images.Media.DISPLAY_NAME,
                     "basir_" + System.currentTimeMillis() + ".jpg");
-            // file:// Uri is acceptable because we relaxed StrictMode in onCreate.
-            pendingCameraUri = Uri.fromFile(pendingCameraFile);
+            values.put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg");
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                values.put(MediaStore.Images.Media.RELATIVE_PATH,
+                        Environment.DIRECTORY_PICTURES + "/Basir");
+                // IMPORTANT: do NOT set IS_PENDING. Pending rows cannot be
+                // read or stat-ed by us until finalized, which broke the
+                // previous detection logic. A non-pending row works fine
+                // for camera capture (single small JPEG).
+            }
+            pendingCameraUri = getContentResolver().insert(
+                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
+            if (pendingCameraUri == null) {
+                speak(t("تعذر تجهيز ملف الصورة.", "Could not prepare the image file."));
+                return;
+            }
 
             Intent intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
             intent.putExtra(MediaStore.EXTRA_OUTPUT, pendingCameraUri);
             intent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION
                           | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+
+            // Forward the write permission to all camera apps that could
+            // resolve this intent (required on some pre-Q OEM ROMs).
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+                java.util.List<android.content.pm.ResolveInfo> apps =
+                        getPackageManager().queryIntentActivities(intent,
+                                PackageManager.MATCH_DEFAULT_ONLY);
+                for (android.content.pm.ResolveInfo ri : apps) {
+                    grantUriPermission(ri.activityInfo.packageName, pendingCameraUri,
+                            Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                          | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                }
+            }
             startActivityForResult(intent, REQ_IMAGE_CAPTURE);
         } catch (Exception e) {
             speak(t("تعذر فتح الكاميرا.", "Could not open the camera."));
@@ -1662,6 +1694,32 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
         i.addCategory(Intent.CATEGORY_OPENABLE);
         try { startActivityForResult(Intent.createChooser(i, t("اختيار صورة", "Choose image")), REQ_IMAGE_PICK); }
         catch (Exception e) { speak(t("تعذر فتح منتقي الصور.", "Could not open the image picker.")); }
+    }
+
+    /**
+     * Best-effort byte count for a Uri. Tries the OpenableColumns.SIZE column
+     * first (works for any content provider), then falls back to opening the
+     * file descriptor and reading its stat size.
+     */
+    private long uriBytes(Uri uri) {
+        if (uri == null) return 0L;
+        try (Cursor c = getContentResolver().query(uri,
+                new String[]{ OpenableColumns.SIZE }, null, null, null)) {
+            if (c != null && c.moveToFirst()) {
+                int idx = c.getColumnIndex(OpenableColumns.SIZE);
+                if (idx >= 0 && !c.isNull(idx)) {
+                    long n = c.getLong(idx);
+                    if (n > 0) return n;
+                }
+            }
+        } catch (Exception ignore) {}
+        try (ParcelFileDescriptor pfd = getContentResolver().openFileDescriptor(uri, "r")) {
+            if (pfd != null) {
+                long n = pfd.getStatSize();
+                if (n > 0) return n;
+            }
+        } catch (Exception ignore) {}
+        return 0L;
     }
 
     private void handlePickedImage(Uri uri) {
@@ -1793,17 +1851,35 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
                 && data != null && data.getData() != null) {
             handlePickedImage(data.getData());
         } else if (requestCode == REQ_IMAGE_CAPTURE) {
-            // Some cameras (Samsung, MIUI, Huawei...) return RESULT_CANCELED
-            // even after the user pressed "Done" and the photo was saved.
-            // Trust the file on disk, not just the result code.
-            File f = pendingCameraFile;
-            Uri u = pendingCameraUri;
-            pendingCameraFile = null;
+            // Some camera apps (Samsung, MIUI, Huawei, etc.) return
+            // RESULT_CANCELED even after the user tapped "Done" and the photo
+            // was saved. Don't trust resultCode - query MediaStore for the
+            // actual SIZE column. If our pre-allocated row has bytes, the
+            // capture succeeded. Otherwise check if the camera handed us
+            // its own Uri via data.getData() and try that.
+            Uri stored = pendingCameraUri;
             pendingCameraUri = null;
-            if (f != null && f.exists() && f.length() > 1024) {
-                handlePickedImage(u);
+
+            Uri winner = null;
+            if (stored != null && uriBytes(stored) > 1024) {
+                winner = stored;
+            } else if (data != null && data.getData() != null
+                    && uriBytes(data.getData()) > 1024) {
+                winner = data.getData();
+                // Drop our empty placeholder row.
+                if (stored != null) {
+                    try { getContentResolver().delete(stored, null, null); }
+                    catch (Exception ignore) {}
+                }
+            }
+
+            if (winner != null) {
+                handlePickedImage(winner);
             } else {
-                if (f != null) try { f.delete(); } catch (Exception ignore) {}
+                if (stored != null) {
+                    try { getContentResolver().delete(stored, null, null); }
+                    catch (Exception ignore) {}
+                }
                 speak(t("تم إلغاء التقاط الصورة.", "Camera capture was cancelled."));
             }
         } else if (requestCode == REQ_DOC_PICK && resultCode == RESULT_OK
