@@ -1,14 +1,23 @@
 <resources>
-    <color name="basir_primary">#90CAF9</color>
-    <color name="basir_primary_dark">#1565C0</color>
-    <color name="basir_accent">#64B5F6</color>
-    <color name="basir_bg">#0B1220</color>
-    <color name="basir_surface">#101827</color>
-    <color name="basir_text">#F8FAFC</color>
-    <color name="basir_text_secondary">#94A3B8</color>
-    <color name="basir_divider">#1E293B</color>
-    <color name="basir_danger">#EF5350</color>
-    <color name="basir_success">#66BB6A</color>
-    <color name="basir_warning">#FFB74D</color>
-    <color name="basir_card_stroke">#1F2937</color>
+    <!-- Dark theme: same brand, calibrated for AMOLED comfort. -->
+    <color name="basir_primary">#7FB1FF</color>
+    <color name="basir_primary_dark">#3D7DD9</color>
+    <color name="basir_primary_soft">#152848</color>
+    <color name="basir_accent">#E0B65A</color>
+
+    <color name="basir_bg">#0A0F1B</color>
+    <color name="basir_surface">#121A2B</color>
+    <color name="basir_surface_alt">#0F1726</color>
+
+    <color name="basir_text">#F2F5FB</color>
+    <color name="basir_text_secondary">#A3B0C7</color>
+    <color name="basir_text_muted">#7B879D</color>
+
+    <color name="basir_divider">#1E2A40</color>
+    <color name="basir_card_stroke">#243045</color>
+
+    <color name="basir_danger">#FCA5A5</color>
+    <color name="basir_success">#86EFAC</color>
+    <color name="basir_warning">#FCD34D</color>
+    <color name="basir_info">#7DD3FC</color>
 </resources>

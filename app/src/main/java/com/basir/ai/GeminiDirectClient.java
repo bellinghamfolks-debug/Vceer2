@@ -17,8 +17,9 @@ import java.nio.charset.StandardCharsets;
 /**
  * Direct client for Google's Generative Language API (Gemini).
  *
- * Endpoint pattern:
+ * Endpoints used:
  *   POST https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={API_KEY}
+ *   POST https://generativelanguage.googleapis.com/upload/v1beta/files?key={API_KEY}    (Files API)
  *
  * No server is required - the user's Gemini key is stored locally inside the app.
  * Used when the user picks "direct" mode in the settings dialog.
@@ -27,24 +28,34 @@ public final class GeminiDirectClient {
 
     private GeminiDirectClient() {}
 
-    public static final String DEFAULT_FLASH = "gemini-3-flash-preview";
-    public static final String DEFAULT_PRO   = "gemini-3-pro-preview";
+    // Default model identifiers. Mapped to user-visible quality presets:
+    //   FLASH_LITE -> "Fast"      (cheapest, fastest)
+    //   FLASH      -> "Balanced"  (default)
+    //   PRO        -> "Best"      (highest quality, slowest)
+    public static final String DEFAULT_FLASH_LITE = "gemini-2.5-flash-lite";
+    public static final String DEFAULT_FLASH      = "gemini-2.5-flash";
+    public static final String DEFAULT_PRO        = "gemini-2.5-pro";
 
-    private static final String BASE = "https://generativelanguage.googleapis.com/v1beta/models/";
+    // Legacy aliases (kept so older code paths keep compiling).
+    public static final String DEFAULT_FAST = DEFAULT_FLASH;
 
-    private static String endpoint(String model, String apiKey) throws Exception {
+    private static final String BASE        = "https://generativelanguage.googleapis.com/v1beta/models/";
+    private static final String UPLOAD_BASE = "https://generativelanguage.googleapis.com/upload/v1beta/files";
+    private static final String FILES_BASE  = "https://generativelanguage.googleapis.com/v1beta/";
+
+    // Gemini caps inline data at ~20 MB request size. We stay below that with margin
+    // and switch to the Files API for anything larger.
+    public static final int INLINE_MAX_BYTES = 18 * 1024 * 1024;
+
+    private static final int RETRY_ATTEMPTS = 3;
+    private static final long[] RETRY_DELAYS_MS = { 2_000L, 4_000L, 8_000L };
+
+    private static String generateEndpoint(String model, String apiKey) throws Exception {
         return BASE + model + ":generateContent?key=" + URLEncoder.encode(apiKey, "UTF-8");
     }
 
     /**
      * Send a text-only or text+image prompt and return the model's plain text answer.
-     *
-     * @param apiKey      Gemini API key.
-     * @param model       Model id, e.g. gemini-3-flash-preview.
-     * @param systemText  System instruction shown to the model.
-     * @param userText    The user prompt.
-     * @param imageBase64 Optional base64-encoded image. May be null.
-     * @param mimeType    Optional mime type when imageBase64 is provided.
      */
     public static String generateText(String apiKey, String model,
                                       String systemText, String userText,
@@ -63,7 +74,7 @@ public final class GeminiDirectClient {
         }
         body.put("contents", new JSONArray().put(new JSONObject().put("role", "user").put("parts", parts)));
 
-        JSONObject resp = postJson(endpoint(model, apiKey), body);
+        JSONObject resp = postJsonWithRetry(generateEndpoint(model, apiKey), body);
         return extractText(resp);
     }
 
@@ -83,53 +94,49 @@ public final class GeminiDirectClient {
         JSONObject body = baseBody(systemText);
         JSONArray parts = new JSONArray();
         parts.put(new JSONObject().put("text", userPrompt == null ? "" : userPrompt));
-        JSONObject inline = new JSONObject();
-        inline.put("mimeType", (mimeType == null || mimeType.isEmpty()) ? "application/octet-stream" : mimeType);
-        inline.put("data", Base64.encodeToString(fileBytes, Base64.NO_WRAP));
-        parts.put(new JSONObject().put("inlineData", inline));
-
+        parts.put(fileDataOrInlinePart(apiKey, fileBytes, mimeType));
         body.put("contents", new JSONArray().put(new JSONObject().put("role", "user").put("parts", parts)));
 
-        JSONObject resp = postJson(endpoint(model, apiKey), body);
+        JSONObject resp = postJsonWithRetry(generateEndpoint(model, apiKey), body);
         return extractText(resp);
     }
 
     /**
      * Like generateWithFile but instructs Gemini to return a JSON object.
-     * Used for the PDF/PPTX → Word pipeline.
+     * Used for the PDF/PPTX → Word pipeline. Automatically picks between
+     * inlineData (small files) and the Files API (large files).
      */
     public static JSONObject generateJsonWithFile(String apiKey, String model,
                                                   String systemText, String userPrompt,
                                                   byte[] fileBytes, String mimeType) throws Exception {
+        JSONObject filePart = fileDataOrInlinePart(apiKey, fileBytes, mimeType);
+        return generateJsonWithFilePart(apiKey, model, systemText, userPrompt, filePart);
+    }
+
+    /**
+     * Variant that accepts a pre-built file part (typically a previously-uploaded
+     * fileData reference). Lets callers upload a PDF once and reuse it across
+     * multiple batched generateContent calls.
+     */
+    public static JSONObject generateJsonWithFilePart(String apiKey, String model,
+                                                      String systemText, String userPrompt,
+                                                      JSONObject filePart) throws Exception {
         JSONObject body = baseBody(systemText);
-        body.put("generationConfig", new JSONObject().put("responseMimeType", "application/json"));
+        JSONObject gen = body.getJSONObject("generationConfig");
+        gen.put("responseMimeType", "application/json");
 
         JSONArray parts = new JSONArray();
         parts.put(new JSONObject().put("text", userPrompt == null ? "" : userPrompt));
-        JSONObject inline = new JSONObject();
-        inline.put("mimeType", (mimeType == null || mimeType.isEmpty()) ? "application/octet-stream" : mimeType);
-        inline.put("data", Base64.encodeToString(fileBytes, Base64.NO_WRAP));
-        parts.put(new JSONObject().put("inlineData", inline));
+        parts.put(filePart);
 
         body.put("contents", new JSONArray().put(new JSONObject().put("role", "user").put("parts", parts)));
 
-        JSONObject resp = postJson(endpoint(model, apiKey), body);
+        JSONObject resp = postJsonWithRetry(generateEndpoint(model, apiKey), body);
         String text = extractText(resp);
         if (text == null || text.trim().isEmpty()) {
             throw new Exception("Empty Gemini response");
         }
-        try {
-            return new JSONObject(text);
-        } catch (Exception e) {
-            // Sometimes the model wraps JSON in ```json fences - strip them.
-            String cleaned = text.trim();
-            if (cleaned.startsWith("```")) {
-                int firstNl = cleaned.indexOf('\n');
-                if (firstNl > 0) cleaned = cleaned.substring(firstNl + 1);
-                if (cleaned.endsWith("```")) cleaned = cleaned.substring(0, cleaned.length() - 3);
-            }
-            return new JSONObject(cleaned.trim());
-        }
+        return parseJsonLenient(text);
     }
 
     /**
@@ -139,23 +146,108 @@ public final class GeminiDirectClient {
     public static JSONObject generateJsonWithParts(String apiKey, String model,
                                                    String systemText, JSONArray userParts) throws Exception {
         JSONObject body = baseBody(systemText);
-        body.put("generationConfig", new JSONObject().put("responseMimeType", "application/json"));
+        JSONObject gen = body.getJSONObject("generationConfig");
+        gen.put("responseMimeType", "application/json");
         body.put("contents", new JSONArray().put(new JSONObject().put("role", "user").put("parts", userParts)));
 
-        JSONObject resp = postJson(endpoint(model, apiKey), body);
+        JSONObject resp = postJsonWithRetry(generateEndpoint(model, apiKey), body);
         String text = extractText(resp);
         if (text == null || text.trim().isEmpty()) throw new Exception("Empty Gemini response");
-        try {
-            return new JSONObject(text);
-        } catch (Exception e) {
-            String cleaned = text.trim();
-            if (cleaned.startsWith("```")) {
-                int firstNl = cleaned.indexOf('\n');
-                if (firstNl > 0) cleaned = cleaned.substring(firstNl + 1);
-                if (cleaned.endsWith("```")) cleaned = cleaned.substring(0, cleaned.length() - 3);
-            }
-            return new JSONObject(cleaned.trim());
+        return parseJsonLenient(text);
+    }
+
+    // ---------- Files API ----------
+
+    /**
+     * Build a `parts` element pointing at the supplied bytes. Small files are
+     * embedded as inlineData; larger files are first uploaded via the Files API
+     * and referenced by fileUri.
+     */
+    public static JSONObject fileDataOrInlinePart(String apiKey, byte[] bytes, String mimeType) throws Exception {
+        String mt = (mimeType == null || mimeType.isEmpty()) ? "application/octet-stream" : mimeType;
+        if (bytes.length <= INLINE_MAX_BYTES) {
+            JSONObject inline = new JSONObject();
+            inline.put("mimeType", mt);
+            inline.put("data", Base64.encodeToString(bytes, Base64.NO_WRAP));
+            return new JSONObject().put("inlineData", inline);
         }
+        // Large file: upload then reference.
+        UploadedFile up = uploadFile(apiKey, bytes, mt, "basir-doc");
+        JSONObject fd = new JSONObject();
+        fd.put("fileUri", up.uri);
+        fd.put("mimeType", up.mimeType);
+        return new JSONObject().put("fileData", fd);
+    }
+
+    /** Reference to a file previously uploaded via the Gemini Files API. */
+    public static final class UploadedFile {
+        public final String name;     // e.g. "files/abc123"
+        public final String uri;      // full URI used in fileData.fileUri
+        public final String mimeType;
+        UploadedFile(String name, String uri, String mimeType) {
+            this.name = name; this.uri = uri; this.mimeType = mimeType;
+        }
+    }
+
+    /**
+     * Upload bytes to the Files API. Returns the file reference. The file is
+     * available for ~48h and is reused across subsequent generateContent calls.
+     */
+    public static UploadedFile uploadFile(String apiKey, byte[] bytes, String mimeType,
+                                          String displayName) throws Exception {
+        if (apiKey == null || apiKey.trim().isEmpty()) {
+            throw new Exception("Gemini API key is empty");
+        }
+        String url = UPLOAD_BASE + "?key=" + URLEncoder.encode(apiKey, "UTF-8");
+        Exception lastErr = null;
+        for (int attempt = 0; attempt < RETRY_ATTEMPTS; attempt++) {
+            checkInterrupted();
+            HttpURLConnection conn = null;
+            try {
+                conn = (HttpURLConnection) new URL(url).openConnection();
+                conn.setRequestMethod("POST");
+                conn.setConnectTimeout(30_000);
+                conn.setReadTimeout(600_000);
+                conn.setDoOutput(true);
+                conn.setFixedLengthStreamingMode(bytes.length);
+                conn.setRequestProperty("X-Goog-Upload-Protocol", "raw");
+                conn.setRequestProperty("X-Goog-Upload-Header-Content-Type", mimeType);
+                conn.setRequestProperty("Content-Type", mimeType);
+                if (displayName != null && !displayName.isEmpty()) {
+                    conn.setRequestProperty("X-Goog-File-Display-Name", displayName);
+                }
+                conn.setRequestProperty("User-Agent", "Basir-Android/1.0.7");
+
+                try (OutputStream os = conn.getOutputStream()) {
+                    os.write(bytes);
+                }
+                int code = conn.getResponseCode();
+                String body = readAll(code >= 200 && code < 300 ? conn.getInputStream() : conn.getErrorStream());
+                if (code >= 200 && code < 300) {
+                    JSONObject obj = new JSONObject(body);
+                    JSONObject file = obj.optJSONObject("file");
+                    if (file == null) throw new Exception("Upload response missing 'file'");
+                    String name = file.optString("name", "");
+                    String uri  = file.optString("uri", "");
+                    String mt   = file.optString("mimeType", mimeType);
+                    if (uri.isEmpty()) throw new Exception("Upload response missing 'uri'");
+                    return new UploadedFile(name, uri, mt);
+                }
+                if (isRetryable(code)) {
+                    lastErr = new Exception("HTTP " + code + " uploading file: " + truncate(extractError(body), 200));
+                    sleepBackoff(attempt);
+                    continue;
+                }
+                throw new Exception("HTTP " + code + " uploading file: " + truncate(extractError(body), 400));
+            } catch (java.io.IOException e) {
+                lastErr = new Exception("Upload failed: " + e.getMessage());
+                sleepBackoff(attempt);
+            } finally {
+                if (conn != null) conn.disconnect();
+            }
+        }
+        if (lastErr == null) lastErr = new Exception("Upload failed after retries");
+        throw lastErr;
     }
 
     // ---------- internals ----------
@@ -167,46 +259,120 @@ public final class GeminiDirectClient {
             sys.put("parts", new JSONArray().put(new JSONObject().put("text", systemText)));
             body.put("systemInstruction", sys);
         }
-        // Sensible defaults; the model handles its own context.
-        JSONObject gen = body.optJSONObject("generationConfig");
-        if (gen == null) gen = new JSONObject();
-        if (!gen.has("temperature")) gen.put("temperature", 0.7);
+        JSONObject gen = new JSONObject();
+        gen.put("temperature", 0.7);
         body.put("generationConfig", gen);
         return body;
     }
 
-    private static JSONObject postJson(String url, JSONObject payload) throws Exception {
-        HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
-        conn.setRequestMethod("POST");
-        conn.setConnectTimeout(30000);
-        conn.setReadTimeout(300000);
-        conn.setDoOutput(true);
-        conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
-        conn.setRequestProperty("Accept", "application/json");
-        conn.setRequestProperty("User-Agent", "Basir-Android/1.0.2");
-
-        byte[] bytes = payload.toString().getBytes(StandardCharsets.UTF_8);
-        try (OutputStream os = conn.getOutputStream()) { os.write(bytes); }
-
-        int code = conn.getResponseCode();
-        InputStream in = (code >= 200 && code < 300) ? conn.getInputStream() : conn.getErrorStream();
-        String text = readAll(in);
-        if (code < 200 || code >= 300) {
-            // Try to extract a clean error message from Google's error JSON.
-            String message = text;
+    private static JSONObject postJsonWithRetry(String url, JSONObject payload) throws Exception {
+        Exception lastErr = null;
+        for (int attempt = 0; attempt < RETRY_ATTEMPTS; attempt++) {
+            checkInterrupted();
             try {
-                JSONObject err = new JSONObject(text);
-                if (err.has("error")) {
-                    Object e = err.get("error");
-                    if (e instanceof JSONObject) {
-                        JSONObject eo = (JSONObject) e;
-                        if (eo.has("message")) message = eo.getString("message");
-                    }
-                }
-            } catch (Exception ignore) {}
-            throw new Exception("HTTP " + code + ": " + truncate(message, 500));
+                return postJsonOnce(url, payload);
+            } catch (RetryableException re) {
+                lastErr = re.cause;
+                sleepBackoff(attempt);
+            }
         }
-        return new JSONObject(text);
+        if (lastErr == null) lastErr = new Exception("Request failed after retries");
+        throw lastErr;
+    }
+
+    private static JSONObject postJsonOnce(String url, JSONObject payload) throws Exception {
+        HttpURLConnection conn = null;
+        try {
+            conn = (HttpURLConnection) new URL(url).openConnection();
+            conn.setRequestMethod("POST");
+            conn.setConnectTimeout(30_000);
+            conn.setReadTimeout(600_000);
+            conn.setDoOutput(true);
+            conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+            conn.setRequestProperty("Accept", "application/json");
+            conn.setRequestProperty("User-Agent", "Basir-Android/1.0.7");
+
+            byte[] bytes = payload.toString().getBytes(StandardCharsets.UTF_8);
+            try (OutputStream os = conn.getOutputStream()) { os.write(bytes); }
+
+            int code = conn.getResponseCode();
+            InputStream in = (code >= 200 && code < 300) ? conn.getInputStream() : conn.getErrorStream();
+            String text = readAll(in);
+            if (code < 200 || code >= 300) {
+                String message = extractError(text);
+                if (isRetryable(code)) {
+                    throw new RetryableException(new Exception("HTTP " + code + ": " + truncate(message, 300)));
+                }
+                throw new Exception("HTTP " + code + ": " + truncate(message, 500));
+            }
+            return new JSONObject(text);
+        } catch (java.io.IOException ioe) {
+            // Network glitch — retry.
+            throw new RetryableException(new Exception("Network error: " + ioe.getMessage()));
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
+    }
+
+    private static boolean isRetryable(int httpCode) {
+        return httpCode == 408 || httpCode == 429
+            || httpCode == 500 || httpCode == 502
+            || httpCode == 503 || httpCode == 504;
+    }
+
+    private static void sleepBackoff(int attempt) throws Exception {
+        if (attempt + 1 >= RETRY_ATTEMPTS) return;
+        long ms = RETRY_DELAYS_MS[Math.min(attempt, RETRY_DELAYS_MS.length - 1)];
+        try { Thread.sleep(ms); }
+        catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            throw new Exception("Cancelled");
+        }
+    }
+
+    private static void checkInterrupted() throws Exception {
+        if (Thread.currentThread().isInterrupted()) throw new Exception("Cancelled");
+    }
+
+    /** Internal marker so postJsonWithRetry can tell a retryable error apart. */
+    private static final class RetryableException extends Exception {
+        final Exception cause;
+        RetryableException(Exception cause) { this.cause = cause; }
+    }
+
+    private static String extractError(String body) {
+        try {
+            JSONObject err = new JSONObject(body);
+            if (err.has("error")) {
+                Object e = err.get("error");
+                if (e instanceof JSONObject) {
+                    JSONObject eo = (JSONObject) e;
+                    if (eo.has("message")) return eo.getString("message");
+                }
+            }
+        } catch (Exception ignore) {}
+        return body;
+    }
+
+    private static JSONObject parseJsonLenient(String text) throws Exception {
+        String cleaned = text.trim();
+        try {
+            return new JSONObject(cleaned);
+        } catch (Exception e) {
+            if (cleaned.startsWith("```")) {
+                int firstNl = cleaned.indexOf('\n');
+                if (firstNl > 0) cleaned = cleaned.substring(firstNl + 1);
+                if (cleaned.endsWith("```")) cleaned = cleaned.substring(0, cleaned.length() - 3);
+                cleaned = cleaned.trim();
+            }
+            // Strip non-JSON prefix/suffix the model occasionally adds.
+            int firstBrace = cleaned.indexOf('{');
+            int lastBrace  = cleaned.lastIndexOf('}');
+            if (firstBrace >= 0 && lastBrace > firstBrace) {
+                cleaned = cleaned.substring(firstBrace, lastBrace + 1);
+            }
+            return new JSONObject(cleaned);
+        }
     }
 
     private static String extractText(JSONObject resp) throws Exception {
