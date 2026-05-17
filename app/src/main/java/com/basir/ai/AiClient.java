@@ -126,10 +126,27 @@ public final class AiClient {
      */
     public static String convertToDocx(Context ctx, SharedPreferences prefs, Uri sourceUri,
                                        String mode, String language, File outFile) throws Exception {
+        return convertToDocx(ctx, prefs, sourceUri, mode, language, outFile, null);
+    }
+
+    /**
+     * Same as {@link #convertToDocx} but reports progress for long PDFs so the
+     * UI / notification can show a live page counter. Pass {@code null} for
+     * {@code progress} to disable callbacks.
+     */
+    public static String convertToDocx(Context ctx, SharedPreferences prefs, Uri sourceUri,
+                                       String mode, String language, File outFile,
+                                       ProgressCallback progress) throws Exception {
         if (MODE_DIRECT.equals(getMode(prefs))) {
-            return directConvertToDocx(ctx, prefs, sourceUri, mode, language, outFile);
+            return directConvertToDocx(ctx, prefs, sourceUri, mode, language, outFile, progress);
         }
         return proxyConvertToDocx(ctx, prefs, sourceUri, mode, language, outFile);
+    }
+
+    /** Reports incremental conversion progress (page-based) to the caller. */
+    public interface ProgressCallback {
+        /** Called whenever {@code currentPage} of {@code totalPages} has finished. */
+        void onProgress(int currentPage, int totalPages, String stage);
     }
 
     // ============================================================
@@ -261,8 +278,14 @@ public final class AiClient {
     //                      DIRECT IMPLEMENTATION
     // ============================================================
 
+    /** Pages per Gemini call. Tuned to stay safely below the 8K output token cap. */
+    private static final int PDF_PAGES_PER_BATCH = 12;
+    /** Hard upper bound to protect us from runaway loops on malformed responses. */
+    private static final int PDF_MAX_BATCHES = 60; // up to ~720 pages
+
     private static String directConvertToDocx(Context ctx, SharedPreferences prefs, Uri sourceUri,
-                                              String mode, String language, File outFile) throws Exception {
+                                              String mode, String language, File outFile,
+                                              ProgressCallback progress) throws Exception {
         String key = prefs.getString("gemini_api_key", "");
         String model = pickModel(prefs, "convert");
         String mimeType = ctx.getContentResolver().getType(sourceUri);
@@ -272,24 +295,100 @@ public final class AiClient {
         boolean isPptx = mimeType.contains("presentation");
 
         if (isPptx) {
-            return directConvertPptx(ctx, sourceUri, key, model, mode, language, outFile);
+            return directConvertPptx(ctx, sourceUri, key, model, mode, language, outFile, progress);
         }
-        // PDF (or fall-through generic) - send the raw bytes inline.
-        byte[] bytes = readUriBytesRaw(ctx, sourceUri, 25 * 1024 * 1024);
-        String langName = (language != null && language.toLowerCase().startsWith("ar")) ? "Arabic" : "English";
-        String prompt = buildDocPrompt(langName, mode);
+        if (!isPdf) {
+            // Generic binary - one-shot, no chunking.
+            byte[] bytes = readUriBytesRaw(ctx, sourceUri, 25 * 1024 * 1024);
+            String langName = (language != null && language.toLowerCase().startsWith("ar")) ? "Arabic" : "English";
+            String prompt = buildDocPrompt(langName, mode);
+            JSONObject parsed = GeminiDirectClient.generateJsonWithFile(
+                    key, model,
+                    "You are Basir, an assistant for blind and low-vision users.",
+                    prompt, bytes, mimeType);
+            renderDocxFromJson(parsed, language, outFile);
+            return outFile.getAbsolutePath();
+        }
 
-        JSONObject parsed = GeminiDirectClient.generateJsonWithFile(
-                key, model,
-                "You are Basir, an assistant for blind and low-vision users.",
-                prompt, bytes, isPdf ? "application/pdf" : mimeType);
+        // ===== PDF chunked conversion =====
+        // Sending the entire PDF and expecting one JSON back fails on long
+        // documents because Gemini's per-response output is capped at ~8K
+        // tokens. So we loop, asking Gemini to process a small page range
+        // each call, and we merge everything into a single .docx.
+        byte[] bytes = readUriBytesRaw(ctx, sourceUri, 50 * 1024 * 1024);
+        boolean arabic = language != null && language.toLowerCase().startsWith("ar");
+        String langName = arabic ? "Arabic" : "English";
 
-        renderDocxFromJson(parsed, language, outFile);
+        DocxBuilder doc = new DocxBuilder(arabic ? "ar" : "en");
+        int totalPages = -1;
+        int nextPage = 1;
+        int batchCounter = 0;
+        boolean wroteHeader = false;
+
+        while (batchCounter < PDF_MAX_BATCHES) {
+            batchCounter++;
+            int startPage = nextPage;
+            int endPage = (totalPages > 0)
+                    ? Math.min(startPage + PDF_PAGES_PER_BATCH - 1, totalPages)
+                    : startPage + PDF_PAGES_PER_BATCH - 1;
+
+            String chunkPrompt = buildChunkedDocPrompt(langName, mode, startPage, endPage,
+                    totalPages <= 0);
+
+            if (progress != null) {
+                int known = totalPages > 0 ? totalPages : Math.max(endPage, startPage);
+                progress.onProgress(startPage, known, "processing");
+            }
+
+            JSONObject parsed = GeminiDirectClient.generateJsonWithFile(
+                    key, model,
+                    "You are Basir, an assistant for blind and low-vision users.",
+                    chunkPrompt, bytes, "application/pdf");
+
+            // Capture the total page count from the first valid response.
+            if (totalPages <= 0) {
+                int reportedTotal = parsed.optInt("total_pages", -1);
+                if (reportedTotal > 0 && reportedTotal < 5000) {
+                    totalPages = reportedTotal;
+                }
+            }
+
+            // Header (title + summary) appears only on the very first batch.
+            if (!wroteHeader) {
+                String title = parsed.optString("title", "");
+                if (!title.isEmpty()) doc.title(title);
+                String summary = parsed.optString("summary", "");
+                if (!summary.isEmpty()) doc.paragraph(summary);
+                wroteHeader = true;
+            }
+
+            JSONArray sections = parsed.optJSONArray("sections");
+            renderSectionsInto(doc, sections, language);
+
+            // Determine if there is more to do.
+            int effectiveEnd = parsed.optInt("end_page", endPage);
+            if (effectiveEnd < startPage) effectiveEnd = endPage;
+
+            if (totalPages > 0 && effectiveEnd >= totalPages) break;
+            if (totalPages <= 0 && (sections == null || sections.length() == 0)) {
+                // No data and we still don't know totals -> assume done.
+                break;
+            }
+
+            nextPage = effectiveEnd + 1;
+        }
+
+        if (progress != null && totalPages > 0) {
+            progress.onProgress(totalPages, totalPages, "done");
+        }
+
+        doc.writeTo(outFile);
         return outFile.getAbsolutePath();
     }
 
     private static String directConvertPptx(Context ctx, Uri sourceUri, String apiKey, String model,
-                                            String mode, String language, File outFile) throws Exception {
+                                            String mode, String language, File outFile,
+                                            ProgressCallback progress) throws Exception {
         PptxExtractor.Deck deck = PptxExtractor.parse(ctx, sourceUri);
         if (deck.slides.isEmpty()) throw new Exception("No readable slides found");
 
@@ -299,8 +398,12 @@ public final class AiClient {
         DocxBuilder doc = new DocxBuilder(arabic ? "ar" : "en");
         doc.title(arabic ? "تحويل عرض تقديمي" : "Presentation conversion");
 
+        int total = deck.slides.size();
+        int idx = 0;
         // Process each slide separately so very large decks still succeed.
         for (PptxExtractor.Slide slide : deck.slides) {
+            idx++;
+            if (progress != null) progress.onProgress(idx, total, "processing");
             doc.heading(1, (arabic ? "الشريحة " : "Slide ") + slide.index);
             if (slide.text != null && !slide.text.isEmpty()) {
                 doc.paragraph(slide.text);
@@ -347,6 +450,7 @@ public final class AiClient {
                 }
             }
         }
+        if (progress != null) progress.onProgress(total, total, "done");
         doc.writeTo(outFile);
         return outFile.getAbsolutePath();
     }
@@ -394,62 +498,124 @@ public final class AiClient {
     private static void renderDocxFromJson(JSONObject parsed, String language, File outFile) throws Exception {
         boolean arabic = language != null && language.toLowerCase().startsWith("ar");
         DocxBuilder doc = new DocxBuilder(arabic ? "ar" : "en");
+        String title = parsed.optString("title", "");
+        if (!title.isEmpty()) doc.title(title);
+        String summary = parsed.optString("summary", "");
+        if (!summary.isEmpty()) doc.paragraph(summary);
+        renderSectionsInto(doc, parsed.optJSONArray("sections"), language);
+        doc.writeTo(outFile);
+    }
 
+    /** Append a JSON "sections" array onto an existing DocxBuilder. */
+    private static void renderSectionsInto(DocxBuilder doc, JSONArray sections, String language) {
+        if (sections == null) return;
+        boolean arabic = language != null && language.toLowerCase().startsWith("ar");
         String labelImg = arabic ? "وصف الصورة" : "Image description";
         String labelTbl = arabic ? "جدول"     : "Table";
         String labelPage = arabic ? "الصفحة"  : "Page";
         String labelSlide = arabic ? "الشريحة" : "Slide";
 
-        String title = parsed.optString("title", "");
-        if (!title.isEmpty()) doc.title(title);
-        String summary = parsed.optString("summary", "");
-        if (!summary.isEmpty()) doc.paragraph(summary);
-
-        JSONArray sections = parsed.optJSONArray("sections");
-        if (sections != null) {
-            for (int i = 0; i < sections.length(); i++) {
-                JSONObject sec = sections.optJSONObject(i);
-                if (sec == null) continue;
-                String type = sec.optString("type", "");
-                switch (type) {
-                    case "page_marker":
-                        doc.heading(1, sec.optString("label", labelPage));
-                        break;
-                    case "slide_marker":
-                        doc.heading(1, sec.optString("label", labelSlide));
-                        break;
-                    case "heading": {
-                        int lvl = sec.optInt("level", 2);
-                        doc.heading(lvl, sec.optString("text", ""));
-                        break;
-                    }
-                    case "paragraph":
-                        doc.paragraph(sec.optString("text", ""));
-                        break;
-                    case "image_description": {
-                        String ctx = sec.optString("context", "");
-                        String prefix = labelImg + (ctx.isEmpty() ? "" : " (" + ctx + ")") + ":";
-                        doc.heading(3, prefix);
-                        doc.paragraph(sec.optString("description", ""));
-                        break;
-                    }
-                    case "table_description": {
-                        int rows = sec.optInt("rows", 0);
-                        int cols = sec.optInt("cols", 0);
-                        String dims = (rows > 0 && cols > 0) ? " (" + rows + " × " + cols + ")" : "";
-                        String ctx = sec.optString("context", "");
-                        String prefix = labelTbl + dims + (ctx.isEmpty() ? "" : " (" + ctx + ")") + ":";
-                        doc.heading(3, prefix);
-                        doc.paragraph(sec.optString("summary", ""));
-                        break;
-                    }
-                    default:
-                        String fallback = sec.optString("text", "");
-                        if (!fallback.isEmpty()) doc.paragraph(fallback);
+        for (int i = 0; i < sections.length(); i++) {
+            JSONObject sec = sections.optJSONObject(i);
+            if (sec == null) continue;
+            String type = sec.optString("type", "");
+            switch (type) {
+                case "page_marker":
+                    doc.heading(1, sec.optString("label", labelPage));
+                    break;
+                case "slide_marker":
+                    doc.heading(1, sec.optString("label", labelSlide));
+                    break;
+                case "heading": {
+                    int lvl = sec.optInt("level", 2);
+                    doc.heading(lvl, sec.optString("text", ""));
+                    break;
                 }
+                case "paragraph":
+                    doc.paragraph(sec.optString("text", ""));
+                    break;
+                case "image_description": {
+                    String ctx = sec.optString("context", "");
+                    String prefix = labelImg + (ctx.isEmpty() ? "" : " (" + ctx + ")") + ":";
+                    doc.heading(3, prefix);
+                    doc.paragraph(sec.optString("description", ""));
+                    break;
+                }
+                case "table_description": {
+                    int rows = sec.optInt("rows", 0);
+                    int cols = sec.optInt("cols", 0);
+                    String dims = (rows > 0 && cols > 0) ? " (" + rows + " × " + cols + ")" : "";
+                    String ctx = sec.optString("context", "");
+                    String prefix = labelTbl + dims + (ctx.isEmpty() ? "" : " (" + ctx + ")") + ":";
+                    doc.heading(3, prefix);
+                    doc.paragraph(sec.optString("summary", ""));
+                    break;
+                }
+                default:
+                    String fallback = sec.optString("text", "");
+                    if (!fallback.isEmpty()) doc.paragraph(fallback);
             }
         }
-        doc.writeTo(outFile);
+    }
+
+    /**
+     * Prompt for a single chunk in the PDF batch loop. We instruct Gemini to
+     * (a) only process the requested page range and (b) always report
+     * total_pages so we know when to stop.
+     */
+    private static String buildChunkedDocPrompt(String langName, String mode,
+                                                int startPage, int endPage,
+                                                boolean isFirstBatch) {
+        String modeNote;
+        switch (mode == null ? "full" : mode.toLowerCase()) {
+            case "simple":
+                modeNote = "Plain-text version optimized for screen readers; no decorative elements.";
+                break;
+            case "descriptions_only":
+                modeNote = "Output ONLY image descriptions, one per heading.";
+                break;
+            case "text_only":
+                modeNote = "Output ONLY extracted text and tables; skip image descriptions.";
+                break;
+            default:
+                modeNote = "Include all text, tables, and detailed image descriptions.";
+        }
+        StringBuilder p = new StringBuilder();
+        p.append("You are processing a PDF for a blind user.\n");
+        p.append("Respond strictly in ").append(langName).append(".\n");
+        p.append(modeNote).append("\n\n");
+        p.append("CRITICAL RULES:\n");
+        p.append("- Process ONLY pages ").append(startPage).append(" to ").append(endPage)
+                .append(" of the attached PDF.\n");
+        p.append("- Do NOT skip any page in that range. If a page is blank or empty, still emit a page_marker for it.\n");
+        p.append("- Do NOT include content from pages outside the requested range.\n");
+        p.append("- ALWAYS include the field \"total_pages\" with the TOTAL page count of the entire PDF (not just this batch).\n");
+        p.append("- Also include the field \"end_page\" with the last page number you actually processed in this response.\n");
+        if (!isFirstBatch) {
+            p.append("- This is a continuation batch: do NOT repeat the document title or summary; leave them out.\n");
+        }
+        p.append("\nReturn a SINGLE JSON object (no markdown, no code fences):\n");
+        p.append("{\n");
+        if (isFirstBatch) {
+            p.append("  \"title\": \"...\",\n");
+            p.append("  \"summary\": \"short summary 1-3 sentences\",\n");
+        }
+        p.append("  \"total_pages\": <integer>,\n");
+        p.append("  \"end_page\": <integer>,\n");
+        p.append("  \"sections\": [\n");
+        p.append("    { \"type\": \"page_marker\", \"label\": \"Page X\" },\n");
+        p.append("    { \"type\": \"heading\", \"level\": 1, \"text\": \"...\" },\n");
+        p.append("    { \"type\": \"paragraph\", \"text\": \"...\" },\n");
+        p.append("    { \"type\": \"image_description\", \"context\": \"Page X\", \"description\": \"...\" },\n");
+        p.append("    { \"type\": \"table_description\", \"rows\": 6, \"cols\": 4, \"context\": \"Page X\", \"summary\": \"...\" }\n");
+        p.append("  ]\n");
+        p.append("}\n\n");
+        p.append("Quality rules:\n");
+        p.append("- Describe every image thoroughly (type, main elements, layout, visible text, purpose).\n");
+        p.append("- For tables, give dimensions and a screen-reader friendly summary.\n");
+        p.append("- Never identify real people by face.\n");
+        p.append("- Output valid JSON only, no other prose.");
+        return p.toString();
     }
 
     private static String systemPrompt(String language, String instruction) {

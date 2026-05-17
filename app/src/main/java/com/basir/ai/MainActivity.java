@@ -143,6 +143,18 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
         super.onDestroy();
     }
 
+    @Override
+    protected void onResume() {
+        super.onResume();
+        ConversionState.get().addListener(conversionListener);
+    }
+
+    @Override
+    protected void onPause() {
+        ConversionState.get().removeListener(conversionListener);
+        super.onPause();
+    }
+
     private void loadSettings() {
         lang = prefs.getString("language", "ar");
         privacyMode = prefs.getBoolean("privacy_mode", true);
@@ -166,6 +178,10 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
         addIfMissing(need, Manifest.permission.RECORD_AUDIO);
         addIfMissing(need, Manifest.permission.ACCESS_FINE_LOCATION);
         addIfMissing(need, Manifest.permission.ACCESS_COARSE_LOCATION);
+        // Android 13+ requires runtime grant to post the conversion progress notification.
+        if (Build.VERSION.SDK_INT >= 33) {
+            addIfMissing(need, "android.permission.POST_NOTIFICATIONS");
+        }
         if (!need.isEmpty()) requestPermissions(need.toArray(new String[0]), REQ_PERMISSIONS);
     }
 
@@ -897,39 +913,96 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
                 .show();
     }
 
+    private TextView convertProgressText;
+    private final ConversionState.Listener conversionListener = state -> onConversionStateChanged(state);
+
     private void handleConvertFile(Uri uri) {
+        if (ConversionState.get().isRunning()) {
+            speak(t("هناك عملية تحويل قيد التنفيذ بالفعل.",
+                    "A conversion is already in progress."));
+            showConvertingScreen();
+            return;
+        }
+        // Persist read permission so the Service (a separate component) can
+        // still open the picked Uri after the picker returns.
+        try {
+            getContentResolver().takePersistableUriPermission(uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        } catch (Exception ignore) {}
+
+        Intent svc = new Intent(this, ConversionService.class);
+        svc.setData(uri); // grants read access to the service
+        svc.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        svc.putExtra(ConversionService.EXTRA_SOURCE_URI, uri);
+        svc.putExtra(ConversionService.EXTRA_LANGUAGE, lang);
+        svc.putExtra(ConversionService.EXTRA_MODE, "full");
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(svc);
+        } else {
+            startService(svc);
+        }
+        showConvertingScreen();
+    }
+
+    /** Live progress screen, kept in sync with {@link ConversionState}. */
+    private void showConvertingScreen() {
         resetScreen(t("جاري التحويل", "Converting"),
-                t("جاري رفع الملف ومعالجته عبر Gemini. قد تستغرق العملية دقيقة أو دقيقتين.", "Uploading and processing the file via Gemini. This may take one or two minutes."));
-        addPlainText(t("جاري رفع الملف...", "Uploading file..."));
+                t("يمكنك إغلاق التطبيق أو استخدامه بشكل عادي، وسيستمر التحويل في الخلفية مع إشعار حي بالتقدم.",
+                  "You can close the app or keep using it - the conversion continues in the background with a live progress notification."));
+        convertProgressText = new TextView(this);
+        convertProgressText.setTextSize(textSize(17));
+        convertProgressText.setTextColor(colorText());
+        convertProgressText.setPadding(0, dp(8), 0, dp(8));
+        root.addView(convertProgressText, fullWidth());
         speak(t("جاري تحويل الملف...", "Converting file..."));
+        // The listener will populate the text immediately with current state.
+    }
 
-        aiExecutor.execute(() -> {
-            try {
-                // Process into a temp file inside the app sandbox first.
-                File temp = new File(getCacheDir(),
-                        "basir-tmp-" + System.currentTimeMillis() + ".docx");
-                AiClient.convertToDocx(MainActivity.this, prefs, uri,
-                        "full", lang, temp);
-
-                // Then publish to the device's Downloads folder so the user
-                // gets a real content:// Uri that any Word/Office app can open
-                // and that can be shared safely on modern Android.
-                String fileName = "Basir-" + System.currentTimeMillis() + ".docx";
-                final Uri publicUri = publishDocxToDownloads(temp, fileName);
-                final String displayName = fileName;
-                if (temp.exists()) temp.delete();
-
-                log("convert", displayName);
-                runOnUiThread(() -> showConvertResult(publicUri, displayName));
-            } catch (Exception e) {
-                final String msg = safeError(e.getMessage());
+    /** Called by ConversionState on the main thread. */
+    private void onConversionStateChanged(ConversionState state) {
+        if (convertProgressText != null) {
+            int cur = state.current();
+            int tot = state.total();
+            String line;
+            if (state.status() == ConversionState.Status.RUNNING) {
+                if (tot > 0) {
+                    line = t("جاري المعالجة... الصفحة ", "Processing... page ")
+                            + cur + t(" من ", " of ") + tot;
+                } else {
+                    line = t("جاري المعالجة...", "Processing...");
+                }
+                convertProgressText.setText(line);
+            } else if (state.status() == ConversionState.Status.SUCCESS) {
+                convertProgressText.setText(t("اكتمل التحويل.", "Conversion complete."));
+                File temp = state.result();
+                state.clear();
+                if (temp != null && temp.exists()) {
+                    aiExecutor.execute(() -> {
+                        try {
+                            String fileName = "Basir-" + System.currentTimeMillis() + ".docx";
+                            Uri publicUri = publishDocxToDownloads(temp, fileName);
+                            temp.delete();
+                            log("convert", fileName);
+                            runOnUiThread(() -> showConvertResult(publicUri, fileName));
+                        } catch (Exception e) {
+                            final String msg = safeError(e.getMessage());
+                            log("convert_error", msg);
+                            runOnUiThread(() -> {
+                                resetScreen(t("تعذر إكمال التحويل", "Conversion could not be completed"), msg);
+                                addBackButton();
+                            });
+                        }
+                    });
+                }
+            } else if (state.status() == ConversionState.Status.FAILED) {
+                final String msg = safeError(state.error());
+                state.clear();
                 log("convert_error", msg);
-                runOnUiThread(() -> {
-                    resetScreen(t("تعذر إكمال التحويل", "Conversion could not be completed"), msg);
-                    addBackButton();
-                });
+                resetScreen(t("تعذر إكمال التحويل", "Conversion could not be completed"), msg);
+                addBackButton();
             }
-        });
+        }
     }
 
     /**
