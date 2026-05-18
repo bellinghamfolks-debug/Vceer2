@@ -7,7 +7,9 @@ import android.os.Bundle;
 import android.text.TextUtils;
 import android.view.View;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.EditText;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 import androidx.appcompat.app.AppCompatActivity;
@@ -30,14 +32,16 @@ public class MainActivity extends AppCompatActivity {
     private static final long   DEF_IDLE_TIMEOUT  = 30;
 
     // SharedPreferences keys
-    private static final String K_LIKE_TEXT     = "like_text";
-    private static final String K_YES_TEXT      = "yes_text";
-    private static final String K_CLOSE_TEXT    = "close_text";
-    private static final String K_TARGET_PKG    = "target_pkg";
-    private static final String K_PROFILE_KW    = "profile_keywords";
-    private static final String K_SCAN_INTERVAL = "scan_interval";
-    private static final String K_POPUP_WAIT    = "popup_wait";
-    private static final String K_IDLE_TIMEOUT  = "idle_timeout";
+    private static final String K_LIKE_TEXT       = "like_text";
+    private static final String K_YES_TEXT        = "yes_text";
+    private static final String K_CLOSE_TEXT      = "close_text";
+    private static final String K_TARGET_PKG      = "target_pkg";
+    private static final String K_PROFILE_KW      = "profile_keywords";
+    private static final String K_SCAN_INTERVAL   = "scan_interval";
+    private static final String K_POPUP_WAIT      = "popup_wait";
+    private static final String K_IDLE_TIMEOUT    = "idle_timeout";
+    private static final String K_DEDUP_ENABLED   = "dedup_enabled";
+    private static final String K_ADVANCED_OPEN   = "advanced_open";
 
     private SharedPreferences prefs;
 
@@ -49,6 +53,10 @@ public class MainActivity extends AppCompatActivity {
     private EditText inputScanInterval;
     private EditText inputPopupWait;
     private EditText inputIdleTimeout;
+    private CheckBox checkDedup;
+
+    private Button       btnToggleAdvanced;
+    private LinearLayout advancedSettings;
 
     private TextView serviceStatusText;
     private TextView execStatusText;
@@ -76,6 +84,9 @@ public class MainActivity extends AppCompatActivity {
         inputScanInterval    = findViewById(R.id.inputScanInterval);
         inputPopupWait       = findViewById(R.id.inputPopupWait);
         inputIdleTimeout     = findViewById(R.id.inputIdleTimeout);
+        checkDedup           = findViewById(R.id.checkDedup);
+        btnToggleAdvanced    = findViewById(R.id.btnToggleAdvanced);
+        advancedSettings     = findViewById(R.id.advancedSettings);
         serviceStatusText    = findViewById(R.id.serviceStatusText);
         execStatusText       = findViewById(R.id.execStatusText);
         counterText          = findViewById(R.id.counterText);
@@ -95,6 +106,22 @@ public class MainActivity extends AppCompatActivity {
         btnOpenAcc.setOnClickListener(v -> openAccessibilitySettings());
         btnReset.setOnClickListener(v -> resetDefaults());
         btnClearHistory.setOnClickListener(v -> confirmClearHistory());
+        btnToggleAdvanced.setOnClickListener(v -> toggleAdvancedSettings());
+        checkDedup.setOnCheckedChangeListener((v, checked) ->
+                prefs.edit().putBoolean(K_DEDUP_ENABLED, checked).apply());
+    }
+
+    private void toggleAdvancedSettings() {
+        boolean shown = advancedSettings.getVisibility() == View.VISIBLE;
+        boolean nowShown = !shown;
+        advancedSettings.setVisibility(nowShown ? View.VISIBLE : View.GONE);
+        btnToggleAdvanced.setText(nowShown
+                ? R.string.btn_hide_advanced
+                : R.string.btn_show_advanced);
+        btnToggleAdvanced.setContentDescription(getString(nowShown
+                ? R.string.btn_hide_advanced
+                : R.string.btn_show_advanced));
+        prefs.edit().putBoolean(K_ADVANCED_OPEN, nowShown).apply();
     }
 
     @Override
@@ -179,13 +206,10 @@ public class MainActivity extends AppCompatActivity {
         }
         saveCurrentValues();
 
-        // dedupEnabled = true by default. (Could be exposed as a UI switch
-        // later, but for the user's bug "re-likes the same members", the
-        // fix is to enable it always — and let "Clear history" be the
-        // escape hatch.)
+        boolean dedup = checkDedup != null && checkDedup.isChecked();
         ClickerService.BotConfig cfg = new ClickerService.BotConfig(
                 like, yes, close, pkg, keywords,
-                interval, popup, idleS * 1000L, /* dedupEnabled */ true);
+                interval, popup, idleS * 1000L, dedup);
 
         boolean ok = svc.startBot(cfg);
         toast(getString(ok ? R.string.msg_started : R.string.msg_already_running));
@@ -216,6 +240,7 @@ public class MainActivity extends AppCompatActivity {
         inputScanInterval.setText(String.valueOf(DEF_SCAN_INTERVAL));
         inputPopupWait.setText(String.valueOf(DEF_POPUP_WAIT));
         inputIdleTimeout.setText(String.valueOf(DEF_IDLE_TIMEOUT));
+        if (checkDedup != null) checkDedup.setChecked(true);
         saveCurrentValues();
         toast(getString(R.string.msg_reset_done));
     }
@@ -246,6 +271,15 @@ public class MainActivity extends AppCompatActivity {
         inputScanInterval.setText(String.valueOf(prefs.getLong(K_SCAN_INTERVAL, DEF_SCAN_INTERVAL)));
         inputPopupWait.setText(String.valueOf(prefs.getLong(K_POPUP_WAIT, DEF_POPUP_WAIT)));
         inputIdleTimeout.setText(String.valueOf(prefs.getLong(K_IDLE_TIMEOUT, DEF_IDLE_TIMEOUT)));
+        checkDedup.setChecked(prefs.getBoolean(K_DEDUP_ENABLED, true));
+        boolean advOpen = prefs.getBoolean(K_ADVANCED_OPEN, false);
+        advancedSettings.setVisibility(advOpen ? View.VISIBLE : View.GONE);
+        btnToggleAdvanced.setText(advOpen
+                ? R.string.btn_hide_advanced
+                : R.string.btn_show_advanced);
+        btnToggleAdvanced.setContentDescription(getString(advOpen
+                ? R.string.btn_hide_advanced
+                : R.string.btn_show_advanced));
     }
 
     private void saveCurrentValues() {
@@ -258,6 +292,7 @@ public class MainActivity extends AppCompatActivity {
         Long iv = parseLong(inputScanInterval); if (iv != null) e.putLong(K_SCAN_INTERVAL, iv);
         Long pw = parseLong(inputPopupWait);    if (pw != null) e.putLong(K_POPUP_WAIT,    pw);
         Long it = parseLong(inputIdleTimeout);  if (it != null) e.putLong(K_IDLE_TIMEOUT,  it);
+        if (checkDedup != null) e.putBoolean(K_DEDUP_ENABLED, checkDedup.isChecked());
         e.apply();
     }
 

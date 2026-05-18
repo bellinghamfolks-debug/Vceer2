@@ -55,6 +55,10 @@
     <string name="label_dedup">تذكُّر الأعضاء بين الجلسات (يمنع التكرار)</string>
     <string name="label_dedup_desc">يستخدم قاعدة بيانات محلية لتسجيل الأعضاء الذين تمّ التفاعل معهم. لن يُكرّر البوت أبدًا.</string>
 
+    <string name="btn_show_advanced">إظهار الإعدادات المتقدمة</string>
+    <string name="btn_hide_advanced">إخفاء الإعدادات المتقدمة</string>
+    <string name="advanced_section_hint">هذه إعدادات للحالات الخاصة. الافتراضيات تعمل في 95٪ من الحالات — لا تغيّرها إلا إذا كنت تعرف ما تفعل.</string>
+
     <string name="btn_start">بدء التشغيل</string>
     <string name="btn_stop">إيقاف التشغيل</string>
     <string name="btn_open_accessibility">فتح إعدادات إمكانية الوصول</string>
