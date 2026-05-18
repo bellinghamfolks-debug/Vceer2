@@ -95,6 +95,10 @@ public class ClickerService extends AccessibilityService {
     // v8: keywords that say "load more / show more" — we tap them before
     // swiping if visible, because some apps don't auto-paginate on scroll.
     private static final String[] LOAD_MORE_KEYWORDS = {
+            // v9.3: "مشاهدة المزيد" added — it's the literal text Mawada uses
+            // at the bottom of its search-results list (confirmed in the
+            // accessibility dump).
+            "مشاهدة المزيد",
             "تحميل المزيد", "عرض المزيد", "المزيد", "إظهار المزيد",
             "Load more", "Show more", "More"
     };
@@ -144,6 +148,9 @@ public class ClickerService extends AccessibilityService {
     private int    state = STATE_LOOK_LIKE;
     private long   stateChangedAt = 0L;
     private int    nodesVisitedThisTick = 0;
+    // v9.3: separate budget for keyword scans (containsAnyText) so they don't
+    // starve findUnprocessedClickable of its budget on huge WebView trees.
+    private int    keywordScanThisTick  = 0;
 
     // v8: stuck detection — instead of counting scrolls, we record when
     // the no-progress streak started. Reset to 0 on every confirmed like.
@@ -337,6 +344,7 @@ public class ClickerService extends AccessibilityService {
     private long performOneTick() {
         long now = System.currentTimeMillis();
         nodesVisitedThisTick = 0;
+        keywordScanThisTick = 0;
 
         DisplayMetrics dm = getResources().getDisplayMetrics();
         screenW = dm.widthPixels;
@@ -717,7 +725,10 @@ public class ClickerService extends AccessibilityService {
 
     private boolean containsAnyText(AccessibilityNodeInfo node, List<String> needles, int depth) {
         if (node == null || depth > MAX_TREE_DEPTH) return false;
-        if (++nodesVisitedThisTick > MAX_NODES_PER_TICK) return false;
+        // v9.3: use the separate keyword-scan budget. Sharing nodesVisitedThisTick
+        // here was a critical bug — on Mawada's WebView (5000+ nodes) it ate the
+        // entire budget before findUnprocessedClickable could even start.
+        if (++keywordScanThisTick > MAX_NODES_PER_TICK) return false;
 
         CharSequence text = node.getText();
         if (text != null) {
@@ -771,6 +782,16 @@ public class ClickerService extends AccessibilityService {
             AccessibilityNodeInfo node, String normalizedNeedle, int depth, boolean skipProcessed) {
         if (node == null || depth > MAX_TREE_DEPTH) return null;
         if (++nodesVisitedThisTick > MAX_NODES_PER_TICK) return null;
+
+        // v9.3: prune zero-area subtrees. Mawada's WebView exposes thousands of
+        // off-screen list items as accessibility nodes with bounds like
+        // [x,y][x',y] (zero height). Walking into them wastes the budget on
+        // unclickable virtualized rows before the DFS ever reaches the visible
+        // "إهتمام" buttons that live at the end of the tree. The actual visible
+        // buttons have non-zero bounds and are unaffected by this prune.
+        Rect r = new Rect();
+        node.getBoundsInScreen(r);
+        if (r.isEmpty()) return null;
 
         if (textMatches(node, normalizedNeedle) && node.isVisibleToUser()) {
             AccessibilityNodeInfo clickable = climbToClickable(node);
