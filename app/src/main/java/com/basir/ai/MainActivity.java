@@ -652,6 +652,18 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
                 t("حلّل ملفات PDF، والصور، والفواتير، والعقود، والعروض التقديمية.", "Analyze PDF files, images, invoices, contracts, and presentations."),
                 v -> showDocumentScreen());
 
+        // v2.0 — Document Q&A entry on the home screen, shown only when a
+        // recently-converted document is still cached on Gemini's side.
+        if (ConversionState.get().hasUploadedFile()) {
+            String src = ConversionState.get().sourceDisplayName();
+            addCard(t("اسأل عن آخر مستند", "Ask about the last document"),
+                    src != null && !src.isEmpty()
+                        ? t("اطرح أي سؤال عن: ", "Ask anything about: ") + src
+                        : t("اطرح أي سؤال عن المستند الذي قمت بتحويله للتو.",
+                            "Ask any question about the document you just converted."),
+                    v -> showDocumentQAScreen());
+        }
+
         addCard(t("ترجمة وشرح", "Translate and explain"),
                 t("ترجم النصوص، وافهم المعنى، والنبرة، والسياق بطريقة مبسطة.", "Translate text and understand the meaning, tone, and context in a simple way."),
                 v -> showTranslateScreen());
@@ -1139,6 +1151,25 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
         }
     }
 
+    /** Resolve the user-visible name of a content URI ("contract.pdf").
+     *  Returns the last path segment as a fallback. */
+    private String resolveDisplayName(Uri uri) {
+        if (uri == null) return null;
+        try (android.database.Cursor c = getContentResolver().query(uri,
+                new String[]{ android.provider.OpenableColumns.DISPLAY_NAME },
+                null, null, null)) {
+            if (c != null && c.moveToFirst()) {
+                int idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME);
+                if (idx >= 0) {
+                    String name = c.getString(idx);
+                    if (name != null && !name.isEmpty()) return name;
+                }
+            }
+        } catch (Throwable ignore) {}
+        String last = uri.getLastPathSegment();
+        return last == null ? "" : last;
+    }
+
     private TextView convertProgressText;
     private TextView convertStageText;
     private ProgressBar convertProgressBar;
@@ -1159,6 +1190,12 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
             getContentResolver().takePersistableUriPermission(uri,
                     Intent.FLAG_GRANT_READ_URI_PERMISSION);
         } catch (Exception ignore) {}
+
+        // v2.0: remember the display name now and forget any previous
+        // upload — the Document Q&A entry on the home screen will hide
+        // itself until this conversion completes successfully.
+        ConversionState.get().clearUploadedFile();
+        ConversionState.get().setSourceDisplayName(resolveDisplayName(uri));
 
         String outputMode = prefs.getString("convert_output_mode", "full");
         Intent svc = new Intent(this, ConversionService.class);
@@ -1417,6 +1454,13 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
                 speak(t("تعذرت مشاركة الملف.", "Could not share the file."));
             }
         });
+        // v2.0: Ask follow-up questions about the just-converted document.
+        // The file is still cached on Gemini's side from the conversion run,
+        // so no re-upload is needed — answers come back in a second or two.
+        if (ConversionState.get().hasUploadedFile()) {
+            addPrimaryButton(t("اسأل عن المستند", "Ask about the document"),
+                    v -> showDocumentQAScreen());
+        }
         addOutlineButton(t("حذف الملف من الجهاز", "Delete file from device"), v -> {
             try {
                 int deleted = getContentResolver().delete(docxUri, null, null);
@@ -1428,6 +1472,135 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
             showHome();
         });
         addBackButton();
+    }
+
+    // ============================================================
+    // v2.0 — Document Q&A
+    // ============================================================
+    //
+    // After a PDF conversion the document stays cached on Gemini's Files
+    // API for 48 h. This screen lets the user ask any number of follow-up
+    // questions about it ("how much is the total on this invoice?",
+    // "what's the address on page 3?", "summarize the warranty section")
+    // without re-uploading anything — each question is a kilobyte over
+    // the wire and the answer comes back in a few seconds.
+    //
+    // For a blind user, a focused single-Q-single-A layout is more usable
+    // than a scrollable chat log: TalkBack reads one block at a time, and
+    // the answer is also spoken via TTS the moment it arrives.
+
+    /** Last question the user asked, kept across rebuilds of the screen. */
+    private String lastDocQaQuestion = "";
+    private String lastDocQaAnswer   = "";
+
+    private void showDocumentQAScreen() {
+        ConversionState st = ConversionState.get();
+        if (!st.hasUploadedFile()) {
+            resetScreen(t("اسأل عن المستند", "Ask about the document"),
+                    t("لا يوجد مستند محفوظ للأسئلة. حوّل ملف PDF أولًا ثم ارجع إلى هذه الشاشة.",
+                      "No document is cached for questions. Convert a PDF first, then come back to this screen."));
+            addBackButton();
+            return;
+        }
+
+        String src = st.sourceDisplayName();
+        resetScreen(t("اسأل عن المستند", "Ask about the document"),
+                src != null && !src.isEmpty()
+                    ? t("اطرح أي سؤال عن: ", "Ask anything about: ") + src
+                    : t("اطرح أي سؤال عن المستند الذي تم تحويله.",
+                        "Ask any question about the document you just converted."));
+
+        // Show the previous answer (if any) so the user can refer back to it
+        // while typing the next question. announceForAccessibility makes
+        // TalkBack read it the moment the screen rebuilds.
+        if (!lastDocQaQuestion.isEmpty()) {
+            addPlainText(t("سؤالك السابق: ", "Your previous question: ") + lastDocQaQuestion);
+        }
+        if (!lastDocQaAnswer.isEmpty()) {
+            addPlainText(t("الإجابة: ", "Answer: ") + lastDocQaAnswer);
+        }
+
+        final EditText input = makeInput(
+                t("اكتب سؤالك هنا (مثلاً: ما هو إجمالي الفاتورة؟)",
+                  "Type your question here (e.g. what's the invoice total?)"),
+                true);
+        root.addView(input, fullWidth());
+
+        addPrimaryButton(t("إرسال السؤال", "Send question"), v -> {
+            String q = input.getText().toString().trim();
+            if (q.isEmpty()) {
+                speak(t("اكتب سؤالًا أولًا.", "Type a question first."));
+                return;
+            }
+            askAboutDocument(q);
+        });
+
+        if (!lastDocQaQuestion.isEmpty() || !lastDocQaAnswer.isEmpty()) {
+            addOutlineButton(t("مسح المحادثة", "Clear conversation"), v -> {
+                lastDocQaQuestion = "";
+                lastDocQaAnswer = "";
+                showDocumentQAScreen();
+            });
+        }
+        addBackButton();
+    }
+
+    private void askAboutDocument(String question) {
+        ConversionState st = ConversionState.get();
+        if (!st.hasUploadedFile()) {
+            speak(t("لا يوجد مستند للسؤال عنه.", "No document available to ask about."));
+            return;
+        }
+        if (!AiClient.isConfigured(prefs)) { showAiSettingsDialog(); return; }
+
+        lastDocQaQuestion = question;
+        lastDocQaAnswer = "";
+        resetScreen(t("اسأل عن المستند", "Ask about the document"),
+                t("جاري البحث في المستند...", "Searching the document..."));
+        addPlainText(t("سؤالك: ", "Your question: ") + question);
+        speak(t("جاري البحث في المستند...", "Searching the document..."));
+
+        final String fileUri  = st.uploadedFileUri();
+        final String mimeType = st.uploadedFileMime();
+        final String apiKey   = prefs.getString("gemini_api_key", "");
+        final String model    = AiClient.pickModel(prefs, "convert");
+        final boolean arabic  = lang != null && lang.toLowerCase().startsWith("ar");
+        final String system   = arabic
+                ? "أنت بصير، مساعد للمستخدمين المكفوفين. أجب باللغة العربية بلغة واضحة ومنظمة، واذكر رقم الصفحة عند الإمكان."
+                : "You are Basir, an assistant for blind and low-vision users. Answer in clear, structured English and cite page numbers when possible.";
+
+        aiExecutor.execute(() -> {
+            try {
+                String answer = GeminiDirectClient.askAboutFile(
+                        apiKey, model, system, question, fileUri, mimeType);
+                if (answer == null) answer = "";
+                final String a = answer.trim();
+                lastDocQaAnswer = a;
+                log("doc_qa", question + "\n→ " + a);
+                runOnUiThread(() -> {
+                    resetScreen(t("اسأل عن المستند", "Ask about the document"), null);
+                    addPlainText(t("سؤالك: ", "Your question: ") + question);
+                    addPlainText(t("الإجابة: ", "Answer: ") + a);
+                    speak(a);
+                    addPrimaryButton(t("سؤال آخر", "Another question"), v -> showDocumentQAScreen());
+                    addOutlineButton(t("مسح المحادثة", "Clear conversation"), v -> {
+                        lastDocQaQuestion = "";
+                        lastDocQaAnswer = "";
+                        showDocumentQAScreen();
+                    });
+                    addBackButton();
+                });
+            } catch (Exception e) {
+                final String msg = errorMessage(e);
+                log("doc_qa_error", msg);
+                runOnUiThread(() -> {
+                    resetScreen(t("تعذر الإجابة عن السؤال",
+                                  "Could not answer the question"), msg);
+                    addPrimaryButton(t("حاول مرة أخرى", "Try again"), v -> showDocumentQAScreen());
+                    addBackButton();
+                });
+            }
+        });
     }
 
     // ============================================================
