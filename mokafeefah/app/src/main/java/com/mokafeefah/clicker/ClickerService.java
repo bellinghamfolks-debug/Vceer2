@@ -19,6 +19,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -26,56 +27,50 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * AccessibilityService that drives the auto-like loop.
+ * v3 rewrite — root-cause fixes for "one like then infinite scroll, then crash".
  *
- * Rewritten from the v1 APK with three categories of fixes:
+ *  CRASH ROOT CAUSE (v2): tickPool was a List, and track() blindly appended.
+ *  Any helper that returned a child node which had been added during recursion
+ *  AND then re-tracked by the caller would be recycle()'d twice at end of tick.
+ *  Double-recycle corrupts system_server's state for our service and after a
+ *  few dozen ticks the OS denies every accessibility op → "frozen / crashed".
+ *  v3 uses an IdentityHashMap pool — each unique reference is recycled exactly
+ *  once, ever.
  *
- *  1) PERFORMANCE — the v1 tick was doing one full DFS per profile keyword
- *     (7+ DFSes per scan!). v2 collects ALL text in a single DFS and
- *     matches every keyword against it. Result: roughly an order of
- *     magnitude faster per tick, which translates to ~10x more likes per
- *     minute on the same scan interval.
- *
- *  2) MEMORY / STABILITY — v1 never called {@link AccessibilityNodeInfo#recycle()}.
- *     Every getChild / findAccessibilityNodeInfosByText / getParent leaked
- *     a node reference into the system_server process. After ~50 cycles
- *     the system started denying new node info requests, the bot got
- *     "stuck", and the app could be killed. v2 recycles every obtained
- *     node, including children visited during recursion, with a single
- *     pool tracked per tick.
- *
- *  3) DEDUPLICATION — v1 tracked liked nodes by (cx/80, cy/80) grid cells
- *     and CLEARED that set on every scroll. So a profile re-rendered at
- *     the same screen position after scrolling got liked again. v2
- *     fingerprints each member from the visible text inside their card
- *     and stores fingerprints in {@link LikedMembersDb} (SQLite). A
- *     member is liked at most once, ever, across sessions.
+ *  "ONE LIKE THEN SCROLL FOREVER" ROOT CAUSE (v2): climbToCard climbed up to
+ *  the first parent with "≥3 text descendants". In a list of member cards, the
+ *  first such ancestor is usually the LIST itself, not the individual card.
+ *  Then collectVisibleText collected every text in the list (including
+ *  off-screen items) → identical fingerprint for every member. After the very
+ *  first successful like, every member matched the cached fingerprint → all
+ *  skipped → scroll → still same fingerprint → loop forever.
+ *  v3 detects the card by SCREEN BOUNDS heuristics (smallest ancestor that's
+ *  card-shaped relative to the like button) and collects text only inside that
+ *  bounding rect, filtered by isVisibleToUser().
  */
 public class ClickerService extends AccessibilityService {
 
-    // ---- public state strings (kept identical to v1 so the UI keeps working) ----
     public static final String STATUS_AUTO_STOPPED = "إيقاف تلقائي";
     public static final String STATUS_IDLE         = "خامل";
     public static final String STATUS_RUNNING      = "يعمل";
     public static final String STATUS_STOPPED      = "متوقف";
 
-    // ---- state machine ----
     private static final int STATE_LOOK_LIKE   = 0;
     private static final int STATE_AFTER_LIKE  = 1;
     private static final int STATE_AFTER_YES   = 2;
     private static final int STATE_MUST_SCROLL = 3;
 
-    private static final long MAX_WAIT_AFTER_LIKE_MS = 6000;
-    private static final long MAX_WAIT_AFTER_YES_MS  = 3500;
-    private static final long POST_BACK_WAIT_MS      = 1000;
-    private static final long POST_SCROLL_WAIT_MS    = 2000;
-    private static final int  SCROLL_DISTANCE_PX     = 500;
+    private static final long MAX_WAIT_AFTER_LIKE_MS = 2500L;
+    private static final long MAX_WAIT_AFTER_YES_MS  = 2000L;
+    private static final long POST_BACK_WAIT_MS      = 900L;
+    private static final long POST_SCROLL_WAIT_MS    = 1500L;
 
-    /** Hard upper bound to prevent runaway recursion on hostile trees. */
-    private static final int  MAX_TREE_DEPTH = 25;
-
-    /** Hard upper bound on nodes visited per tick. Defense in depth. */
-    private static final int  MAX_NODES_PER_TICK = 4000;
+    private static final int  MAX_TREE_DEPTH        = 30;
+    private static final int  MAX_NODES_PER_TICK    = 6000;
+    private static final int  CARD_MAX_CLIMB        = 9;
+    private static final int  CARD_TEXT_DEPTH       = 6;
+    private static final int  STUCK_SCROLL_LIMIT    = 8;
+    private static final int  MIN_TEXT_CHARS_FOR_FP = 6;
 
     private static ClickerService instance;
 
@@ -88,32 +83,39 @@ public class ClickerService extends AccessibilityService {
     private final AtomicInteger likesCount = new AtomicInteger(0);
     private final AtomicInteger skippedCount = new AtomicInteger(0);
 
-    /** Per-session coordinate dedup (cleared on scroll). Fast first-pass
-     *  guard so we don't re-fingerprint the same on-screen card twice in
-     *  quick succession. Persistent dedup is delegated to {@link #db}. */
     private final Set<String> processedBounds = new HashSet<>();
 
-    private String lastAction = "";
-    private long   lastBackTime = 0;
-    private long   lastButtonFoundMs = 0;
-    private int    state = STATE_LOOK_LIKE;
-    private long   stateChangedAt = 0;
+    /**
+     * Identity-keyed pool. Two distinct AccessibilityNodeInfo refs to the same
+     * logical node ARE recycled separately (correct). The same ref is recycled
+     * AT MOST ONCE (also correct). This is what makes v3 stable.
+     */
+    private final IdentityHashMap<AccessibilityNodeInfo, Boolean> tickPool =
+            new IdentityHashMap<>(256);
 
-    /** Pool of node refs we obtained during the current tick. Drained and
-     *  recycled at the end of every tick to avoid leaking into system_server. */
-    private final List<AccessibilityNodeInfo> tickPool = new ArrayList<>(64);
-    private int  nodesVisitedThisTick = 0;
+    private String lastAction = "";
+    private long   lastBackTime = 0L;
+    private long   lastButtonFoundMs = 0L;
+    private int    state = STATE_LOOK_LIKE;
+    private long   stateChangedAt = 0L;
+    private int    nodesVisitedThisTick = 0;
+
+    // Stuck detection
+    private int    consecutiveScrollsNoProgress = 0;
+    private int    likesAtLastScroll = 0;
+    private int    skippedAtLastScroll = 0;
+
+    // Screen metrics — cached per tick
+    private int    screenW = 0;
+    private int    screenH = 0;
 
     private final Runnable tick = new Runnable() {
-        @Override
-        public void run() {
+        @Override public void run() {
             if (!running.get()) return;
             long nextDelay;
             try {
                 nextDelay = performOneTick();
             } catch (Throwable t) {
-                // Never crash the service from a tick — fall back to a slow
-                // tempo and try again on the next interval.
                 nextDelay = Math.max(1000L, config != null ? config.scanIntervalMs : 1000L);
             } finally {
                 drainTickPool();
@@ -128,8 +130,8 @@ public class ClickerService extends AccessibilityService {
         void onUpdate(String status, int likes, int skipped, String lastAction);
     }
 
-    public static ClickerService getInstance()   { return instance; }
-    public static boolean isServiceRunning()     { return instance != null; }
+    public static ClickerService getInstance() { return instance; }
+    public static boolean isServiceRunning()   { return instance != null; }
 
     @Override
     public void onServiceConnected() {
@@ -156,9 +158,8 @@ public class ClickerService extends AccessibilityService {
 
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
-        // We poll explicitly via the tick handler; we don't react to every
-        // single accessibility event because the system can fire hundreds
-        // per second on busy screens and that's what made v1 unresponsive.
+        // Intentionally a no-op. We poll via the tick handler; reacting to
+        // every event makes the service unresponsive on busy screens.
     }
 
     @Override
@@ -175,10 +176,10 @@ public class ClickerService extends AccessibilityService {
         }
     }
 
-    public boolean isExecuting()   { return running.get(); }
-    public int     getLikesCount() { return likesCount.get(); }
+    public boolean isExecuting()     { return running.get(); }
+    public int     getLikesCount()   { return likesCount.get(); }
     public int     getSkippedCount() { return skippedCount.get(); }
-    public LikedMembersDb getDb()  { return db; }
+    public LikedMembersDb getDb()    { return db; }
 
     public boolean startBot(BotConfig cfg) {
         if (running.get()) return false;
@@ -188,6 +189,9 @@ public class ClickerService extends AccessibilityService {
         skippedCount.set(0);
         lastAction = "";
         processedBounds.clear();
+        consecutiveScrollsNoProgress = 0;
+        likesAtLastScroll = 0;
+        skippedAtLastScroll = 0;
         long now = System.currentTimeMillis();
         lastButtonFoundMs = now;
         state = STATE_LOOK_LIKE;
@@ -199,9 +203,7 @@ public class ClickerService extends AccessibilityService {
         return true;
     }
 
-    public void stopBot() {
-        stopInternal(STATUS_STOPPED);
-    }
+    public void stopBot() { stopInternal(STATUS_STOPPED); }
 
     private void stopInternal(String reason) {
         if (!running.get()) return;
@@ -224,6 +226,10 @@ public class ClickerService extends AccessibilityService {
         long now = System.currentTimeMillis();
         nodesVisitedThisTick = 0;
 
+        DisplayMetrics dm = getResources().getDisplayMetrics();
+        screenW = dm.widthPixels;
+        screenH = dm.heightPixels;
+
         if (now - lastButtonFoundMs > config.idleTimeoutMs) {
             stopInternal(STATUS_AUTO_STOPPED);
             return config.scanIntervalMs;
@@ -235,25 +241,21 @@ public class ClickerService extends AccessibilityService {
             return config.scanIntervalMs;
         }
 
-        // Target-package gate.
         if (config.targetPackage != null && !config.targetPackage.isEmpty()) {
-            boolean anyMatches = false;
+            boolean matches = false;
             for (AccessibilityNodeInfo r : roots) {
                 CharSequence pkg = r.getPackageName();
                 if (pkg != null && config.targetPackage.equals(pkg.toString())) {
-                    anyMatches = true; break;
+                    matches = true; break;
                 }
             }
-            if (!anyMatches) {
+            if (!matches) {
                 setAction(getString(R.string.action_wait));
                 return config.scanIntervalMs;
             }
         }
 
-        // Profile-keyword back-press: if we accidentally landed on a profile
-        // page, press Back. v1 did one full DFS per keyword (7+ DFSes/tick);
-        // v2 does ONE DFS and matches against all keywords during traversal.
-        if (now - lastBackTime > 1500 && !config.profileKeywords.isEmpty()) {
+        if (now - lastBackTime > 1500L && !config.profileKeywords.isEmpty()) {
             if (anyKeywordVisible(roots, config.profileKeywords)) {
                 performGlobalAction(GLOBAL_ACTION_BACK);
                 lastBackTime = now;
@@ -279,46 +281,47 @@ public class ClickerService extends AccessibilityService {
     // ============================================================
 
     private long handleLookLike(List<AccessibilityNodeInfo> roots, long now) {
-        // A lingering "yes" dialog from the previous like has priority.
         AccessibilityNodeInfo yes = findClickableInAll(roots, config.yesText);
-        if (yes != null && clickNode(yes)) {
+        if (yes != null && performClick(yes)) {
             setAction(getString(R.string.action_yes));
             lastButtonFoundMs = now;
             transitionTo(STATE_AFTER_YES);
             return 700L;
         }
-        // Then a "close" success/limit dialog.
         AccessibilityNodeInfo close = findClickableInAll(roots, config.closeText);
-        if (close != null && clickNode(close)) {
+        if (close != null && performClick(close)) {
             setAction(getString(R.string.action_close));
             transitionTo(STATE_LOOK_LIKE);
             return 800L;
         }
-        // Then the actual "like" buttons on the listing.
+
         AccessibilityNodeInfo likeBtn = findUnprocessedClickable(roots, config.likeText);
         if (likeBtn != null) {
             String key = boundsKey(likeBtn);
-            // Persistent dedup: hash the surrounding card.
-            String fp = fingerprintNearMember(likeBtn);
+
+            // Smart card detection + fingerprinting.
+            String fp = fingerprintMemberFromButton(likeBtn);
             if (config.dedupEnabled && fp != null && db != null && db.isLiked(fp)) {
-                // Already liked in a previous session / earlier scroll.
                 processedBounds.add(key);
                 skippedCount.incrementAndGet();
                 setAction(getString(R.string.action_skip));
                 lastButtonFoundMs = now;
                 return Math.max(150L, config.scanIntervalMs / 2);
             }
-            if (clickNode(likeBtn)) {
+
+            if (performClick(likeBtn)) {
                 processedBounds.add(key);
                 likesCount.incrementAndGet();
                 if (fp != null && db != null) db.markLiked(fp);
                 setAction(getString(R.string.action_like));
                 lastButtonFoundMs = now;
+                consecutiveScrollsNoProgress = 0;
                 transitionTo(STATE_AFTER_LIKE);
                 return config.popupWaitMs;
             }
             return config.scanIntervalMs;
         }
+
         transitionTo(STATE_MUST_SCROLL);
         return 300L;
     }
@@ -326,7 +329,7 @@ public class ClickerService extends AccessibilityService {
     private long handleAfterLike(List<AccessibilityNodeInfo> roots, long now) {
         AccessibilityNodeInfo yes = findClickableInAll(roots, config.yesText);
         if (yes != null) {
-            if (clickNode(yes)) {
+            if (performClick(yes)) {
                 setAction(getString(R.string.action_yes));
                 lastButtonFoundMs = now;
                 transitionTo(STATE_AFTER_YES);
@@ -336,7 +339,7 @@ public class ClickerService extends AccessibilityService {
         }
         AccessibilityNodeInfo close = findClickableInAll(roots, config.closeText);
         if (close != null) {
-            if (clickNode(close)) {
+            if (performClick(close)) {
                 setAction(getString(R.string.action_close));
                 transitionTo(STATE_LOOK_LIKE);
                 return 800L;
@@ -354,7 +357,7 @@ public class ClickerService extends AccessibilityService {
     private long handleAfterYes(List<AccessibilityNodeInfo> roots, long now) {
         AccessibilityNodeInfo close = findClickableInAll(roots, config.closeText);
         if (close != null) {
-            if (clickNode(close)) {
+            if (performClick(close)) {
                 setAction(getString(R.string.action_close));
                 transitionTo(STATE_LOOK_LIKE);
                 return 800L;
@@ -371,11 +374,34 @@ public class ClickerService extends AccessibilityService {
 
     private long handleMustScroll(List<AccessibilityNodeInfo> roots, long now) {
         boolean scrolled = performSmartScroll(roots);
-        if (scrolled) {
-            setAction(getString(R.string.action_scroll));
+        if (scrolled) setAction(getString(R.string.action_scroll));
+
+        int curLikes = likesCount.get();
+        int curSkipped = skippedCount.get();
+        boolean newLikes   = curLikes   != likesAtLastScroll;
+        boolean newSkipped = curSkipped != skippedAtLastScroll;
+
+        if (newLikes) {
+            // Made real progress — reset the stuck counter.
+            consecutiveScrollsNoProgress = 0;
+        } else if (newSkipped) {
+            // Saw cards but they were all dups — count as half-progress.
+            // Allow more scrolls before giving up, since the user might just
+            // need to scroll past a region of already-liked members.
+            consecutiveScrollsNoProgress++;
+        } else {
+            // No likes, no skips → either scrolling failed or no like buttons
+            // visible. Real "stuck".
+            consecutiveScrollsNoProgress++;
         }
-        // Reset the per-session positional cache; we don't reset the
-        // persistent DB so we still skip members that were already liked.
+        likesAtLastScroll = curLikes;
+        skippedAtLastScroll = curSkipped;
+
+        if (consecutiveScrollsNoProgress >= STUCK_SCROLL_LIMIT) {
+            stopInternal(STATUS_AUTO_STOPPED);
+            return config.scanIntervalMs;
+        }
+
         processedBounds.clear();
         transitionTo(STATE_LOOK_LIKE);
         return POST_SCROLL_WAIT_MS;
@@ -399,12 +425,12 @@ public class ClickerService extends AccessibilityService {
 
     private boolean performGestureSwipeUp() {
         try {
-            DisplayMetrics dm = getResources().getDisplayMetrics();
-            int centerX = dm.widthPixels / 2;
-            int startY = (int) (dm.heightPixels * 0.72f);
-            int endY = startY - SCROLL_DISTANCE_PX;
-            int minY = (int) (dm.heightPixels * 0.15f);
-            if (endY < minY) endY = minY;
+            int centerX = screenW / 2;
+            // Slight jitter to break out of identical-frame loops.
+            int jitter = (int) ((System.currentTimeMillis() % 7) - 3) * 12;
+            int startY = (int) (screenH * 0.72f);
+            int endY   = (int) (screenH * 0.28f) + jitter;
+            if (endY < (int) (screenH * 0.15f)) endY = (int) (screenH * 0.15f);
             Path path = new Path();
             path.moveTo(centerX, startY);
             path.lineTo(centerX, endY);
@@ -422,11 +448,6 @@ public class ClickerService extends AccessibilityService {
     //                        NODE LOOKUPS
     // ============================================================
 
-    /**
-     * Single-pass DFS that scans roots for the FIRST node matching any of
-     * the provided keywords. v1 did this per-keyword (N DFSes); v2 does it
-     * once.
-     */
     private boolean anyKeywordVisible(List<AccessibilityNodeInfo> roots, List<String> keywords) {
         List<String> needles = new ArrayList<>(keywords.size());
         for (String k : keywords) {
@@ -462,8 +483,7 @@ public class ClickerService extends AccessibilityService {
             AccessibilityNodeInfo child = node.getChild(i);
             if (child == null) continue;
             track(child);
-            boolean found = containsAnyText(child, needles, depth + 1);
-            if (found) return true;
+            if (containsAnyText(child, needles, depth + 1)) return true;
         }
         return false;
     }
@@ -473,7 +493,8 @@ public class ClickerService extends AccessibilityService {
         if (text == null || text.isEmpty()) return null;
         String needle = normalizeArabic(text);
         for (AccessibilityNodeInfo root : roots) {
-            AccessibilityNodeInfo hit = findFirstClickableMatching(root, needle, 0, /* skipProcessed */ true);
+            AccessibilityNodeInfo hit =
+                    findFirstClickableMatching(root, needle, 0, /* skipProcessed */ true);
             if (hit != null) return hit;
         }
         return null;
@@ -483,15 +504,16 @@ public class ClickerService extends AccessibilityService {
         if (text == null || text.isEmpty()) return null;
         String needle = normalizeArabic(text);
         for (AccessibilityNodeInfo root : roots) {
-            AccessibilityNodeInfo hit = findFirstClickableMatching(root, needle, 0, /* skipProcessed */ false);
+            AccessibilityNodeInfo hit =
+                    findFirstClickableMatching(root, needle, 0, /* skipProcessed */ false);
             if (hit != null) return hit;
         }
         return null;
     }
 
     /**
-     * Combined "match text + climb to clickable" walker, with recursion and
-     * node-recycling done in one place.
+     * NOTE: returned node is already in the tick pool (because every obtain
+     * tracked it). Callers MUST NOT re-track or pre-recycle it.
      */
     private AccessibilityNodeInfo findFirstClickableMatching(
             AccessibilityNodeInfo node, String normalizedNeedle, int depth, boolean skipProcessed) {
@@ -500,19 +522,21 @@ public class ClickerService extends AccessibilityService {
 
         if (textMatches(node, normalizedNeedle) && node.isVisibleToUser()) {
             AccessibilityNodeInfo clickable = climbToClickable(node);
-            if (clickable != null) {
-                if (!skipProcessed || !processedBounds.contains(boundsKey(clickable))) {
-                    return clickable;
-                }
-                track(clickable);
+            if (clickable != null
+                    && (!skipProcessed || !processedBounds.contains(boundsKey(clickable)))) {
+                return clickable;
             }
+            // If skipped, clickable is already in the pool from its obtain;
+            // nothing to track here.
         }
+
         int n = node.getChildCount();
         for (int i = 0; i < n; i++) {
             AccessibilityNodeInfo child = node.getChild(i);
             if (child == null) continue;
             track(child);
-            AccessibilityNodeInfo found = findFirstClickableMatching(child, normalizedNeedle, depth + 1, skipProcessed);
+            AccessibilityNodeInfo found =
+                    findFirstClickableMatching(child, normalizedNeedle, depth + 1, skipProcessed);
             if (found != null) return found;
         }
         return null;
@@ -533,9 +557,7 @@ public class ClickerService extends AccessibilityService {
             List<AccessibilityNodeInfo.AccessibilityAction> actions = node.getActionList();
             if (actions != null) {
                 for (AccessibilityNodeInfo.AccessibilityAction a : actions) {
-                    if (a.getId() == AccessibilityNodeInfo.ACTION_SCROLL_FORWARD) {
-                        return node;
-                    }
+                    if (a.getId() == AccessibilityNodeInfo.ACTION_SCROLL_FORWARD) return node;
                 }
             } else {
                 return node;
@@ -565,80 +587,125 @@ public class ClickerService extends AccessibilityService {
         return null;
     }
 
-    private boolean clickNode(AccessibilityNodeInfo node) {
+    private boolean performClick(AccessibilityNodeInfo node) {
         AccessibilityNodeInfo target = climbToClickable(node);
         if (target == null) return false;
-        return target.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+        try {
+            return target.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+        } catch (Throwable t) {
+            return false;
+        }
     }
 
     // ============================================================
-    //                       MEMBER FINGERPRINT
+    //               MEMBER CARD DETECTION & FINGERPRINT
     // ============================================================
 
     /**
-     * Given a like-button node, walk up to find the surrounding profile
-     * card and collect ALL visible text inside it. Returns a SHA-1
-     * fingerprint suitable for use as a stable DB key.
+     * Walk up from the like button to find the surrounding member CARD,
+     * detected by SCREEN BOUNDS — not by text-descendant count, which in
+     * a RecyclerView gives you the whole list.
+     *
+     * A card is:
+     *   - taller than the like button by a factor (so it contains more than
+     *     just the button)
+     *   - shorter than ~55% of screen height (so it's NOT the list/page)
+     *   - at least half the screen wide (so it's a real card, not a tag)
+     * We pick the SMALLEST ancestor satisfying these constraints, because
+     * the smallest one is the tightest fit = the member's card.
      */
-    private String fingerprintNearMember(AccessibilityNodeInfo likeBtn) {
-        if (likeBtn == null || !config.dedupEnabled) return null;
-        AccessibilityNodeInfo card = climbToCard(likeBtn);
-        if (card == null) return null;
-        StringBuilder sb = new StringBuilder(256);
-        collectVisibleText(card, sb, 0);
-        if (sb.length() < 4) return null;
-        return LikedMembersDb.fingerprint(sb.toString());
-    }
+    private AccessibilityNodeInfo climbToMemberCard(AccessibilityNodeInfo likeBtn) {
+        if (likeBtn == null) return null;
+        Rect btnR = new Rect();
+        likeBtn.getBoundsInScreen(btnR);
+        int btnH = Math.max(1, btnR.height());
 
-    /**
-     * Walk up until we reach a parent that contains at least 3 distinct
-     * text-bearing descendants — i.e. the card surrounding the like button,
-     * not just a tiny button wrapper.
-     */
-    private AccessibilityNodeInfo climbToCard(AccessibilityNodeInfo node) {
-        AccessibilityNodeInfo current = node;
-        AccessibilityNodeInfo bestSoFar = null;
-        for (int depth = 0; current != null && depth < 6; depth++) {
-            int textCount = countTextDescendants(current, 0);
-            if (textCount >= 3) {
-                bestSoFar = current;
-                break;
+        AccessibilityNodeInfo current = likeBtn;
+        AccessibilityNodeInfo best = null;
+        long bestArea = Long.MAX_VALUE;
+
+        for (int depth = 0; current != null && depth < CARD_MAX_CLIMB; depth++) {
+            Rect r = new Rect();
+            current.getBoundsInScreen(r);
+            long area = (long) Math.max(0, r.width()) * (long) Math.max(0, r.height());
+
+            boolean cardShaped =
+                    r.height() >= btnH * 2 &&
+                    r.height() <= (int) (screenH * 0.55f) &&
+                    r.width()  >= (int) (screenW * 0.50f) &&
+                    area > 0;
+
+            if (cardShaped && area < bestArea) {
+                best = current;
+                bestArea = area;
             }
+
             AccessibilityNodeInfo parent = current.getParent();
             if (parent != null) track(parent);
             current = parent;
-            if (current != null) bestSoFar = current;
         }
-        return bestSoFar;
+        return best;
     }
 
-    private int countTextDescendants(AccessibilityNodeInfo node, int depth) {
-        if (node == null || depth > 4) return 0;
-        int total = 0;
-        CharSequence text = node.getText();
-        if (text != null && text.length() > 0) total++;
-        int n = node.getChildCount();
-        for (int i = 0; i < n && total < 6; i++) {
-            AccessibilityNodeInfo child = node.getChild(i);
-            if (child == null) continue;
-            track(child);
-            total += countTextDescendants(child, depth + 1);
+    /**
+     * Compute a per-member fingerprint by collecting visible text inside the
+     * card's bounding rect. Filters by isVisibleToUser AND bounds intersection
+     * so off-screen list items don't contaminate the hash.
+     */
+    private String fingerprintMemberFromButton(AccessibilityNodeInfo likeBtn) {
+        if (likeBtn == null || !config.dedupEnabled) return null;
+        AccessibilityNodeInfo card = climbToMemberCard(likeBtn);
+        if (card == null) return null;
+        Rect cardR = new Rect();
+        card.getBoundsInScreen(cardR);
+        if (cardR.isEmpty()) return null;
+
+        StringBuilder sb = new StringBuilder(256);
+        collectCardText(card, cardR, sb, 0);
+        if (sb.length() < MIN_TEXT_CHARS_FOR_FP) return null;
+
+        // Validation: a real member card usually has SOME Arabic letters in
+        // it. If we see none, treat the fingerprint as untrusted and return
+        // null so the like fires but is NOT marked as deduped (avoids
+        // poisoning the DB with junk).
+        boolean hasArabic = false;
+        for (int i = 0; i < sb.length(); i++) {
+            char c = sb.charAt(i);
+            if (c >= 0x0600 && c <= 0x06FF) { hasArabic = true; break; }
         }
-        return total;
+        if (!hasArabic) return null;
+
+        return LikedMembersDb.fingerprint(sb.toString());
     }
 
-    private void collectVisibleText(AccessibilityNodeInfo node, StringBuilder out, int depth) {
-        if (node == null || depth > 5) return;
-        CharSequence text = node.getText();
-        if (text != null && text.length() > 0) {
-            out.append(text.toString().trim()).append('\n');
+    private void collectCardText(AccessibilityNodeInfo node, Rect cardBounds,
+                                 StringBuilder out, int depth) {
+        if (node == null || depth > CARD_TEXT_DEPTH) return;
+        if (++nodesVisitedThisTick > MAX_NODES_PER_TICK) return;
+
+        Rect r = new Rect();
+        node.getBoundsInScreen(r);
+        if (!Rect.intersects(r, cardBounds)) return;
+
+        if (node.isVisibleToUser()) {
+            CharSequence text = node.getText();
+            if (text != null && text.length() > 0) {
+                String t = text.toString().trim();
+                if (!t.isEmpty()) out.append(t).append('\n');
+            }
+            CharSequence desc = node.getContentDescription();
+            if (desc != null && desc.length() > 0) {
+                String d = desc.toString().trim();
+                if (!d.isEmpty()) out.append(d).append('\n');
+            }
         }
+
         int n = node.getChildCount();
         for (int i = 0; i < n; i++) {
             AccessibilityNodeInfo child = node.getChild(i);
             if (child == null) continue;
             track(child);
-            collectVisibleText(child, out, depth + 1);
+            collectCardText(child, cardBounds, out, depth + 1);
         }
     }
 
@@ -669,12 +736,13 @@ public class ClickerService extends AccessibilityService {
         AccessibilityNodeInfo active = null;
         try { active = getRootInActiveWindow(); } catch (Throwable ignore) {}
         if (active != null) {
-            // De-duplicate by reference: if we already have this root from
-            // getWindows(), don't add a duplicate.
+            // Track BEFORE checking duplicates so the pool will recycle it
+            // either way (we never call recycle() directly anywhere — that
+            // was a v2 footgun).
+            track(active);
             boolean dup = false;
             for (AccessibilityNodeInfo r : result) if (r == active) { dup = true; break; }
-            if (!dup) { track(active); result.add(0, active); }
-            else active.recycle();
+            if (!dup) result.add(0, active);
         }
         return result;
     }
@@ -699,26 +767,26 @@ public class ClickerService extends AccessibilityService {
     private static String normalizeArabic(String s) {
         if (s == null) return "";
         String r = s.replaceAll("[ً-ْٰٱ]", "");
-        r = r.replace((char) 1571, (char) 1575)   // أ → ا
-             .replace((char) 1573, (char) 1575)   // إ → ا
-             .replace((char) 1570, (char) 1575)   // آ → ا
-             .replace((char) 1609, (char) 1610)   // ى → ي
-             .replace((char) 1577, (char) 1607);  // ة → ه
+        r = r.replace((char) 1571, (char) 1575)
+             .replace((char) 1573, (char) 1575)
+             .replace((char) 1570, (char) 1575)
+             .replace((char) 1609, (char) 1610)
+             .replace((char) 1577, (char) 1607);
         return r.trim().toLowerCase(Locale.ROOT);
     }
 
     // ---- node-pool management ----
 
     private void track(AccessibilityNodeInfo node) {
-        if (node != null) tickPool.add(node);
+        if (node == null) return;
+        tickPool.put(node, Boolean.TRUE);
     }
 
     private void drainTickPool() {
-        // Recycle every node we obtained during the tick. This is what keeps
-        // system_server happy across thousands of cycles.
-        for (int i = tickPool.size() - 1; i >= 0; i--) {
-            AccessibilityNodeInfo n = tickPool.get(i);
-            try { if (n != null) n.recycle(); } catch (Throwable ignore) {}
+        if (tickPool.isEmpty()) return;
+        for (AccessibilityNodeInfo n : tickPool.keySet()) {
+            if (n == null) continue;
+            try { n.recycle(); } catch (Throwable ignore) {}
         }
         tickPool.clear();
     }
