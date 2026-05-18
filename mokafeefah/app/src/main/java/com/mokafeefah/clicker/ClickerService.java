@@ -15,13 +15,19 @@ import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.accessibility.AccessibilityWindowInfo;
 
+import java.io.File;
+import java.io.FileWriter;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.Date;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -271,14 +277,18 @@ public class ClickerService extends AccessibilityService {
         screenW = dm.widthPixels;
         screenH = dm.heightPixels;
 
-        if (now - lastButtonFoundMs > config.idleTimeoutMs) {
-            stopInternal(STATUS_AUTO_STOPPED, getString(R.string.stop_reason_idle));
-            return config.scanIntervalMs;
-        }
-
         List<AccessibilityNodeInfo> roots = collectAllRoots();
         if (roots.isEmpty()) {
             setAction(getString(R.string.action_wait));
+            return config.scanIntervalMs;
+        }
+
+        // v9: idle-timeout check is now after roots are collected so the
+        // diagnostic dump has data to record. If we're idle, the dump tells
+        // us exactly what's on screen at the moment of failure.
+        if (now - lastButtonFoundMs > config.idleTimeoutMs) {
+            autoStopWithDiagnostic(STATUS_AUTO_STOPPED,
+                    getString(R.string.stop_reason_idle), roots);
             return config.scanIntervalMs;
         }
 
@@ -286,7 +296,8 @@ public class ClickerService extends AccessibilityService {
         // else this tick, so the user sees a clear stop reason instead of a
         // silent timeout.
         if (state != STATE_REWIND_TO_TOP && endOfListVisible(roots)) {
-            stopInternal(STATUS_AUTO_STOPPED, getString(R.string.stop_reason_end_of_list));
+            autoStopWithDiagnostic(STATUS_AUTO_STOPPED,
+                    getString(R.string.stop_reason_end_of_list), roots);
             return config.scanIntervalMs;
         }
 
@@ -479,8 +490,8 @@ public class ClickerService extends AccessibilityService {
             // clear reason.
             if (firstNoProgressScrollMs == 0L) firstNoProgressScrollMs = now;
             if (now - firstNoProgressScrollMs > NO_PROGRESS_BUDGET_MS) {
-                stopInternal(STATUS_AUTO_STOPPED,
-                        getString(R.string.stop_reason_no_progress));
+                autoStopWithDiagnostic(STATUS_AUTO_STOPPED,
+                        getString(R.string.stop_reason_no_progress), roots);
                 return config.scanIntervalMs;
             }
         }
@@ -949,6 +960,168 @@ public class ClickerService extends AccessibilityService {
             try { n.recycle(); } catch (Throwable ignore) {}
         }
         tickPool.clear();
+    }
+
+    // ============================================================
+    //                       DIAGNOSTIC DUMP
+    // ============================================================
+
+    /**
+     * v9 — called at every auto-stop. Builds a one-line summary of what's
+     * on screen (counts of clickables, top unique text/desc strings) and
+     * writes the full accessibility tree to a text file the user can share.
+     *
+     * The returned status reason includes:
+     *   - the human reason ("توقفت — ...")
+     *   - a one-line on-screen summary so the user can diagnose without
+     *     opening the file
+     *   - the full file path
+     *
+     * The full file goes to getExternalFilesDir(null), which is
+     * /sdcard/Android/data/com.mokafeefah.clicker/files/ — accessible
+     * via Android's Files app on all versions, no permission needed.
+     */
+    private void autoStopWithDiagnostic(String status, String reasonBase,
+                                        List<AccessibilityNodeInfo> roots) {
+        String summary;
+        String path;
+        try {
+            summary = buildScreenSummary(roots);
+            path    = writeAccessibilityDump(roots, reasonBase, summary);
+        } catch (Throwable t) {
+            summary = "(فشل التشخيص)";
+            path    = "—";
+        }
+        String full = reasonBase + " | " + summary + " | تشخيص: " + path;
+        stopInternal(status, full);
+    }
+
+    /**
+     * Walks the visible accessibility tree and returns a one-line summary:
+     * total clickable nodes + top 6 unique text/contentDescription strings
+     * by frequency. This is the most informative diagnostic we can fit
+     * into "آخر إجراء" — it tells me at a glance whether Mawadda is showing
+     * the same 10 cards (scroll didn't work), a "no more members" message,
+     * an upgrade screen, or something else entirely.
+     */
+    private String buildScreenSummary(List<AccessibilityNodeInfo> roots) {
+        Map<String, Integer> textFreq = new HashMap<>();
+        int[] counters = new int[]{ 0, 0, 0 }; // clickable, visible, total
+        for (AccessibilityNodeInfo r : roots) {
+            collectSummary(r, textFreq, counters, 0);
+        }
+        List<Map.Entry<String, Integer>> entries = new ArrayList<>(textFreq.entrySet());
+        Collections.sort(entries, new Comparator<Map.Entry<String, Integer>>() {
+            @Override public int compare(Map.Entry<String, Integer> a, Map.Entry<String, Integer> b) {
+                return b.getValue() - a.getValue();
+            }
+        });
+        StringBuilder sb = new StringBuilder();
+        sb.append("clk=").append(counters[0])
+          .append(", vis=").append(counters[1])
+          .append(", n=").append(counters[2])
+          .append(", نصوص: ");
+        int shown = 0;
+        for (Map.Entry<String, Integer> e : entries) {
+            if (shown >= 6) break;
+            String t = e.getKey();
+            if (t.length() > 28) t = t.substring(0, 28) + "…";
+            sb.append("'").append(t).append("'×").append(e.getValue()).append(" ");
+            shown++;
+        }
+        if (shown == 0) sb.append("(لا نصوص)");
+        return sb.toString();
+    }
+
+    private void collectSummary(AccessibilityNodeInfo node, Map<String, Integer> freq,
+                                int[] counters, int depth) {
+        if (node == null || depth > MAX_TREE_DEPTH) return;
+        track(node);
+        if (counters[2]++ > MAX_NODES_PER_TICK) return;
+        if (node.isClickable()) counters[0]++;
+        if (node.isVisibleToUser()) counters[1]++;
+        CharSequence t = node.getText();
+        CharSequence d = node.getContentDescription();
+        if (t != null && t.length() > 0) {
+            String s = t.toString().trim();
+            if (!s.isEmpty()) freq.put(s, (freq.containsKey(s) ? freq.get(s) : 0) + 1);
+        }
+        if (d != null && d.length() > 0) {
+            String s = d.toString().trim();
+            if (!s.isEmpty()) freq.put(s, (freq.containsKey(s) ? freq.get(s) : 0) + 1);
+        }
+        int n = node.getChildCount();
+        for (int i = 0; i < n; i++) {
+            AccessibilityNodeInfo c = null;
+            try { c = node.getChild(i); } catch (Throwable ignore) {}
+            if (c != null) collectSummary(c, freq, counters, depth + 1);
+        }
+    }
+
+    /**
+     * Writes the full accessibility tree to a text file. Returns the absolute
+     * path so the user can find and share it via the Files app.
+     */
+    private String writeAccessibilityDump(List<AccessibilityNodeInfo> roots,
+                                          String reason, String summary) {
+        File dir = getExternalFilesDir(null);
+        if (dir == null) dir = getFilesDir();
+        if (!dir.exists()) dir.mkdirs();
+        String stamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
+                .format(new Date());
+        File file = new File(dir, "dump_" + stamp + ".txt");
+        StringBuilder sb = new StringBuilder(16 * 1024);
+        sb.append("=== Mokafeefah Diagnostic Dump ===\n")
+          .append("time:     ").append(new Date().toString()).append("\n")
+          .append("reason:   ").append(reason).append("\n")
+          .append("summary:  ").append(summary).append("\n")
+          .append("screen:   ").append(screenW).append("x").append(screenH).append("\n")
+          .append("likes:    ").append(likesCount.get()).append("\n")
+          .append("skipped:  ").append(skippedCount.get()).append("\n")
+          .append("state:    ").append(state).append("\n")
+          .append("\n=== Accessibility Tree ===\n");
+        for (int i = 0; i < roots.size(); i++) {
+            AccessibilityNodeInfo r = roots.get(i);
+            sb.append("\n--- Root ").append(i)
+              .append(" pkg=").append(r.getPackageName()).append(" ---\n");
+            dumpNode(r, sb, 0);
+        }
+        try {
+            FileWriter fw = new FileWriter(file);
+            try { fw.write(sb.toString()); }
+            finally { try { fw.close(); } catch (Throwable ignore) {} }
+        } catch (Throwable t) {
+            return "(فشل الكتابة: " + t.getClass().getSimpleName() + ")";
+        }
+        return file.getAbsolutePath();
+    }
+
+    private void dumpNode(AccessibilityNodeInfo node, StringBuilder sb, int depth) {
+        if (node == null || depth > MAX_TREE_DEPTH) return;
+        track(node);
+        Rect b = new Rect();
+        node.getBoundsInScreen(b);
+        for (int i = 0; i < depth; i++) sb.append("  ");
+        sb.append(node.isClickable() ? "[C] " : "[ ] ")
+          .append(node.isVisibleToUser() ? "[V] " : "[ ] ")
+          .append(b.toShortString()).append(' ');
+        CharSequence cls = node.getClassName();
+        if (cls != null) sb.append(cls);
+        CharSequence t = node.getText();
+        if (t != null && t.length() > 0) {
+            sb.append(" text=\"").append(t.toString().replace('\n', ' ')).append("\"");
+        }
+        CharSequence d = node.getContentDescription();
+        if (d != null && d.length() > 0) {
+            sb.append(" desc=\"").append(d.toString().replace('\n', ' ')).append("\"");
+        }
+        sb.append('\n');
+        int n = node.getChildCount();
+        for (int i = 0; i < n; i++) {
+            AccessibilityNodeInfo c = null;
+            try { c = node.getChild(i); } catch (Throwable ignore) {}
+            if (c != null) dumpNode(c, sb, depth + 1);
+        }
     }
 
     private void setAction(String action) {
