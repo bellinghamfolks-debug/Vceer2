@@ -189,6 +189,96 @@ public final class GeminiDirectClient {
         }
     }
 
+    // ============================================================
+    //   v2.0 — Files API helpers used by document Q&A + batching
+    // ============================================================
+
+    /** Returns the file's current state (PROCESSING / ACTIVE / FAILED). */
+    public static String getFileState(String apiKey, String fileName) throws Exception {
+        if (fileName == null || fileName.isEmpty()) throw new Exception("Empty file name");
+        String url = BASE.replace("/models/", "/") + fileName
+                + "?key=" + URLEncoder.encode(apiKey, "UTF-8");
+        HttpURLConnection conn = null;
+        try {
+            conn = (HttpURLConnection) new URL(url).openConnection();
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(15_000);
+            conn.setReadTimeout(30_000);
+            conn.setRequestProperty("User-Agent", "Basir-Android/2.0");
+            int code = conn.getResponseCode();
+            InputStream in = (code >= 200 && code < 300) ? conn.getInputStream() : conn.getErrorStream();
+            String text = readAll(in);
+            if (code < 200 || code >= 300) {
+                throw new Exception("File-info HTTP " + code + ": " + truncate(extractError(text), 300));
+            }
+            return new JSONObject(text).optString("state", "");
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
+    }
+
+    /** Poll until the file becomes ACTIVE or the budget is exhausted. */
+    public static void waitForFileActive(String apiKey, String fileName, long maxWaitMs) throws Exception {
+        long start = System.currentTimeMillis();
+        long delay = 1_000L;
+        while (System.currentTimeMillis() - start < maxWaitMs) {
+            checkInterrupted();
+            String state = getFileState(apiKey, fileName);
+            if ("ACTIVE".equals(state)) return;
+            if ("FAILED".equals(state)) throw new Exception("Gemini failed to process the uploaded file");
+            try { Thread.sleep(delay); }
+            catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                throw new Exception("Cancelled");
+            }
+            delay = Math.min(delay * 2, 4_000L);
+        }
+        // Most PDFs are ACTIVE within a few seconds; if we timed out, the
+        // next generateContent call will surface a clearer error than this.
+    }
+
+    /** Best-effort cleanup. Files auto-expire after 48 h either way. */
+    public static void deleteFileQuietly(String apiKey, String fileName) {
+        if (fileName == null || fileName.isEmpty()) return;
+        if (apiKey == null || apiKey.trim().isEmpty()) return;
+        HttpURLConnection conn = null;
+        try {
+            String url = BASE.replace("/models/", "/") + fileName
+                    + "?key=" + URLEncoder.encode(apiKey, "UTF-8");
+            conn = (HttpURLConnection) new URL(url).openConnection();
+            conn.setRequestMethod("DELETE");
+            conn.setConnectTimeout(15_000);
+            conn.setReadTimeout(15_000);
+            conn.setRequestProperty("User-Agent", "Basir-Android/2.0");
+            conn.getResponseCode();
+        } catch (Throwable ignore) {
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
+    }
+
+    /**
+     * v2.0 — Document Q&A. Asks a follow-up question about a previously-
+     * uploaded file. The reply is plain text (no JSON envelope), suitable
+     * for direct TTS playback or display in the conversation UI.
+     */
+    public static String askAboutFile(String apiKey, String model,
+                                       String systemText, String userQuestion,
+                                       String fileUri, String mimeType) throws Exception {
+        if (apiKey == null || apiKey.trim().isEmpty()) throw new Exception("Gemini API key is empty");
+        if (fileUri == null || fileUri.isEmpty()) throw new Exception("No file URI");
+        JSONObject body = baseBody(systemText);
+        JSONArray parts = new JSONArray();
+        parts.put(new JSONObject().put("text", userQuestion == null ? "" : userQuestion));
+        JSONObject fd = new JSONObject();
+        fd.put("fileUri", fileUri);
+        fd.put("mimeType", (mimeType == null || mimeType.isEmpty()) ? "application/octet-stream" : mimeType);
+        parts.put(new JSONObject().put("fileData", fd));
+        body.put("contents", new JSONArray().put(new JSONObject().put("role", "user").put("parts", parts)));
+        JSONObject resp = postJsonWithRetry(generateEndpoint(model, apiKey), body);
+        return extractText(resp);
+    }
+
     /**
      * Upload bytes to the Files API. Returns the file reference. The file is
      * available for ~48h and is reused across subsequent generateContent calls.
