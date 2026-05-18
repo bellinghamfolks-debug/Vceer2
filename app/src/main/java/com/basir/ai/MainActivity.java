@@ -35,6 +35,7 @@ import android.view.ViewGroup;
 import android.view.accessibility.AccessibilityManager;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
@@ -152,18 +153,24 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
                     new android.speech.tts.UtteranceProgressListener() {
                 @Override public void onStart(String utteranceId) {}
                 @Override public void onError(String utteranceId) {
-                    if (utteranceId != null && utteranceId.startsWith("convo-") && inConversationMode) {
+                    if (utteranceId == null) return;
+                    if (utteranceId.startsWith("convo-") && inConversationMode) {
                         runOnUiThread(() -> launchConversationListenStep());
+                    } else if (utteranceId.startsWith("walk-") && walkingModeAuto) {
+                        runOnUiThread(() -> launchWalkingCapture());
                     }
                 }
                 @Override public void onDone(String utteranceId) {
-                    if (utteranceId != null && utteranceId.startsWith("convo-") && inConversationMode) {
+                    if (utteranceId == null) return;
+                    if (utteranceId.startsWith("convo-") && inConversationMode) {
                         runOnUiThread(() -> launchConversationListenStep());
+                    } else if (utteranceId.startsWith("walk-") && walkingModeAuto) {
+                        runOnUiThread(() -> launchWalkingCapture());
                     }
                 }
             });
         } catch (Throwable ignore) {}
-        speak(t("مرحبًا بك في بصير، مساعدك الذكي للقراءة والوصف والترجمة وتحليل المستندات.", "Welcome to Basir, your smart assistant for reading, description, translation, and document analysis."));
+        speak(t("مرحبًا بك في بصير الإصدار الثاني. أصبح بإمكانك الآن تحويل ملفات PDF كبيرة، وطرح أسئلة حول مستنداتك، وإجراء محادثة صوتية مستمرة، وقراءة العملات والفواتير، واستخدام وضع المشي للوصف الفوري.", "Welcome to Basir version 2. You can now convert large PDF files, ask questions about your documents, hold a continuous voice conversation, read currency and receipts, and use walking mode for instant scene descriptions."));
     }
 
     @Override
@@ -703,6 +710,15 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
         addCard(t("ترجمة وشرح", "Translate and explain"),
                 t("ترجم النصوص، وافهم المعنى، والنبرة، والسياق بطريقة مبسطة.", "Translate text and understand the meaning, tone, and context in a simple way."),
                 v -> showTranslateScreen());
+
+        // v2.0 — Walking mode. Single-button rapid-fire camera description
+        // for use while moving: tap to capture, hear a short description,
+        // tap again for the next frame. Auto-loops if the user enables it
+        // on the screen itself.
+        addCard(t("وضع المشي ووصف ما أمامي", "Walking mode — describe what's ahead"),
+                t("صوّر ما أمامك بضغطة واحدة، استمع للوصف، ثم كرر للمشهد التالي.",
+                  "Capture what's ahead in one tap, hear a description, and repeat for the next scene."),
+                v -> showWalkingModeScreen());
 
         addCard(t("الطوارئ والمساعدة", "Emergency and help"),
                 t("أرسل موقعك التقريبي أو اطلب المساعدة من جهة طوارئ محفوظة.", "Share your approximate location or request help from a saved emergency contact."),
@@ -1662,6 +1678,133 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
     }
 
     // ============================================================
+    // v2.0 — Walking mode (rapid-fire camera scene description)
+    // ============================================================
+    //
+    // Tap-to-capture → describe → speak → ready for next tap. Uses the
+    // same one-shot camera + Gemini image pipeline as the regular
+    // Describe screen, but rebuilds the same screen after each
+    // description so the user never has to navigate back. A toggle
+    // re-enables auto-capture when TTS finishes for a true hands-free
+    // walking experience.
+
+    private volatile boolean walkingModeAuto = false;
+    private volatile boolean walkingModeBusy = false;
+    private String lastWalkingDescription = "";
+
+    private void showWalkingModeScreen() {
+        if (!AiClient.isConfigured(prefs)) {
+            resetScreen(t("وضع المشي", "Walking mode"),
+                    t("يجب إعداد Gemini أولًا.", "Gemini must be set up first."));
+            addOutlineButton(t("فتح إعداد Gemini الآن", "Open Gemini setup now"),
+                    v -> showAiSettingsDialog());
+            addBackButton();
+            return;
+        }
+        resetScreen(t("وضع المشي", "Walking mode"),
+                t("اضغط لالتقاط ما أمامك. سأصف المشهد في جملة أو اثنتين، ثم يمكنك التقاط التالي.",
+                  "Tap to capture what's in front. I'll describe the scene in a sentence or two, and you can capture the next."));
+
+        if (!lastWalkingDescription.isEmpty()) {
+            addPlainText(t("آخر وصف: ", "Last description: ") + lastWalkingDescription);
+        }
+
+        Button bigCapture = new Button(this);
+        bigCapture.setText(walkingModeBusy
+                ? t("جاري المعالجة...", "Processing...")
+                : t("التقاط ووصف ما أمامي", "Capture and describe"));
+        bigCapture.setTextSize(textSize(18f));
+        bigCapture.setContentDescription(bigCapture.getText());
+        bigCapture.setMinHeight(dp(72));  // larger touch target for blind users
+        bigCapture.setEnabled(!walkingModeBusy);
+        LinearLayout.LayoutParams lp = fullWidth();
+        lp.topMargin = dp(8);
+        lp.bottomMargin = dp(8);
+        bigCapture.setOnClickListener(v -> launchWalkingCapture());
+        root.addView(bigCapture, lp);
+
+        // Auto-loop toggle. When on, every successful description ends with
+        // a re-launch of the camera, so the user can walk and tap-trigger
+        // hands-free using only volume keys or whatever invokes the
+        // shutter on their device.
+        CheckBox autoToggle = new CheckBox(this);
+        autoToggle.setText(t("تشغيل تلقائي بعد كل وصف",
+                             "Auto-relaunch after each description"));
+        autoToggle.setTextColor(colorText());
+        autoToggle.setContentDescription(autoToggle.getText());
+        autoToggle.setChecked(walkingModeAuto);
+        autoToggle.setOnCheckedChangeListener(
+                (cb, isChecked) -> walkingModeAuto = isChecked);
+        root.addView(autoToggle, fullWidth());
+
+        addBackButton();
+    }
+
+    private void launchWalkingCapture() {
+        if (walkingModeBusy) return;
+        // Cache that we're now in walking mode so onActivityResult routes
+        // the captured image to walking-mode description instead of the
+        // generic describe flow.
+        pendingTask = "walking_scene";
+        pendingTitle = t("وضع المشي", "Walking mode");
+        pendingInstruction =
+                "You are Basir helping a blind user walk safely. Describe the scene in 1-2 short " +
+                "sentences. LEAD with anything immediately important (obstacle, person, vehicle, " +
+                "stairs, door, road crossing). Then mention general surroundings if space allows. " +
+                "No markdown, no lists — read aloud by TTS.";
+        pendingPrompt = "Describe what's ahead of the blind user in this image.";
+        captureFromCamera();
+    }
+
+    /** Called by handlePickedImage when the user is in walking mode. */
+    void onWalkingImageReady(Uri uri) {
+        walkingModeBusy = true;
+        showWalkingModeScreen();
+        aiExecutor.execute(() -> {
+            try {
+                String mime = AiClient.detectMime(this, uri);
+                byte[] bytes = AiClient.readUriBytes(this, uri, 8 * 1024 * 1024);
+                String b64 = AiClient.encodeBase64(bytes);
+                String description = AiClient.ask(prefs,
+                        pendingTask, pendingPrompt,
+                        pendingInstruction, lang, b64, mime);
+                if (description == null) description = "";
+                final String d = description.trim();
+                lastWalkingDescription = d;
+                log("walking", d);
+                runOnUiThread(() -> {
+                    walkingModeBusy = false;
+                    showWalkingModeScreen();
+                    // Tag the utterance so we can auto-relaunch the camera
+                    // when TTS finishes (only if auto-loop is on).
+                    if (walkingModeAuto) speakWalkingThenRecapture(d);
+                    else speak(d);
+                });
+            } catch (Exception e) {
+                final String msg = errorMessage(e);
+                runOnUiThread(() -> {
+                    walkingModeBusy = false;
+                    showWalkingModeScreen();
+                    speak(t("تعذر وصف المشهد. حاول مرة أخرى.",
+                            "Could not describe the scene. Try again."));
+                });
+            }
+        });
+    }
+
+    private void speakWalkingThenRecapture(String text) {
+        if (!speechEnabled || tts == null || !ttsReady || text == null) {
+            if (walkingModeAuto) launchWalkingCapture();
+            return;
+        }
+        // Re-use the conversation utterance listener: when the "walk-..."
+        // utterance finishes, relaunch capture. The same listener also
+        // recognises "convo-..." for voice conversation mode.
+        String id = "walk-" + System.currentTimeMillis();
+        tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, id);
+    }
+
+    // ============================================================
     // v2.0 — Continuous voice conversation
     // ============================================================
     //
@@ -2588,6 +2731,13 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
     }
 
     private void handlePickedImage(Uri uri) {
+        // v2.0 — walking-mode short-circuit. The walking screen rebuilds
+        // itself with its own progress UI instead of falling into the
+        // generic "result screen" flow.
+        if ("walking_scene".equals(pendingTask)) {
+            onWalkingImageReady(uri);
+            return;
+        }
         resetScreen(pendingTitle, t("جاري تحليل الصورة عبر Gemini...",
                                     "Analyzing the image via Gemini..."));
         addPlainText(t("قد تستغرق العملية بضع ثوانٍ.", "This may take a few seconds."));
