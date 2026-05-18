@@ -491,25 +491,27 @@ public class ClickerService extends AccessibilityService {
     }
 
     /**
-     * Pattern-aware scroll. On the first attempt of a MUST_SCROLL session we
-     * try the standard scrollable action; on retries we vary the gesture so
-     * a stubborn paginated list eventually accepts the swipe and triggers a
-     * "load more" request.
+     * Pattern-aware scroll. Always dispatches a finger-style gesture — most
+     * paginated lists trigger "load more" only on real gestures, not on
+     * ACTION_SCROLL_FORWARD. We additionally invoke the scrollable action
+     * on attempt 0, but never rely on it alone.
      */
     private boolean performSmartScroll(List<AccessibilityNodeInfo> roots, int patternIndex) {
-        // ACTION_SCROLL_FORWARD on the scrollable container is the friendliest
-        // option — it lets the app know "we want more content". Try it first.
-        if (patternIndex <= 1) {
+        boolean acted = false;
+        if (patternIndex == 0) {
             AccessibilityNodeInfo scrollable = findScrollableInAll(roots);
             if (scrollable != null) {
                 try {
                     if (scrollable.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)) {
-                        return true;
+                        acted = true;
                     }
                 } catch (Throwable ignore) {}
             }
         }
-        return performGestureSwipeUp(patternIndex);
+        // Always also do a gesture — this is what most apps listen for to
+        // fire their pagination request.
+        boolean gestured = performGestureSwipeUp(patternIndex);
+        return acted || gestured;
     }
 
     private boolean performGestureSwipeUp(int patternIndex) {
@@ -517,17 +519,17 @@ public class ClickerService extends AccessibilityService {
             int centerX = screenW / 2;
             float startFrac, endFrac;
             long duration;
-            switch (patternIndex % 5) {
-                case 0: startFrac = 0.72f; endFrac = 0.28f; duration = 450L; break; // standard
-                case 1: startFrac = 0.85f; endFrac = 0.15f; duration = 380L; break; // long fast
-                case 2: startFrac = 0.62f; endFrac = 0.38f; duration = 280L; break; // short flick
-                case 3: startFrac = 0.80f; endFrac = 0.18f; duration = 700L; break; // long slow
-                default: startFrac = 0.75f; endFrac = 0.20f; duration = 250L; break;// hard flick
+            // Only keep patterns that move enough to reveal a new row of items.
+            switch (patternIndex % 4) {
+                case 0: startFrac = 0.78f; endFrac = 0.22f; duration = 450L; break; // standard medium-fast
+                case 1: startFrac = 0.88f; endFrac = 0.12f; duration = 500L; break; // long medium-fast
+                case 2: startFrac = 0.82f; endFrac = 0.18f; duration = 700L; break; // long slow (gentle, may trigger pull-to-refresh listeners differently)
+                default: startFrac = 0.90f; endFrac = 0.10f; duration = 350L; break;// very long fast
             }
-            int jitter = (int) ((System.currentTimeMillis() % 7) - 3) * 12;
+            int jitter = (int) ((System.currentTimeMillis() % 7) - 3) * 10;
             int startY = (int) (screenH * startFrac);
             int endY   = (int) (screenH * endFrac) + jitter;
-            if (endY < (int) (screenH * 0.10f)) endY = (int) (screenH * 0.10f);
+            if (endY < (int) (screenH * 0.08f)) endY = (int) (screenH * 0.08f);
             Path path = new Path();
             path.moveTo(centerX, startY);
             path.lineTo(centerX, endY);
@@ -640,36 +642,58 @@ public class ClickerService extends AccessibilityService {
     }
 
     /**
-     * Returns a content-based fingerprint of what's CURRENTLY visible on
-     * screen. Used by AFTER_SCROLL to decide whether a swipe actually
-     * loaded new content.
+     * Returns a content-based fingerprint of what's CURRENTLY visible inside
+     * the scrollable list area. Used by AFTER_SCROLL to decide whether a
+     * swipe actually loaded new content.
      *
-     * IMPORTANT (v5 fix): the v4 implementation hashed the POSITIONS of the
-     * visible like-buttons. That's broken for any scrollable list because
-     * the viewport stays at the same screen Y coordinates while the content
-     * flows through it — so the bounds-keys after a successful scroll were
-     * identical to the bounds-keys before, and v4 always concluded "scroll
-     * didn't move anything" and stopped after a few tries.
+     * v6 fix: v5 hashed the visible text of the ENTIRE screen — including
+     * the status bar, where the clock changes every minute. That false
+     * positive convinced the bot that scrolling had succeeded when really
+     * nothing in the list had moved at all, sending it into a loop of
+     * "fake scrolls" until the all-dups counter finally stopped it minutes
+     * later with zero likes.
      *
-     * v5 hashes the actual VISIBLE TEXT (names, ages, cities) on screen,
-     * which DOES change as new members slide into view.
+     * v6 scopes the snapshot to the bounds of the main scrollable container.
+     * Status bar clock ticks no longer leak into the comparison.
      */
     private String collectLikeButtonsSnapshot(List<AccessibilityNodeInfo> roots) {
+        AccessibilityNodeInfo scrollable = findScrollableInAll(roots);
         StringBuilder sb = new StringBuilder(SNAPSHOT_TEXT_LIMIT);
+        if (scrollable != null) {
+            Rect bounds = new Rect();
+            scrollable.getBoundsInScreen(bounds);
+            if (!bounds.isEmpty()) {
+                collectVisibleTextInBounds(scrollable, bounds, sb, 0);
+                if (sb.length() > 0) {
+                    if (sb.length() > SNAPSHOT_TEXT_LIMIT) sb.setLength(SNAPSHOT_TEXT_LIMIT);
+                    return sb.toString();
+                }
+            }
+        }
+        // Fallback: no scrollable found, sample the whole screen but skip
+        // the top strip (status bar) and the bottom strip (nav bar) to dodge
+        // clock / battery / nav-badge text changes.
+        Rect listish = new Rect(0,
+                (int) (screenH * 0.08f),
+                screenW,
+                (int) (screenH * 0.92f));
         for (AccessibilityNodeInfo root : roots) {
             if (sb.length() >= SNAPSHOT_TEXT_LIMIT) break;
-            collectVisibleScreenText(root, sb, 0);
+            collectVisibleTextInBounds(root, listish, sb, 0);
         }
-        // Bound the length so very chatty screens don't blow up the hash.
         if (sb.length() > SNAPSHOT_TEXT_LIMIT) sb.setLength(SNAPSHOT_TEXT_LIMIT);
         return sb.toString();
     }
 
-    private void collectVisibleScreenText(AccessibilityNodeInfo node,
-                                          StringBuilder out, int depth) {
-        if (node == null || depth > 7) return;
+    private void collectVisibleTextInBounds(AccessibilityNodeInfo node, Rect clip,
+                                            StringBuilder out, int depth) {
+        if (node == null || depth > 8) return;
         if (++nodesVisitedThisTick > MAX_NODES_PER_TICK) return;
         if (out.length() >= SNAPSHOT_TEXT_LIMIT) return;
+
+        Rect r = new Rect();
+        node.getBoundsInScreen(r);
+        if (!Rect.intersects(r, clip)) return;
 
         if (node.isVisibleToUser()) {
             CharSequence text = node.getText();
@@ -684,7 +708,7 @@ public class ClickerService extends AccessibilityService {
             AccessibilityNodeInfo child = node.getChild(i);
             if (child == null) continue;
             track(child);
-            collectVisibleScreenText(child, out, depth + 1);
+            collectVisibleTextInBounds(child, clip, out, depth + 1);
         }
     }
 
