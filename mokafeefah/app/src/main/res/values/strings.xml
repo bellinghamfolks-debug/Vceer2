@@ -76,5 +76,6 @@
     <string name="action_skip">تخطّى عضو مكرر</string>
     <string name="action_scroll">تمرير القائمة لأسفل</string>
     <string name="action_wait">في انتظار ظهور أزرار قابلة للنقر</string>
+    <string name="action_wait_loading">في انتظار تحميل المزيد من الأعضاء</string>
     <string name="action_yes">تم نقر زر نعم</string>
 </resources>
