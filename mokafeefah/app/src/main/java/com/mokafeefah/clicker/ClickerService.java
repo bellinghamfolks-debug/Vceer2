@@ -55,37 +55,32 @@ public class ClickerService extends AccessibilityService {
     public static final String STATUS_RUNNING      = "يعمل";
     public static final String STATUS_STOPPED      = "متوقف";
 
-    private static final int STATE_LOOK_LIKE    = 0;
-    private static final int STATE_AFTER_LIKE   = 1;
-    private static final int STATE_AFTER_YES    = 2;
-    private static final int STATE_MUST_SCROLL  = 3;
-    private static final int STATE_AFTER_SCROLL = 4;  // v4 — be patient with pagination
+    private static final int STATE_LOOK_LIKE   = 0;
+    private static final int STATE_AFTER_LIKE  = 1;
+    private static final int STATE_AFTER_YES   = 2;
+    private static final int STATE_MUST_SCROLL = 3;
 
-    private static final long MAX_WAIT_AFTER_LIKE_MS    = 2500L;
-    private static final long MAX_WAIT_AFTER_YES_MS     = 2000L;
-    private static final long POST_BACK_WAIT_MS         = 900L;
+    private static final long MAX_WAIT_AFTER_LIKE_MS = 2500L;
+    private static final long MAX_WAIT_AFTER_YES_MS  = 2000L;
+    private static final long POST_BACK_WAIT_MS      = 900L;
+    private static final long POST_SCROLL_WAIT_MS    = 1800L;
 
-    // Post-scroll loading patience. Many target apps paginate over the
-    // network; we must NOT count "waiting for the next page to load" as a
-    // stuck condition or we give up after only a few seconds. v5 is even
-    // more generous than v4 because real users may be on slow networks.
-    private static final long POST_SCROLL_INITIAL_WAIT_MS = 1500L;
-    private static final long POST_SCROLL_LOOP_WAIT_MS    = 800L;
-    private static final long POST_SCROLL_MAX_WAIT_MS     = 12000L; // 12s per re-scroll attempt
-    private static final int  POST_SCROLL_RETRY_ATTEMPTS  = 5;      // re-swipe up to N times with varied patterns
+    private static final int  MAX_TREE_DEPTH        = 30;
+    private static final int  MAX_NODES_PER_TICK    = 6000;
+    private static final int  CARD_MAX_CLIMB        = 9;
+    private static final int  CARD_TEXT_DEPTH       = 6;
+    private static final int  MIN_TEXT_CHARS_FOR_FP = 6;
 
-    private static final int  MAX_TREE_DEPTH         = 30;
-    private static final int  MAX_NODES_PER_TICK     = 6000;
-    private static final int  CARD_MAX_CLIMB         = 9;
-    private static final int  CARD_TEXT_DEPTH        = 6;
-    private static final int  MIN_TEXT_CHARS_FOR_FP  = 6;
-    private static final int  SNAPSHOT_TEXT_LIMIT    = 700;  // chars hashed as "screen content"
-
-    // Stop conditions after the bot has clearly run out of work.
-    // With v5 the retries-per-cycle are 5 × 12s = 60s, so 3 cycles ≈ 3 min
-    // of attempts before declaring true end-of-list.
-    private static final int  MAX_SCROLLS_NO_CONTENT_CHANGE = 3;
-    private static final int  MAX_SCROLLS_WITHOUT_NEW_LIKE  = 30;
+    // v7: removed the "did the scroll actually move the screen?" snapshot
+    // detector. It was fragile in v5 (false positives from the system clock
+    // ticking in the status bar) and in v6 (false negatives when the
+    // scrollable container's bounds didn't fully cover the list area), and
+    // the user's video confirmed the v6 implementation caused the bot to
+    // freeze in STATE_AFTER_SCROLL right after the first swipe. v7 simply
+    // trusts that the swipe did something and immediately re-searches for
+    // like buttons on the next tick. If no new likes happen across enough
+    // scrolls, scrollsWithoutNewLike eventually stops the run.
+    private static final int  MAX_SCROLLS_WITHOUT_NEW_LIKE = 30;
 
     private static ClickerService instance;
 
@@ -115,14 +110,8 @@ public class ClickerService extends AccessibilityService {
     private long   stateChangedAt = 0L;
     private int    nodesVisitedThisTick = 0;
 
-    // Stuck detection — v4 splits the v3 single counter into two distinct
-    // signals so we can correctly tell "the app is paginating, wait" apart
-    // from "we've truly run out of likeable members".
-    private int    scrollsWithoutContentChange = 0; // re-swipes with no new like buttons appearing
-    private int    scrollsWithoutNewLike       = 0; // successful scrolls that produced 0 new likes
-    private int    likesAtLastScroll           = 0;
-    private int    scrollRetryCount            = 0; // re-swipes within one MUST_SCROLL session
-    private String scrollSnapshot              = ""; // signature of like-buttons before a scroll
+    private int    scrollsWithoutNewLike = 0; // scrolls in a row that produced 0 new likes
+    private int    likesAtLastScroll     = 0;
 
     // Screen metrics — cached per tick
     private int    screenW = 0;
@@ -208,11 +197,8 @@ public class ClickerService extends AccessibilityService {
         skippedCount.set(0);
         lastAction = "";
         processedBounds.clear();
-        scrollsWithoutContentChange = 0;
         scrollsWithoutNewLike = 0;
         likesAtLastScroll = 0;
-        scrollRetryCount = 0;
-        scrollSnapshot = "";
         long now = System.currentTimeMillis();
         lastButtonFoundMs = now;
         state = STATE_LOOK_LIKE;
@@ -287,11 +273,10 @@ public class ClickerService extends AccessibilityService {
         }
 
         switch (state) {
-            case STATE_LOOK_LIKE:    return handleLookLike(roots, now);
-            case STATE_AFTER_LIKE:   return handleAfterLike(roots, now);
-            case STATE_AFTER_YES:    return handleAfterYes(roots, now);
-            case STATE_MUST_SCROLL:  return handleMustScroll(roots, now);
-            case STATE_AFTER_SCROLL: return handleAfterScroll(roots, now);
+            case STATE_LOOK_LIKE:   return handleLookLike(roots, now);
+            case STATE_AFTER_LIKE:  return handleAfterLike(roots, now);
+            case STATE_AFTER_YES:   return handleAfterYes(roots, now);
+            case STATE_MUST_SCROLL: return handleMustScroll(roots, now);
             default:
                 transitionTo(STATE_LOOK_LIKE);
                 return config.scanIntervalMs;
@@ -337,9 +322,6 @@ public class ClickerService extends AccessibilityService {
                 if (fp != null && db != null) db.markLiked(fp);
                 setAction(getString(R.string.action_like));
                 lastButtonFoundMs = now;
-                // Real progress: clear all stuck signals so the next scroll
-                // budget is fresh.
-                scrollsWithoutContentChange = 0;
                 scrollsWithoutNewLike = 0;
                 transitionTo(STATE_AFTER_LIKE);
                 return config.popupWaitMs;
@@ -397,12 +379,20 @@ public class ClickerService extends AccessibilityService {
         return config.scanIntervalMs;
     }
 
+    /**
+     * v7 — dead simple. Scroll, then immediately resume the like-button
+     * search on the next tick. We do NOT try to detect "did the scroll
+     * actually move anything" because every previous attempt at that has
+     * either false-positived (status bar clock ticking) or false-negatived
+     * (scrollable bounds excluding the real list area), and the user's
+     * video showed those attempts caused the bot to freeze right after the
+     * first swipe.
+     *
+     * Safety net: if we keep scrolling without a single new like for
+     * {@link #MAX_SCROLLS_WITHOUT_NEW_LIKE} attempts in a row, stop with
+     * the auto-stopped status.
+     */
     private long handleMustScroll(List<AccessibilityNodeInfo> roots, long now) {
-        // Have we made any like progress since the previous scroll? If not,
-        // this is a "successful scroll but no useful members on it" — bump
-        // the all-dups counter. Hits its ceiling only after MANY unhelpful
-        // scrolls, so paginated apps with stretches of already-liked members
-        // still get processed.
         int curLikes = likesCount.get();
         if (curLikes == likesAtLastScroll) {
             scrollsWithoutNewLike++;
@@ -415,126 +405,53 @@ public class ClickerService extends AccessibilityService {
         }
         likesAtLastScroll = curLikes;
 
-        // Snapshot of currently-visible like buttons. handleAfterScroll
-        // compares against this to know whether the scroll actually moved
-        // content (vs. swiping at the bottom of a finite list, or while a
-        // network request is in flight).
-        scrollSnapshot = collectLikeButtonsSnapshot(roots);
-
         boolean scrolled = performSmartScroll(roots);
         if (scrolled) setAction(getString(R.string.action_scroll));
 
         processedBounds.clear();
-        scrollRetryCount = 0;
-        transitionTo(STATE_AFTER_SCROLL);
-        return POST_SCROLL_INITIAL_WAIT_MS;
-    }
-
-    /**
-     * Patient post-scroll handler. The whole point of this state is to NOT
-     * call something "stuck" just because a paginated app needs a few seconds
-     * to fetch the next batch from the network.
-     *
-     *   - Wait up to {@link #POST_SCROLL_MAX_WAIT_MS} for new like-buttons
-     *     to appear. Each tick re-samples the screen.
-     *   - If new content appears → reset stuck counters and resume.
-     *   - If still no new content after the wait → re-swipe and wait again,
-     *     up to {@link #POST_SCROLL_RETRY_ATTEMPTS} times.
-     *   - Only after all retries fail do we count this as one "no content
-     *     change" event. We tolerate {@link #MAX_SCROLLS_NO_CONTENT_CHANGE}
-     *     of them before giving up — at which point the user really is at
-     *     the bottom of an empty list.
-     */
-    private long handleAfterScroll(List<AccessibilityNodeInfo> roots, long now) {
-        String current = collectLikeButtonsSnapshot(roots);
-
-        if (!current.equals(scrollSnapshot)) {
-            // Scroll succeeded — new like-button layout visible.
-            scrollsWithoutContentChange = 0;
-            transitionTo(STATE_LOOK_LIKE);
-            return 350L;
-        }
-
-        long waited = now - stateChangedAt;
-        if (waited < POST_SCROLL_MAX_WAIT_MS) {
-            setAction(getString(R.string.action_wait_loading));
-            return POST_SCROLL_LOOP_WAIT_MS;
-        }
-
-        scrollRetryCount++;
-        if (scrollRetryCount >= POST_SCROLL_RETRY_ATTEMPTS) {
-            scrollsWithoutContentChange++;
-            if (scrollsWithoutContentChange >= MAX_SCROLLS_NO_CONTENT_CHANGE) {
-                stopInternal(STATUS_AUTO_STOPPED);
-                return config.scanIntervalMs;
-            }
-            scrollRetryCount = 0;
-            transitionTo(STATE_MUST_SCROLL);
-            return 400L;
-        }
-
-        // Re-swipe within the same MUST_SCROLL session — some paginated lists
-        // need a second nudge after the first swipe triggers the request.
-        performSmartScroll(roots);
-        setAction(getString(R.string.action_scroll));
-        scrollSnapshot = current;
-        stateChangedAt = now;          // reset wait timer for this attempt
-        return POST_SCROLL_INITIAL_WAIT_MS;
+        transitionTo(STATE_LOOK_LIKE);
+        return POST_SCROLL_WAIT_MS;
     }
 
     // ============================================================
     //                          SCROLLING
     // ============================================================
 
-    private boolean performSmartScroll(List<AccessibilityNodeInfo> roots) {
-        return performSmartScroll(roots, scrollRetryCount);
-    }
-
     /**
-     * Pattern-aware scroll. Always dispatches a finger-style gesture — most
-     * paginated lists trigger "load more" only on real gestures, not on
-     * ACTION_SCROLL_FORWARD. We additionally invoke the scrollable action
-     * on attempt 0, but never rely on it alone.
+     * Always dispatches a real finger gesture (most paginated lists only
+     * trigger "load more" on a gesture, not on the accessibility action),
+     * and additionally invokes ACTION_SCROLL_FORWARD if a scrollable
+     * container is reachable.
      */
-    private boolean performSmartScroll(List<AccessibilityNodeInfo> roots, int patternIndex) {
+    private boolean performSmartScroll(List<AccessibilityNodeInfo> roots) {
         boolean acted = false;
-        if (patternIndex == 0) {
-            AccessibilityNodeInfo scrollable = findScrollableInAll(roots);
-            if (scrollable != null) {
-                try {
-                    if (scrollable.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)) {
-                        acted = true;
-                    }
-                } catch (Throwable ignore) {}
-            }
+        AccessibilityNodeInfo scrollable = findScrollableInAll(roots);
+        if (scrollable != null) {
+            try {
+                if (scrollable.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)) {
+                    acted = true;
+                }
+            } catch (Throwable ignore) {}
         }
-        // Always also do a gesture — this is what most apps listen for to
-        // fire their pagination request.
-        boolean gestured = performGestureSwipeUp(patternIndex);
+        boolean gestured = performGestureSwipeUp();
         return acted || gestured;
     }
 
-    private boolean performGestureSwipeUp(int patternIndex) {
+    private boolean performGestureSwipeUp() {
         try {
             int centerX = screenW / 2;
-            float startFrac, endFrac;
-            long duration;
-            // Only keep patterns that move enough to reveal a new row of items.
-            switch (patternIndex % 4) {
-                case 0: startFrac = 0.78f; endFrac = 0.22f; duration = 450L; break; // standard medium-fast
-                case 1: startFrac = 0.88f; endFrac = 0.12f; duration = 500L; break; // long medium-fast
-                case 2: startFrac = 0.82f; endFrac = 0.18f; duration = 700L; break; // long slow (gentle, may trigger pull-to-refresh listeners differently)
-                default: startFrac = 0.90f; endFrac = 0.10f; duration = 350L; break;// very long fast
-            }
+            // Tiny jitter so two consecutive identical-content frames don't
+            // produce identical gesture timings (helps stubborn paginated
+            // lists that debounce repeated identical input).
             int jitter = (int) ((System.currentTimeMillis() % 7) - 3) * 10;
-            int startY = (int) (screenH * startFrac);
-            int endY   = (int) (screenH * endFrac) + jitter;
-            if (endY < (int) (screenH * 0.08f)) endY = (int) (screenH * 0.08f);
+            int startY = (int) (screenH * 0.82f);
+            int endY   = (int) (screenH * 0.18f) + jitter;
+            if (endY < (int) (screenH * 0.10f)) endY = (int) (screenH * 0.10f);
             Path path = new Path();
             path.moveTo(centerX, startY);
             path.lineTo(centerX, endY);
             GestureDescription.StrokeDescription stroke =
-                    new GestureDescription.StrokeDescription(path, 0L, duration);
+                    new GestureDescription.StrokeDescription(path, 0L, 450L);
             GestureDescription gesture =
                     new GestureDescription.Builder().addStroke(stroke).build();
             return dispatchGesture(gesture, null, null);
@@ -639,77 +556,6 @@ public class ClickerService extends AccessibilityService {
             if (found != null) return found;
         }
         return null;
-    }
-
-    /**
-     * Returns a content-based fingerprint of what's CURRENTLY visible inside
-     * the scrollable list area. Used by AFTER_SCROLL to decide whether a
-     * swipe actually loaded new content.
-     *
-     * v6 fix: v5 hashed the visible text of the ENTIRE screen — including
-     * the status bar, where the clock changes every minute. That false
-     * positive convinced the bot that scrolling had succeeded when really
-     * nothing in the list had moved at all, sending it into a loop of
-     * "fake scrolls" until the all-dups counter finally stopped it minutes
-     * later with zero likes.
-     *
-     * v6 scopes the snapshot to the bounds of the main scrollable container.
-     * Status bar clock ticks no longer leak into the comparison.
-     */
-    private String collectLikeButtonsSnapshot(List<AccessibilityNodeInfo> roots) {
-        AccessibilityNodeInfo scrollable = findScrollableInAll(roots);
-        StringBuilder sb = new StringBuilder(SNAPSHOT_TEXT_LIMIT);
-        if (scrollable != null) {
-            Rect bounds = new Rect();
-            scrollable.getBoundsInScreen(bounds);
-            if (!bounds.isEmpty()) {
-                collectVisibleTextInBounds(scrollable, bounds, sb, 0);
-                if (sb.length() > 0) {
-                    if (sb.length() > SNAPSHOT_TEXT_LIMIT) sb.setLength(SNAPSHOT_TEXT_LIMIT);
-                    return sb.toString();
-                }
-            }
-        }
-        // Fallback: no scrollable found, sample the whole screen but skip
-        // the top strip (status bar) and the bottom strip (nav bar) to dodge
-        // clock / battery / nav-badge text changes.
-        Rect listish = new Rect(0,
-                (int) (screenH * 0.08f),
-                screenW,
-                (int) (screenH * 0.92f));
-        for (AccessibilityNodeInfo root : roots) {
-            if (sb.length() >= SNAPSHOT_TEXT_LIMIT) break;
-            collectVisibleTextInBounds(root, listish, sb, 0);
-        }
-        if (sb.length() > SNAPSHOT_TEXT_LIMIT) sb.setLength(SNAPSHOT_TEXT_LIMIT);
-        return sb.toString();
-    }
-
-    private void collectVisibleTextInBounds(AccessibilityNodeInfo node, Rect clip,
-                                            StringBuilder out, int depth) {
-        if (node == null || depth > 8) return;
-        if (++nodesVisitedThisTick > MAX_NODES_PER_TICK) return;
-        if (out.length() >= SNAPSHOT_TEXT_LIMIT) return;
-
-        Rect r = new Rect();
-        node.getBoundsInScreen(r);
-        if (!Rect.intersects(r, clip)) return;
-
-        if (node.isVisibleToUser()) {
-            CharSequence text = node.getText();
-            if (text != null && text.length() > 0) {
-                out.append(text).append('|');
-                if (out.length() >= SNAPSHOT_TEXT_LIMIT) return;
-            }
-        }
-        int n = node.getChildCount();
-        for (int i = 0; i < n; i++) {
-            if (out.length() >= SNAPSHOT_TEXT_LIMIT) return;
-            AccessibilityNodeInfo child = node.getChild(i);
-            if (child == null) continue;
-            track(child);
-            collectVisibleTextInBounds(child, clip, out, depth + 1);
-        }
     }
 
     private AccessibilityNodeInfo findScrollableInAll(List<AccessibilityNodeInfo> roots) {
