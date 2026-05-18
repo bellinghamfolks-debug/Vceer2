@@ -132,6 +132,15 @@ public class ClickerService extends AccessibilityService {
     private String lastDumpPath = ""; // v9: latest auto-stop diagnostic file
     private long   lastBackTime = 0L;
     private long   lastButtonFoundMs = 0L;
+
+    // v9.2: comprehensive diagnostic — every state change, every click, every
+    // scroll, every rewind step is appended here from startBot to stopInternal,
+    // and the whole timeline goes into the dump file with a periodic snapshot
+    // every 15s so a slow loop is recorded as a series of screen states.
+    private final StringBuilder diagLog = new StringBuilder(16 * 1024);
+    private long   diagLogStartMs = 0L;
+    private long   lastSnapshotMs = 0L;
+    private static final long SNAPSHOT_INTERVAL_MS = 15_000L;
     private int    state = STATE_LOOK_LIKE;
     private long   stateChangedAt = 0L;
     private int    nodesVisitedThisTick = 0;
@@ -239,6 +248,14 @@ public class ClickerService extends AccessibilityService {
         // on mid-list cards, so starting mid-list found nothing.
         state = STATE_REWIND_TO_TOP;
         stateChangedAt = now;
+        diagBegin(now);
+        diagEvent("startBot pkg=" + (cfg.targetPackage == null ? "*" : cfg.targetPackage)
+                + " idleTimeoutMs=" + cfg.idleTimeoutMs
+                + " scanIntervalMs=" + cfg.scanIntervalMs
+                + " popupWaitMs=" + cfg.popupWaitMs
+                + " likeText='" + cfg.likeText + "'"
+                + " yesText='" + cfg.yesText + "'"
+                + " dedup=" + cfg.dedupEnabled);
         running.set(true);
         notifyUpdate(STATUS_RUNNING);
         handler.removeCallbacksAndMessages(null);
@@ -263,8 +280,54 @@ public class ClickerService extends AccessibilityService {
     }
 
     private void transitionTo(int newState) {
+        int oldState = this.state;
         this.state = newState;
         this.stateChangedAt = System.currentTimeMillis();
+        if (oldState != newState) diagEvent("transition " + stateName(oldState) + " -> " + stateName(newState));
+    }
+
+    private static String stateName(int s) {
+        switch (s) {
+            case STATE_REWIND_TO_TOP: return "REWIND";
+            case STATE_LOOK_LIKE:     return "LOOK";
+            case STATE_AFTER_LIKE:    return "AFTER_LIKE";
+            case STATE_AFTER_YES:     return "AFTER_YES";
+            case STATE_MUST_SCROLL:   return "SCROLL";
+            default:                  return "?(" + s + ")";
+        }
+    }
+
+    private void diagBegin(long now) {
+        diagLog.setLength(0);
+        diagLogStartMs = now;
+        lastSnapshotMs = now;
+        diagLog.append("=== Mokafeefah Diagnostic Log ===\n")
+               .append("session start: ").append(new Date(now).toString()).append("\n")
+               .append("\n=== Event Timeline ===\n");
+    }
+
+    private void diagEvent(String event) {
+        if (diagLogStartMs == 0L) return;
+        long elapsed = System.currentTimeMillis() - diagLogStartMs;
+        diagLog.append(String.format(Locale.US, "%7d ms | s=%-10s | likes=%d skip=%d | %s%n",
+                elapsed, stateName(state), likesCount.get(), skippedCount.get(), event));
+        if (diagLog.length() > 256 * 1024) {
+            // Safety cap so a very long session doesn't OOM us.
+            diagLog.delete(0, diagLog.length() / 2);
+        }
+    }
+
+    private void diagMaybeSnapshot(long now, List<AccessibilityNodeInfo> roots) {
+        if (diagLogStartMs == 0L) return;
+        if (now - lastSnapshotMs < SNAPSHOT_INTERVAL_MS) return;
+        lastSnapshotMs = now;
+        String summary;
+        try { summary = buildScreenSummary(roots); }
+        catch (Throwable t) { summary = "(snapshot failed)"; }
+        long elapsed = now - diagLogStartMs;
+        diagLog.append(String.format(Locale.US,
+                "%n--- Snapshot @ %d ms | state=%s ---%n%s%n%n",
+                elapsed, stateName(state), summary));
     }
 
     // ============================================================
@@ -285,10 +348,14 @@ public class ClickerService extends AccessibilityService {
             return config.scanIntervalMs;
         }
 
+        diagMaybeSnapshot(now, roots);
+
         // v9: idle-timeout check is now after roots are collected so the
         // diagnostic dump has data to record. If we're idle, the dump tells
         // us exactly what's on screen at the moment of failure.
         if (now - lastButtonFoundMs > config.idleTimeoutMs) {
+            diagEvent("AUTO-STOP: idle timeout fired (no buttons for "
+                    + (now - lastButtonFoundMs) + "ms, limit=" + config.idleTimeoutMs + ")");
             autoStopWithDiagnostic(STATUS_AUTO_STOPPED,
                     getString(R.string.stop_reason_idle), roots);
             return config.scanIntervalMs;
@@ -298,6 +365,7 @@ public class ClickerService extends AccessibilityService {
         // else this tick, so the user sees a clear stop reason instead of a
         // silent timeout.
         if (state != STATE_REWIND_TO_TOP && endOfListVisible(roots)) {
+            diagEvent("AUTO-STOP: end-of-list message detected on screen");
             autoStopWithDiagnostic(STATUS_AUTO_STOPPED,
                     getString(R.string.stop_reason_end_of_list), roots);
             return config.scanIntervalMs;
@@ -362,11 +430,11 @@ public class ClickerService extends AccessibilityService {
         if (likeBtn != null) {
             String key = boundsKey(likeBtn);
 
-            // Smart card detection + fingerprinting.
             String fp = fingerprintMemberFromButton(likeBtn);
             if (config.dedupEnabled && fp != null && db != null && db.isLiked(fp)) {
                 processedBounds.add(key);
                 skippedCount.incrementAndGet();
+                diagEvent("LOOK: like-btn at " + key + " skipped (already liked)");
                 setAction(getString(R.string.action_skip));
                 lastButtonFoundMs = now;
                 return Math.max(150L, config.scanIntervalMs / 2);
@@ -376,6 +444,7 @@ public class ClickerService extends AccessibilityService {
                 processedBounds.add(key);
                 likesCount.incrementAndGet();
                 if (fp != null && db != null) db.markLiked(fp);
+                diagEvent("LOOK: clicked like-btn at " + key + " (likes now " + likesCount.get() + ")");
                 setAction(getString(R.string.action_like));
                 lastButtonFoundMs = now;
                 firstNoProgressScrollMs = 0L;
@@ -383,9 +452,12 @@ public class ClickerService extends AccessibilityService {
                 transitionTo(STATE_AFTER_LIKE);
                 return config.popupWaitMs;
             }
+            diagEvent("LOOK: like-btn at " + key + " click FAILED");
             return config.scanIntervalMs;
         }
 
+        diagEvent("LOOK: no like button found, transitioning to SCROLL"
+                + " (processedBounds=" + processedBounds.size() + ")");
         transitionTo(STATE_MUST_SCROLL);
         return 300L;
     }
@@ -394,11 +466,13 @@ public class ClickerService extends AccessibilityService {
         AccessibilityNodeInfo yes = findClickableInAll(roots, config.yesText);
         if (yes != null) {
             if (performClick(yes)) {
+                diagEvent("AFTER_LIKE: clicked '" + config.yesText + "' (confirm yes)");
                 setAction(getString(R.string.action_yes));
                 lastButtonFoundMs = now;
                 transitionTo(STATE_AFTER_YES);
                 return 700L;
             }
+            diagEvent("AFTER_LIKE: '" + config.yesText + "' click FAILED");
             return config.scanIntervalMs;
         }
         AccessibilityNodeInfo close = findClickableInAll(roots, config.closeText);
@@ -446,12 +520,14 @@ public class ClickerService extends AccessibilityService {
      */
     private long handleRewindToTop(List<AccessibilityNodeInfo> roots, long now) {
         if (rewindStepsDone >= MAX_REWIND_STEPS) {
+            diagEvent("REWIND: max steps reached, transitioning to LOOK");
             setAction(getString(R.string.action_rewind_done));
             transitionTo(STATE_LOOK_LIKE);
             return 350L;
         }
         boolean acted = false;
         AccessibilityNodeInfo scrollable = findScrollableInAll(roots);
+        boolean haveScrollable = scrollable != null;
         if (scrollable != null) {
             try {
                 if (scrollable.performAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)) {
@@ -459,12 +535,11 @@ public class ClickerService extends AccessibilityService {
                 }
             } catch (Throwable ignore) {}
         }
-        // Always also dispatch a downward gesture as a fallback, since some
-        // lists ignore the accessibility action but respond to a real drag.
         boolean gestured = performGestureSwipeDown();
+        diagEvent("REWIND step " + (rewindStepsDone + 1) + "/12: scrollable="
+                + haveScrollable + " action=" + acted + " gesture=" + gestured);
 
         if (!acted && !gestured) {
-            // We couldn't scroll backward at all → we're already at the top.
             setAction(getString(R.string.action_rewind_done));
             transitionTo(STATE_LOOK_LIKE);
             return 350L;
@@ -492,6 +567,7 @@ public class ClickerService extends AccessibilityService {
             // clear reason.
             if (firstNoProgressScrollMs == 0L) firstNoProgressScrollMs = now;
             if (now - firstNoProgressScrollMs > NO_PROGRESS_BUDGET_MS) {
+                diagEvent("AUTO-STOP: 3-min no-progress budget exhausted");
                 autoStopWithDiagnostic(STATUS_AUTO_STOPPED,
                         getString(R.string.stop_reason_no_progress), roots);
                 return config.scanIntervalMs;
@@ -503,6 +579,7 @@ public class ClickerService extends AccessibilityService {
         // visible — some apps page only via that explicit tap.
         AccessibilityNodeInfo loadMore = findLoadMoreButton(roots);
         if (loadMore != null && performClick(loadMore)) {
+            diagEvent("SCROLL: tapped 'load more' button instead of swiping");
             setAction(getString(R.string.action_load_more));
             processedBounds.clear();
             transitionTo(STATE_LOOK_LIKE);
@@ -510,6 +587,8 @@ public class ClickerService extends AccessibilityService {
         }
 
         boolean scrolled = performSmartScroll(roots, scrollPatternIndex);
+        diagEvent("SCROLL: pattern=" + scrollPatternIndex + " result=" + scrolled
+                + " (likesAtLastScroll=" + likesAtLastScroll + ")");
         if (scrolled) setAction(getString(R.string.action_scroll));
         scrollPatternIndex = (scrollPatternIndex + 1) % 3;
 
@@ -1081,8 +1160,11 @@ public class ClickerService extends AccessibilityService {
           .append("screen:   ").append(screenW).append("x").append(screenH).append("\n")
           .append("likes:    ").append(likesCount.get()).append("\n")
           .append("skipped:  ").append(skippedCount.get()).append("\n")
-          .append("state:    ").append(state).append("\n")
-          .append("\n=== Accessibility Tree ===\n");
+          .append("state:    ").append(stateName(state)).append("\n");
+        if (diagLog.length() > 0) {
+            sb.append('\n').append(diagLog);
+        }
+        sb.append("\n=== Final Accessibility Tree ===\n");
         for (int i = 0; i < roots.size(); i++) {
             AccessibilityNodeInfo r = roots.get(i);
             sb.append("\n--- Root ").append(i)
