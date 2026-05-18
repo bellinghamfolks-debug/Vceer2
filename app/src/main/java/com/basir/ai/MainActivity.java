@@ -77,6 +77,14 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
     private TextToSpeech tts;
     private boolean ttsReady = false;
 
+    // v2.0 — continuous voice conversation. When true, every voice command
+    // is treated as a question to Gemini (not a navigation command), the
+    // answer is spoken via TTS, and the recognizer auto-relaunches as soon
+    // as TTS finishes — so the user can hold an unbroken hands-free chat.
+    private volatile boolean inConversationMode = false;
+    private final List<String[]> conversationHistory = new ArrayList<>(); // [q, a] pairs
+    private TextView conversationStatusText;
+
     // Settings cache
     private String lang = "ar";
     private boolean privacyMode = true;
@@ -134,6 +142,27 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
         if (status != TextToSpeech.SUCCESS) return;
         ttsReady = true;
         applyTtsConfig();
+        // v2.0: continuous voice mode hooks here. When the TTS finishes
+        // speaking an utterance tagged with our "convo-" prefix, AND we're
+        // still in conversation mode, automatically launch the next
+        // recognizer turn so the user never has to touch the screen
+        // between question and answer.
+        try {
+            tts.setOnUtteranceProgressListener(
+                    new android.speech.tts.UtteranceProgressListener() {
+                @Override public void onStart(String utteranceId) {}
+                @Override public void onError(String utteranceId) {
+                    if (utteranceId != null && utteranceId.startsWith("convo-") && inConversationMode) {
+                        runOnUiThread(() -> launchConversationListenStep());
+                    }
+                }
+                @Override public void onDone(String utteranceId) {
+                    if (utteranceId != null && utteranceId.startsWith("convo-") && inConversationMode) {
+                        runOnUiThread(() -> launchConversationListenStep());
+                    }
+                }
+            });
+        } catch (Throwable ignore) {}
         speak(t("مرحبًا بك في بصير، مساعدك الذكي للقراءة والوصف والترجمة وتحليل المستندات.", "Welcome to Basir, your smart assistant for reading, description, translation, and document analysis."));
     }
 
@@ -644,6 +673,13 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
                 t("اكتب سؤالك أو أمليه صوتيًا، واحصل على إجابة واضحة ومنظمة.", "Type or dictate your question and get a clear, structured answer."),
                 v -> showAskScreen());
 
+        // v2.0 — Continuous voice conversation. Hands-free dialogue with
+        // Gemini: ask, hear, ask again. The recognizer auto-relaunches.
+        addCard(t("محادثة صوتية مستمرة", "Continuous voice conversation"),
+                t("تحدث بحرية مع بصير دون لمس الشاشة بين الأسئلة.",
+                  "Talk to Basir freely without touching the screen between questions."),
+                v -> showVoiceConversationScreen());
+
         addCard(t("وصف صورة أو مشهد", "Describe an image or scene"),
                 t("احصل على وصف دقيق للصور ولقطات الشاشة والمشاهد المحيطة بك.", "Get a detailed description of images, screenshots, and surrounding scenes."),
                 v -> showDescribeScreen());
@@ -800,6 +836,28 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
                         t("قراءة لقطة الشاشة", "Screenshot reading"),
                         "Explain the screenshot for a screen-reader user: page, buttons, messages, errors, and the next useful step.",
                         "Read this screenshot."));
+
+        // v2.0 — Currency / receipt reader. Same image pipeline as the
+        // other describe-* cards, just with a tight prompt tuned for the
+        // single answer a blind user actually wants to hear ("twenty
+        // riyals", "total is 187 SAR"). The model is instructed to lead
+        // with the headline number/denomination so a TTS-only reading
+        // still gets the critical info in the first second.
+        addCard(t("قراءة العملات والفواتير", "Read currency and receipts"),
+                t("صوّر العملة أو الفاتورة، وسأقرأ الفئة أو المجموع بسرعة ووضوح.",
+                  "Photograph the currency or receipt, and I'll read the denomination or total quickly and clearly."),
+                v -> pickImageForAi("currency_or_receipt",
+                        t("قراءة العملات والفواتير", "Currency / receipt reader"),
+                        "You are Basir, an assistant for blind and low-vision users. " +
+                        "The image contains either banknotes/coins OR a paid receipt/invoice. " +
+                        "BANKNOTES/COINS: state the currency and denomination in the FIRST sentence, e.g. " +
+                        "'هذه ورقة من فئة 100 ريال سعودي' / 'This is a 100 Saudi Riyal banknote'. " +
+                        "If multiple notes are visible, list each one. Mention the total at the end. " +
+                        "RECEIPTS/INVOICES: state the grand total and the currency in the FIRST sentence. " +
+                        "Then briefly list the merchant name, date, and 3-4 most expensive line items if " +
+                        "they're legible. Keep the entire answer under 80 words, plain prose, no bullets " +
+                        "or markdown — this is read aloud by TTS.",
+                        "Read the currency or receipt in this image."));
 
         addOutlineButton(t("وصف نصي للمشهد", "Text description of a scene"),
                 v -> showTextTaskScreen("scene_text",
@@ -1601,6 +1659,178 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
                 });
             }
         });
+    }
+
+    // ============================================================
+    // v2.0 — Continuous voice conversation
+    // ============================================================
+    //
+    // A blind user shouldn't have to touch the screen between asking a
+    // question and asking the next one. This mode loops automatically:
+    //
+    //   1. Screen opens → speak prompt "تحدث الآن".
+    //   2. Launch system speech recognizer (full-screen, accessible).
+    //   3. Result comes back → send to Gemini with the last few turns
+    //      of context so multi-turn questions ("tell me more about that",
+    //      "what's the second one?") work naturally.
+    //   4. Speak Gemini's answer.
+    //   5. UtteranceProgressListener.onDone wakes step 2 again.
+    //
+    // Loop continues until the user taps "إنهاء المحادثة" OR a recognizer
+    // error fires twice in a row (deafness guard).
+
+    private void showVoiceConversationScreen() {
+        if (!AiClient.isConfigured(prefs)) {
+            resetScreen(t("وضع المحادثة الصوتية",
+                          "Continuous voice conversation"),
+                    t("يجب إعداد Gemini أولًا لاستخدام هذا الوضع.",
+                      "Gemini must be set up first to use this mode."));
+            addOutlineButton(t("فتح إعداد Gemini الآن", "Open Gemini setup now"),
+                    v -> showAiSettingsDialog());
+            addBackButton();
+            return;
+        }
+        resetScreen(t("وضع المحادثة الصوتية",
+                      "Continuous voice conversation"),
+                t("اطرح سؤالاً، استمع للإجابة، ثم اسأل التالي تلقائيًا. اضغط إنهاء لإيقاف المحادثة.",
+                  "Ask a question, hear the answer, then ask the next one automatically. Tap End to stop the conversation."));
+
+        conversationStatusText = new TextView(this);
+        conversationStatusText.setTextColor(colorText());
+        conversationStatusText.setTextSize(textSize(17f));
+        conversationStatusText.setPadding(dp(4), dp(8), dp(4), dp(8));
+        conversationStatusText.setText(t("اضغط بدء للتحدث.", "Tap Start to speak."));
+        // LiveRegion makes TalkBack announce status changes without focus.
+        conversationStatusText.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+        root.addView(conversationStatusText, fullWidth());
+
+        if (!conversationHistory.isEmpty()) {
+            String[] last = conversationHistory.get(conversationHistory.size() - 1);
+            addPlainText(t("سؤالك السابق: ", "Your previous question: ") + last[0]);
+            addPlainText(t("الإجابة: ", "Answer: ") + last[1]);
+        }
+
+        addPrimaryButton(
+                inConversationMode
+                    ? t("إنهاء المحادثة", "End conversation")
+                    : t("بدء المحادثة الصوتية", "Start voice conversation"),
+                v -> {
+                    if (inConversationMode) endVoiceConversation();
+                    else beginVoiceConversation();
+                });
+
+        if (!conversationHistory.isEmpty()) {
+            addOutlineButton(t("مسح المحادثة", "Clear conversation"), v -> {
+                conversationHistory.clear();
+                showVoiceConversationScreen();
+            });
+        }
+        addBackButton();
+    }
+
+    private void beginVoiceConversation() {
+        inConversationMode = true;
+        setConversationStatus(t("جاري الاستماع...", "Listening..."));
+        speak(t("تحدث الآن.", "Speak now."));
+        // Give TTS a beat to finish before the recognizer grabs the mic.
+        new Handler(Looper.getMainLooper()).postDelayed(this::launchConversationListenStep, 900L);
+    }
+
+    private void endVoiceConversation() {
+        inConversationMode = false;
+        try { if (tts != null) tts.stop(); } catch (Throwable ignore) {}
+        setConversationStatus(t("تم إنهاء المحادثة.", "Conversation ended."));
+        speak(t("تم إنهاء المحادثة.", "Conversation ended."));
+        showVoiceConversationScreen();
+    }
+
+    private void launchConversationListenStep() {
+        if (!inConversationMode) return;
+        setConversationStatus(t("جاري الاستماع...", "Listening..."));
+        try {
+            Intent i = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+            i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                    RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+            i.putExtra(RecognizerIntent.EXTRA_LANGUAGE, isEnglish() ? "en-US" : "ar-SA");
+            i.putExtra(RecognizerIntent.EXTRA_PROMPT,
+                    t("تحدث الآن", "Speak now"));
+            startActivityForResult(i, REQ_VOICE);
+        } catch (Exception e) {
+            inConversationMode = false;
+            setConversationStatus(t("التعرف الصوتي غير متاح.",
+                                    "Speech recognition is not available."));
+            speak(t("التعرف الصوتي غير متاح على هذا الجهاز.",
+                    "Speech recognition is not available on this device."));
+        }
+    }
+
+    /** Handle a voice command coming back from the recognizer while in
+     *  conversation mode. Treated as a Gemini question with the recent
+     *  turns folded into the prompt as multi-turn context. */
+    private void handleConversationTurn(final String spoken) {
+        if (spoken == null || spoken.trim().isEmpty()) {
+            // Empty result; relaunch listening so the loop doesn't die silently.
+            if (inConversationMode) {
+                speakConversation(t("لم أسمع شيئًا، حاول مرة أخرى.",
+                                    "I didn't catch that, try again."));
+            }
+            return;
+        }
+        final String question = spoken.trim();
+        setConversationStatus(t("جاري التفكير...", "Thinking..."));
+
+        // Build a multi-turn prompt with up to the last 4 turns of context.
+        final StringBuilder fullPrompt = new StringBuilder();
+        int start = Math.max(0, conversationHistory.size() - 4);
+        for (int i = start; i < conversationHistory.size(); i++) {
+            String[] turn = conversationHistory.get(i);
+            fullPrompt.append("User: ").append(turn[0]).append("\n");
+            fullPrompt.append("Assistant: ").append(turn[1]).append("\n");
+        }
+        fullPrompt.append("User: ").append(question);
+
+        aiExecutor.execute(() -> {
+            try {
+                String instruction = isEnglish()
+                        ? "You are Basir, an assistant for blind and low-vision users having a "
+                          + "spoken conversation. Answer in 1-3 short sentences of plain English, "
+                          + "no markdown, no lists — this is read aloud by TTS."
+                        : "أنت بصير، مساعد للمستخدمين المكفوفين في محادثة صوتية مستمرة. "
+                          + "أجب في جملة أو ثلاث جمل قصيرة بالعربية الفصيحة، بدون قوائم أو رموز Markdown، "
+                          + "لأن الإجابة تُقرأ صوتيًا.";
+                String answer = AiClient.ask(prefs, "ask", fullPrompt.toString(),
+                        instruction, lang);
+                if (answer == null) answer = "";
+                final String a = answer.trim();
+                conversationHistory.add(new String[]{ question, a });
+                // Cap history to avoid unbounded growth.
+                while (conversationHistory.size() > 10) conversationHistory.remove(0);
+                log("voice_convo", question + "\n→ " + a);
+                runOnUiThread(() -> {
+                    setConversationStatus(t("الإجابة: ", "Answer: ") + a);
+                    speakConversation(a);
+                });
+            } catch (Exception e) {
+                final String msg = safeError(e.getMessage());
+                runOnUiThread(() -> {
+                    setConversationStatus(t("تعذرت الإجابة.",
+                                            "Could not answer."));
+                    speakConversation(t("تعذرت الإجابة. ", "Could not answer. ") + msg);
+                });
+            }
+        });
+    }
+
+    private void setConversationStatus(String text) {
+        if (conversationStatusText != null) conversationStatusText.setText(text);
+    }
+
+    /** speak() variant that tags utterances with a "convo-" id, so the TTS
+     *  done-listener wakes the next listen step. */
+    private void speakConversation(String text) {
+        if (!speechEnabled || tts == null || !ttsReady || text == null) return;
+        String id = "convo-" + System.currentTimeMillis();
+        tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, id);
     }
 
     // ============================================================
@@ -2542,6 +2772,14 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
     private void handleVoiceCommand(String cmd) {
         if (cmd == null) return;
         log("voice", cmd);
+        // v2.0: when continuous conversation mode is active, EVERY voice
+        // input is a question to Gemini — bypass the navigation keyword
+        // routing entirely, otherwise saying "اسأل عن العقد" would jump
+        // out of the conversation to the Ask screen.
+        if (inConversationMode) {
+            handleConversationTurn(cmd);
+            return;
+        }
         String c = cmd.toLowerCase(Locale.ROOT);
         if (contains(c, "اسأل", "ask", "سؤال", "question")) showAskScreen();
         else if (contains(c, "وصف", "describe", "صورة", "image", "مشهد", "scene")) showDescribeScreen();
