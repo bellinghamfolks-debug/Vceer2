@@ -273,23 +273,30 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
         scroll.addView(root);
         setContentView(scroll);
 
+        // v2.1: larger, more prominent screen titles. For someone with low
+        // vision, a 32 sp bold heading is far easier to spot than the old
+        // 28 sp — and the auto-announce on screen change means TalkBack
+        // says the heading the moment the screen rebuilds.
         TextView heading = new TextView(this);
         heading.setText(title);
-        heading.setTextSize(textSize(28));
+        heading.setTextSize(textSize(32));     // v2.1: was 28
         heading.setTypeface(null, Typeface.BOLD);
         heading.setTextColor(colorText());
-        heading.setPadding(0, dp(4), 0, dp(6));
+        heading.setPadding(0, dp(6), 0, dp(8));
         heading.setContentDescription(title);
         if (Build.VERSION.SDK_INT >= 28) heading.setAccessibilityHeading(true);
+        // LiveRegion ASSERTIVE so screen readers announce the new screen
+        // title immediately when navigation happens.
+        heading.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_ASSERTIVE);
         root.addView(heading, fullWidth());
 
         if (subtitle != null && !subtitle.isEmpty()) {
             TextView sub = new TextView(this);
             sub.setText(subtitle);
-            sub.setTextSize(textSize(16));
+            sub.setTextSize(textSize(17));     // v2.1: was 16
             sub.setTextColor(colorTextSec());
-            sub.setPadding(0, 0, 0, dp(16));
-            sub.setLineSpacing(dp(2), 1.1f);
+            sub.setPadding(0, 0, 0, dp(20));   // v2.1: was 16
+            sub.setLineSpacing(dp(2), 1.25f);
             root.addView(sub, fullWidth());
         }
     }
@@ -309,92 +316,115 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
         root.addView(tv, p);
     }
 
-    /** Large primary action card: title + description, full width, rounded. */
+    /** Large primary action card: title + description, full width, rounded.
+     *  v2.1 redesign: bigger padding, larger heading, stronger separation —
+     *  every card is a proper touch target for low-vision users. */
     private void addCard(String title, String description, View.OnClickListener listener) {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(20), dp(18), dp(20), dp(20));
+        // v2.1: 24/22 (was 20/18) — bigger padding gives the heading more
+        // breathing room and grows the touch hitbox without changing layout.
+        card.setPadding(dp(24), dp(22), dp(24), dp(24));
         card.setClickable(true);
         card.setFocusable(true);
+        // v2.1: enforce a 96 dp minimum height. Larger than the Material 56 dp
+        // target — low-vision users frequently miss small touch areas.
+        card.setMinimumHeight(dp(96));
 
         GradientDrawable bg = new GradientDrawable();
         bg.setShape(GradientDrawable.RECTANGLE);
         bg.setColor(colorSurface());
-        bg.setCornerRadius(dp(18));
+        bg.setCornerRadius(dp(20));    // v2.1: was 18
         bg.setStroke(dp(1), colorStroke());
         card.setBackground(bg);
-        // Soft elevation (Android 5+; programmatic styles can't use stateListAnimator).
         if (Build.VERSION.SDK_INT >= 21) {
-            card.setElevation(dp(2));
+            card.setElevation(dp(3));   // v2.1: was 2 — slightly stronger shadow
         }
 
         TextView t = new TextView(this);
         t.setText(title);
-        t.setTextSize(textSize(19));
+        t.setTextSize(textSize(21));    // v2.1: was 19 — bolder heading
         t.setTypeface(null, Typeface.BOLD);
         t.setTextColor(colorText());
         t.setLetterSpacing(0.005f);
+        // TalkBack heading semantics: the screen reader announces "heading"
+        // before the title, helping blind users quickly navigate cards.
+        if (Build.VERSION.SDK_INT >= 28) {
+            t.setAccessibilityHeading(true);
+        }
         card.addView(t, fullWidth());
 
         if (description != null && !description.isEmpty()) {
             TextView d = new TextView(this);
             d.setText(description);
-            d.setTextSize(textSize(14));
+            d.setTextSize(textSize(15));   // v2.1: was 14
             d.setTextColor(colorTextSec());
-            d.setLineSpacing(dp(2), 1.2f);
+            d.setLineSpacing(dp(2), 1.25f);
             LinearLayout.LayoutParams dp_ = fullWidth();
-            dp_.setMargins(0, dp(6), 0, 0);
+            dp_.setMargins(0, dp(8), 0, 0);
             card.addView(d, dp_);
         }
 
+        // Each child text node sets its own importantForAccessibility so
+        // TalkBack reads the card as a single unit instead of three
+        // overlapping nodes (heading + body + card).
+        if (Build.VERSION.SDK_INT >= 16) {
+            for (int i = 0; i < card.getChildCount(); i++) {
+                card.getChildAt(i).setImportantForAccessibility(
+                        View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+            }
+        }
         card.setContentDescription(title + ". " + (description == null ? "" : description));
         card.setOnClickListener(listener);
 
         LinearLayout.LayoutParams p = fullWidth();
-        p.setMargins(0, dp(7), 0, dp(7));
+        p.setMargins(0, dp(8), 0, dp(8));   // v2.1: was 7 — more breathing room
         root.addView(card, p);
     }
 
-    /** Secondary outline button. */
+    /** Secondary outline button. v2.1: 64 dp min height (was 56). */
     private void addOutlineButton(String text, View.OnClickListener listener) {
         Button b = new Button(this);
         b.setText(text);
         b.setAllCaps(false);
-        b.setTextSize(textSize(16));
+        b.setTextSize(textSize(17));    // v2.1: was 16
         b.setTextColor(colorPrimary());
-        b.setMinHeight(dp(56));
-        b.setPadding(dp(16), dp(12), dp(16), dp(12));
+        b.setMinHeight(dp(64));          // v2.1: was 56 — accessible touch target
+        b.setPadding(dp(18), dp(14), dp(18), dp(14));
         GradientDrawable bg = new GradientDrawable();
         bg.setShape(GradientDrawable.RECTANGLE);
         bg.setColor(colorSurface());
-        bg.setCornerRadius(dp(28));
-        bg.setStroke(dp(1), colorStroke());
+        bg.setCornerRadius(dp(32));      // v2.1: was 28
+        bg.setStroke(dp(2), colorPrimary());  // v2.1: 2dp primary-colored stroke (was 1dp grey)
         b.setBackground(bg);
         b.setOnClickListener(listener);
         b.setContentDescription(text);
         LinearLayout.LayoutParams p = fullWidth();
-        p.setMargins(0, dp(6), 0, dp(6));
+        p.setMargins(0, dp(7), 0, dp(7));
         root.addView(b, p);
     }
 
-    /** Filled primary button (call to action). */
+    /** Filled primary button (call to action). v2.1: 64 dp min height. */
     private void addPrimaryButton(String text, View.OnClickListener listener) {
         Button b = new Button(this);
         b.setText(text);
         b.setAllCaps(false);
-        b.setTextSize(textSize(17));
+        b.setTextSize(textSize(18));     // v2.1: was 17
         b.setTextColor(Color.WHITE);
         b.setTypeface(null, Typeface.BOLD);
-        b.setMinHeight(dp(56));
+        b.setMinHeight(dp(64));          // v2.1: was 56
         GradientDrawable bg = new GradientDrawable();
         bg.setShape(GradientDrawable.RECTANGLE);
         bg.setColor(colorPrimary());
-        bg.setCornerRadius(dp(28));
+        bg.setCornerRadius(dp(32));      // v2.1: was 28
         b.setBackground(bg);
+        if (Build.VERSION.SDK_INT >= 21) {
+            b.setElevation(dp(2));
+        }
         b.setOnClickListener(listener);
         b.setContentDescription(text);
         LinearLayout.LayoutParams p = fullWidth();
-        p.setMargins(0, dp(8), 0, dp(8));
+        p.setMargins(0, dp(10), 0, dp(10));  // v2.1: was 8 — more breathing room
         root.addView(b, p);
     }
 
@@ -719,6 +749,14 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
                 t("صوّر ما أمامك بضغطة واحدة، استمع للوصف، ثم كرر للمشهد التالي.",
                   "Capture what's ahead in one tap, hear a description, and repeat for the next scene."),
                 v -> showWalkingModeScreen());
+
+        // v2.1 — OCR-on-touch. The most "revolutionary" entry: once enabled,
+        // it lets the user read text from ANY app, not just inside Basir.
+        addCard(t("قراءة نص أي تطبيق (OCR فوري)",
+                  "OCR-on-touch — read text from any app"),
+                t("شغّل خدمة بصير في إمكانية الوصول، ثم اضغط زر إمكانية الوصول في أي تطبيق ليُقرأ كل نص ظاهر — حتى ما داخل الصور.",
+                  "Enable Basir under Accessibility, then tap the accessibility shortcut in any app to read every visible text aloud — even text inside images."),
+                v -> showOcrSetupScreen());
 
         addCard(t("الطوارئ والمساعدة", "Emergency and help"),
                 t("أرسل موقعك التقريبي أو اطلب المساعدة من جهة طوارئ محفوظة.", "Share your approximate location or request help from a saved emergency contact."),
@@ -1675,6 +1713,75 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
                 });
             }
         });
+    }
+
+    // ============================================================
+    // v2.1 — OCR-on-touch setup screen
+    // ============================================================
+    //
+    // The actual capture-and-read logic lives in BasirOcrService (an
+    // AccessibilityService). This screen is just the on-boarding: it tells
+    // the user what the feature does, opens Android's Accessibility
+    // settings page so they can enable Basir, and reports whether the
+    // service is currently running. After enabling, the user just taps
+    // the system accessibility shortcut button from any app.
+
+    private void showOcrSetupScreen() {
+        boolean enabled = com.basir.ai.accessibility.BasirOcrService.isEnabled();
+        resetScreen(t("قراءة نص أي تطبيق", "OCR-on-touch"),
+                enabled
+                    ? t("الخدمة مفعّلة. اضغط زر إمكانية الوصول في أي تطبيق لقراءة كل نص ظاهر.",
+                        "The service is enabled. Tap the accessibility shortcut in any app to read every visible text aloud.")
+                    : t("لم يتم تفعيل الخدمة بعد. افتح إعدادات إمكانية الوصول لتفعيل بصير.",
+                        "The service isn't enabled yet. Open Accessibility settings to enable Basir."));
+
+        addPlainText(t(
+            "كيف يعمل:\n" +
+            "1) فعّل الخدمة من إعدادات إمكانية الوصول.\n" +
+            "2) افتح أي تطبيق (واتساب، متصفح، إيصال، صورة...).\n" +
+            "3) اضغط زر إمكانية الوصول في شريط التنقل.\n" +
+            "4) سيلتقط بصير الشاشة، يستخرج النص (حتى لو داخل صورة)، ويقرأه صوتيًا.",
+            "How it works:\n" +
+            "1) Enable the service from Accessibility settings.\n" +
+            "2) Open any app (WhatsApp, browser, receipt, image...).\n" +
+            "3) Tap the accessibility shortcut button in the navigation bar.\n" +
+            "4) Basir captures the screen, extracts text (even from images), and reads it aloud."));
+
+        addPrimaryButton(
+                enabled
+                    ? t("إعدادات إمكانية الوصول", "Accessibility settings")
+                    : t("فتح إعدادات إمكانية الوصول لتفعيل بصير",
+                        "Open Accessibility settings to enable Basir"),
+                v -> {
+                    try {
+                        startActivity(new Intent(
+                            android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS));
+                    } catch (Exception e) {
+                        speak(t("تعذر فتح الإعدادات.", "Could not open settings."));
+                    }
+                });
+
+        if (enabled) {
+            addOutlineButton(
+                    t("تجربة قراءة الشاشة الحالية الآن",
+                      "Try reading the current screen now"),
+                    v -> {
+                        com.basir.ai.accessibility.BasirOcrService svc =
+                                com.basir.ai.accessibility.BasirOcrService.getInstance();
+                        if (svc != null) {
+                            speak(t("جاري التجربة...", "Trying..."));
+                            svc.runOcrTrigger();
+                        }
+                    });
+        }
+        if (!AiClient.isConfigured(prefs)) {
+            addPlainText(t(
+                "ملاحظة: قراءة النص تستخدم Gemini. يجب إعداد المفتاح أولًا.",
+                "Note: text extraction uses Gemini. The API key must be set first."));
+            addOutlineButton(t("فتح إعداد Gemini الآن", "Open Gemini setup now"),
+                    v -> showAiSettingsDialog());
+        }
+        addBackButton();
     }
 
     // ============================================================

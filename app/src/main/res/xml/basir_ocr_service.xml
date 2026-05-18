@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  v2.1 — OCR-on-touch accessibility service. Once the user enables Basir in
+  Android's Accessibility settings, the system shows our "accessibility
+  button" (the small badge in the navigation bar, or a floating shortcut
+  on Android 13+). Tapping it triggers a screen capture which we OCR via
+  Gemini and read aloud — so the user can hear any text from any app,
+  even when that text lives inside an image (a captcha, a meme, a
+  scanned receipt opened in WhatsApp, etc).
+
+  flagRequestAccessibilityButton:    show the in-system shortcut button
+  canTakeScreenshot (Android 11+):   needed for takeScreenshot()
+  canRetrieveWindowContent:          fallback path on older Android, where
+                                     we walk the accessibility tree of the
+                                     foreground window and read any
+                                     visible text directly.
+-->
+<accessibility-service
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/ocr_service_description"
+    android:summary="@string/ocr_service_summary"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged"
+    android:accessibilityFlags="flagRequestAccessibilityButton|flagDefault|flagReportViewIds"
+    android:accessibilityFeedbackType="feedbackSpoken"
+    android:canRetrieveWindowContent="true"
+    android:canRequestTouchExplorationMode="false"
+    android:notificationTimeout="100"/>
