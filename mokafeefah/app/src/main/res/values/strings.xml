@@ -82,4 +82,12 @@
     <string name="action_wait">في انتظار ظهور أزرار قابلة للنقر</string>
     <string name="action_wait_loading">في انتظار تحميل المزيد من الأعضاء</string>
     <string name="action_yes">تم نقر زر نعم</string>
+    <string name="action_rewind_to_top">جارٍ إرجاع القائمة إلى أعلى</string>
+    <string name="action_rewind_done">تم إرجاع القائمة إلى أعلى — يبدأ البحث</string>
+    <string name="action_load_more">تم نقر زر تحميل المزيد</string>
+
+    <string name="stop_reason_manual">توقفت — أوقفت يدويًا</string>
+    <string name="stop_reason_idle">توقفت — لم يُعثر على أي زر طوال مدة الإيقاف التلقائي</string>
+    <string name="stop_reason_no_progress">توقفت — لم تظهر أعضاء جدد لمدة 3 دقائق</string>
+    <string name="stop_reason_end_of_list">توقفت — التطبيق المستهدف يقول لا يوجد المزيد من الأعضاء</string>
 </resources>

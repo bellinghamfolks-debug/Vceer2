@@ -55,10 +55,15 @@ public class ClickerService extends AccessibilityService {
     public static final String STATUS_RUNNING      = "يعمل";
     public static final String STATUS_STOPPED      = "متوقف";
 
-    private static final int STATE_LOOK_LIKE   = 0;
-    private static final int STATE_AFTER_LIKE  = 1;
-    private static final int STATE_AFTER_YES   = 2;
-    private static final int STATE_MUST_SCROLL = 3;
+    // v8: states. STATE_REWIND_TO_TOP runs once at startBot before LOOK_LIKE
+    // and forces the target list back to its true top, because Mawadda's
+    // recycler doesn't always reattach the "إهتمام" content description on
+    // recycled rows — starting mid-list left the bot finding nothing.
+    private static final int STATE_REWIND_TO_TOP = 4;
+    private static final int STATE_LOOK_LIKE     = 0;
+    private static final int STATE_AFTER_LIKE    = 1;
+    private static final int STATE_AFTER_YES     = 2;
+    private static final int STATE_MUST_SCROLL   = 3;
 
     private static final long MAX_WAIT_AFTER_LIKE_MS = 2500L;
     private static final long MAX_WAIT_AFTER_YES_MS  = 2000L;
@@ -71,16 +76,30 @@ public class ClickerService extends AccessibilityService {
     private static final int  CARD_TEXT_DEPTH       = 6;
     private static final int  MIN_TEXT_CHARS_FOR_FP = 6;
 
-    // v7: removed the "did the scroll actually move the screen?" snapshot
-    // detector. It was fragile in v5 (false positives from the system clock
-    // ticking in the status bar) and in v6 (false negatives when the
-    // scrollable container's bounds didn't fully cover the list area), and
-    // the user's video confirmed the v6 implementation caused the bot to
-    // freeze in STATE_AFTER_SCROLL right after the first swipe. v7 simply
-    // trusts that the swipe did something and immediately re-searches for
-    // like buttons on the next tick. If no new likes happen across enough
-    // scrolls, scrollsWithoutNewLike eventually stops the run.
-    private static final int  MAX_SCROLLS_WITHOUT_NEW_LIKE = 30;
+    // v8: rewind state — repeatedly fires SCROLL_BACKWARD on the main
+    // scrollable until it refuses or we hit the safety cap.
+    private static final int  MAX_REWIND_STEPS      = 12;
+    private static final long REWIND_STEP_WAIT_MS   = 400L;
+
+    // v8: stuck detection is now time-based, not count-based. v7's count of
+    // 30 was ≈60s of trying, which expires before a slow paginated list can
+    // actually respond. 3 minutes of unproductive scrolling is the new bar.
+    private static final long NO_PROGRESS_BUDGET_MS = 180_000L;
+
+    // v8: keywords that say "load more / show more" — we tap them before
+    // swiping if visible, because some apps don't auto-paginate on scroll.
+    private static final String[] LOAD_MORE_KEYWORDS = {
+            "تحميل المزيد", "عرض المزيد", "المزيد", "إظهار المزيد",
+            "Load more", "Show more", "More"
+    };
+
+    // v8: phrases the target app might show when the list is exhausted.
+    // Catching these stops the bot immediately with a clear reason instead
+    // of letting it spin out the no-progress budget silently.
+    private static final String[] END_OF_LIST_HINTS = {
+            "لا يوجد المزيد", "وصلت إلى النهاية", "انتهت",
+            "لا توجد نتائج", "لا يوجد أعضاء"
+    };
 
     private static ClickerService instance;
 
@@ -110,8 +129,12 @@ public class ClickerService extends AccessibilityService {
     private long   stateChangedAt = 0L;
     private int    nodesVisitedThisTick = 0;
 
-    private int    scrollsWithoutNewLike = 0; // scrolls in a row that produced 0 new likes
-    private int    likesAtLastScroll     = 0;
+    // v8: stuck detection — instead of counting scrolls, we record when
+    // the no-progress streak started. Reset to 0 on every confirmed like.
+    private long   firstNoProgressScrollMs = 0L;
+    private int    likesAtLastScroll       = 0;
+    private int    rewindStepsDone         = 0;
+    private int    scrollPatternIndex      = 0; // rotates 0,1,2 within a streak
 
     // Screen metrics — cached per tick
     private int    screenW = 0;
@@ -197,11 +220,16 @@ public class ClickerService extends AccessibilityService {
         skippedCount.set(0);
         lastAction = "";
         processedBounds.clear();
-        scrollsWithoutNewLike = 0;
+        firstNoProgressScrollMs = 0L;
         likesAtLastScroll = 0;
+        rewindStepsDone = 0;
+        scrollPatternIndex = 0;
         long now = System.currentTimeMillis();
         lastButtonFoundMs = now;
-        state = STATE_LOOK_LIKE;
+        // v8: rewind the target list to its true top before searching. Mawadda's
+        // RecyclerView recycles rows and drops the "إهتمام" content description
+        // on mid-list cards, so starting mid-list found nothing.
+        state = STATE_REWIND_TO_TOP;
         stateChangedAt = now;
         running.set(true);
         notifyUpdate(STATUS_RUNNING);
@@ -210,14 +238,20 @@ public class ClickerService extends AccessibilityService {
         return true;
     }
 
-    public void stopBot() { stopInternal(STATUS_STOPPED); }
+    public void stopBot() { stopInternal(STATUS_STOPPED, getString(R.string.stop_reason_manual)); }
 
-    private void stopInternal(String reason) {
+    /**
+     * @param status  the public status string shown beside "حالة التنفيذ"
+     * @param reason  a longer human-readable explanation shown beside "آخر إجراء",
+     *                so the user never sees a silent stop again.
+     */
+    private void stopInternal(String status, String reason) {
         if (!running.get()) return;
         running.set(false);
         handler.removeCallbacksAndMessages(null);
+        if (reason != null && !reason.isEmpty()) lastAction = reason;
         vibrateAlert();
-        notifyUpdate(reason);
+        notifyUpdate(status);
     }
 
     private void transitionTo(int newState) {
@@ -238,13 +272,21 @@ public class ClickerService extends AccessibilityService {
         screenH = dm.heightPixels;
 
         if (now - lastButtonFoundMs > config.idleTimeoutMs) {
-            stopInternal(STATUS_AUTO_STOPPED);
+            stopInternal(STATUS_AUTO_STOPPED, getString(R.string.stop_reason_idle));
             return config.scanIntervalMs;
         }
 
         List<AccessibilityNodeInfo> roots = collectAllRoots();
         if (roots.isEmpty()) {
             setAction(getString(R.string.action_wait));
+            return config.scanIntervalMs;
+        }
+
+        // v8: detect Mawadda's "no more members" message before doing anything
+        // else this tick, so the user sees a clear stop reason instead of a
+        // silent timeout.
+        if (state != STATE_REWIND_TO_TOP && endOfListVisible(roots)) {
+            stopInternal(STATUS_AUTO_STOPPED, getString(R.string.stop_reason_end_of_list));
             return config.scanIntervalMs;
         }
 
@@ -273,10 +315,11 @@ public class ClickerService extends AccessibilityService {
         }
 
         switch (state) {
-            case STATE_LOOK_LIKE:   return handleLookLike(roots, now);
-            case STATE_AFTER_LIKE:  return handleAfterLike(roots, now);
-            case STATE_AFTER_YES:   return handleAfterYes(roots, now);
-            case STATE_MUST_SCROLL: return handleMustScroll(roots, now);
+            case STATE_REWIND_TO_TOP: return handleRewindToTop(roots, now);
+            case STATE_LOOK_LIKE:     return handleLookLike(roots, now);
+            case STATE_AFTER_LIKE:    return handleAfterLike(roots, now);
+            case STATE_AFTER_YES:     return handleAfterYes(roots, now);
+            case STATE_MUST_SCROLL:   return handleMustScroll(roots, now);
             default:
                 transitionTo(STATE_LOOK_LIKE);
                 return config.scanIntervalMs;
@@ -322,7 +365,8 @@ public class ClickerService extends AccessibilityService {
                 if (fp != null && db != null) db.markLiked(fp);
                 setAction(getString(R.string.action_like));
                 lastButtonFoundMs = now;
-                scrollsWithoutNewLike = 0;
+                firstNoProgressScrollMs = 0L;
+                scrollPatternIndex = 0;
                 transitionTo(STATE_AFTER_LIKE);
                 return config.popupWaitMs;
             }
@@ -380,33 +424,81 @@ public class ClickerService extends AccessibilityService {
     }
 
     /**
-     * v7 — dead simple. Scroll, then immediately resume the like-button
-     * search on the next tick. We do NOT try to detect "did the scroll
-     * actually move anything" because every previous attempt at that has
-     * either false-positived (status bar clock ticking) or false-negatived
-     * (scrollable bounds excluding the real list area), and the user's
-     * video showed those attempts caused the bot to freeze right after the
-     * first swipe.
-     *
-     * Safety net: if we keep scrolling without a single new like for
-     * {@link #MAX_SCROLLS_WITHOUT_NEW_LIKE} attempts in a row, stop with
-     * the auto-stopped status.
+     * v8 — rewinds the target list to its true top before the first search.
+     * Mawadda's RecyclerView recycles row views and the "إهتمام" content
+     * description on recycled rows isn't always reattached; starting mid-list
+     * left the bot finding nothing. After this state finishes the bot enters
+     * STATE_LOOK_LIKE in a known-good state, the same state where the user
+     * has empirically proved liking works.
+     */
+    private long handleRewindToTop(List<AccessibilityNodeInfo> roots, long now) {
+        if (rewindStepsDone >= MAX_REWIND_STEPS) {
+            setAction(getString(R.string.action_rewind_done));
+            transitionTo(STATE_LOOK_LIKE);
+            return 350L;
+        }
+        boolean acted = false;
+        AccessibilityNodeInfo scrollable = findScrollableInAll(roots);
+        if (scrollable != null) {
+            try {
+                if (scrollable.performAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)) {
+                    acted = true;
+                }
+            } catch (Throwable ignore) {}
+        }
+        // Always also dispatch a downward gesture as a fallback, since some
+        // lists ignore the accessibility action but respond to a real drag.
+        boolean gestured = performGestureSwipeDown();
+
+        if (!acted && !gestured) {
+            // We couldn't scroll backward at all → we're already at the top.
+            setAction(getString(R.string.action_rewind_done));
+            transitionTo(STATE_LOOK_LIKE);
+            return 350L;
+        }
+
+        rewindStepsDone++;
+        setAction(getString(R.string.action_rewind_to_top));
+        return REWIND_STEP_WAIT_MS;
+    }
+
+    /**
+     * v8 — scroll forward, with three rotating patterns and a time-based
+     * no-progress budget. Also taps a "تحميل المزيد" button if one is visible,
+     * before swiping.
      */
     private long handleMustScroll(List<AccessibilityNodeInfo> roots, long now) {
         int curLikes = likesCount.get();
-        if (curLikes == likesAtLastScroll) {
-            scrollsWithoutNewLike++;
-            if (scrollsWithoutNewLike >= MAX_SCROLLS_WITHOUT_NEW_LIKE) {
-                stopInternal(STATUS_AUTO_STOPPED);
+        if (curLikes != likesAtLastScroll) {
+            // Real progress since the last scroll — reset the stuck clock.
+            firstNoProgressScrollMs = 0L;
+            scrollPatternIndex = 0;
+        } else {
+            // No new likes since we last entered this state. Start (or keep)
+            // the no-progress timer; if it exceeds the budget, stop with a
+            // clear reason.
+            if (firstNoProgressScrollMs == 0L) firstNoProgressScrollMs = now;
+            if (now - firstNoProgressScrollMs > NO_PROGRESS_BUDGET_MS) {
+                stopInternal(STATUS_AUTO_STOPPED,
+                        getString(R.string.stop_reason_no_progress));
                 return config.scanIntervalMs;
             }
-        } else {
-            scrollsWithoutNewLike = 0;
         }
         likesAtLastScroll = curLikes;
 
-        boolean scrolled = performSmartScroll(roots);
+        // v8: prefer a literal "load more" button over a swipe when one is
+        // visible — some apps page only via that explicit tap.
+        AccessibilityNodeInfo loadMore = findLoadMoreButton(roots);
+        if (loadMore != null && performClick(loadMore)) {
+            setAction(getString(R.string.action_load_more));
+            processedBounds.clear();
+            transitionTo(STATE_LOOK_LIKE);
+            return POST_SCROLL_WAIT_MS;
+        }
+
+        boolean scrolled = performSmartScroll(roots, scrollPatternIndex);
         if (scrolled) setAction(getString(R.string.action_scroll));
+        scrollPatternIndex = (scrollPatternIndex + 1) % 3;
 
         processedBounds.clear();
         transitionTo(STATE_LOOK_LIKE);
@@ -421,9 +513,12 @@ public class ClickerService extends AccessibilityService {
      * Always dispatches a real finger gesture (most paginated lists only
      * trigger "load more" on a gesture, not on the accessibility action),
      * and additionally invokes ACTION_SCROLL_FORWARD if a scrollable
-     * container is reachable.
+     * container is reachable. The pattern index rotates the gesture shape
+     * across consecutive scrolls inside a single MUST_SCROLL streak, so a
+     * stubborn paginated list eventually gets a velocity / distance it
+     * recognises as "user wants more".
      */
-    private boolean performSmartScroll(List<AccessibilityNodeInfo> roots) {
+    private boolean performSmartScroll(List<AccessibilityNodeInfo> roots, int patternIndex) {
         boolean acted = false;
         AccessibilityNodeInfo scrollable = findScrollableInAll(roots);
         if (scrollable != null) {
@@ -433,31 +528,80 @@ public class ClickerService extends AccessibilityService {
                 }
             } catch (Throwable ignore) {}
         }
-        boolean gestured = performGestureSwipeUp();
+        boolean gestured = performGestureSwipeUp(patternIndex);
         return acted || gestured;
     }
 
-    private boolean performGestureSwipeUp() {
+    private boolean performGestureSwipeUp(int patternIndex) {
         try {
             int centerX = screenW / 2;
-            // Tiny jitter so two consecutive identical-content frames don't
-            // produce identical gesture timings (helps stubborn paginated
-            // lists that debounce repeated identical input).
+            float startFrac, endFrac;
+            long duration;
+            switch (patternIndex % 3) {
+                case 0: startFrac = 0.82f; endFrac = 0.18f; duration = 450L; break; // standard
+                case 1: startFrac = 0.88f; endFrac = 0.12f; duration = 750L; break; // long slow drag
+                default: startFrac = 0.92f; endFrac = 0.08f; duration = 320L; break;// fast fling
+            }
             int jitter = (int) ((System.currentTimeMillis() % 7) - 3) * 10;
-            int startY = (int) (screenH * 0.82f);
-            int endY   = (int) (screenH * 0.18f) + jitter;
-            if (endY < (int) (screenH * 0.10f)) endY = (int) (screenH * 0.10f);
+            int startY = (int) (screenH * startFrac);
+            int endY   = (int) (screenH * endFrac) + jitter;
+            if (endY < (int) (screenH * 0.06f)) endY = (int) (screenH * 0.06f);
             Path path = new Path();
             path.moveTo(centerX, startY);
             path.lineTo(centerX, endY);
             GestureDescription.StrokeDescription stroke =
-                    new GestureDescription.StrokeDescription(path, 0L, 450L);
+                    new GestureDescription.StrokeDescription(path, 0L, duration);
             GestureDescription gesture =
                     new GestureDescription.Builder().addStroke(stroke).build();
             return dispatchGesture(gesture, null, null);
         } catch (Throwable t) {
             return false;
         }
+    }
+
+    /** v8: gesture used by STATE_REWIND_TO_TOP. Pulls content downward. */
+    private boolean performGestureSwipeDown() {
+        try {
+            int centerX = screenW / 2;
+            int startY = (int) (screenH * 0.22f);
+            int endY   = (int) (screenH * 0.86f);
+            Path path = new Path();
+            path.moveTo(centerX, startY);
+            path.lineTo(centerX, endY);
+            GestureDescription.StrokeDescription stroke =
+                    new GestureDescription.StrokeDescription(path, 0L, 500L);
+            GestureDescription gesture =
+                    new GestureDescription.Builder().addStroke(stroke).build();
+            return dispatchGesture(gesture, null, null);
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /**
+     * v8: search the screen for a clickable node whose text/contentDesc
+     * matches any of LOAD_MORE_KEYWORDS. Returns null if none found.
+     */
+    private AccessibilityNodeInfo findLoadMoreButton(List<AccessibilityNodeInfo> roots) {
+        for (String kw : LOAD_MORE_KEYWORDS) {
+            AccessibilityNodeInfo hit = findClickableInAll(roots, kw);
+            if (hit != null) return hit;
+        }
+        return null;
+    }
+
+    /**
+     * v8: returns true if any END_OF_LIST_HINTS phrase is visible anywhere
+     * in the current accessibility tree. Used to stop the bot cleanly when
+     * the target app explicitly says "you've reached the end".
+     */
+    private boolean endOfListVisible(List<AccessibilityNodeInfo> roots) {
+        List<String> needles = new ArrayList<>(END_OF_LIST_HINTS.length);
+        for (String s : END_OF_LIST_HINTS) needles.add(normalizeArabic(s));
+        for (AccessibilityNodeInfo root : roots) {
+            if (containsAnyText(root, needles, 0)) return true;
+        }
+        return false;
     }
 
     // ============================================================
