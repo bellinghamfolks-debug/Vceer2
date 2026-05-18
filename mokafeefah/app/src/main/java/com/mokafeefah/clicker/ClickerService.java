@@ -67,21 +67,25 @@ public class ClickerService extends AccessibilityService {
 
     // Post-scroll loading patience. Many target apps paginate over the
     // network; we must NOT count "waiting for the next page to load" as a
-    // stuck condition or we give up after only a few seconds.
-    private static final long POST_SCROLL_INITIAL_WAIT_MS = 1200L;
-    private static final long POST_SCROLL_LOOP_WAIT_MS    = 700L;
-    private static final long POST_SCROLL_MAX_WAIT_MS     = 8000L; // per re-scroll attempt
-    private static final int  POST_SCROLL_RETRY_ATTEMPTS  = 3;     // re-swipe up to N times
+    // stuck condition or we give up after only a few seconds. v5 is even
+    // more generous than v4 because real users may be on slow networks.
+    private static final long POST_SCROLL_INITIAL_WAIT_MS = 1500L;
+    private static final long POST_SCROLL_LOOP_WAIT_MS    = 800L;
+    private static final long POST_SCROLL_MAX_WAIT_MS     = 12000L; // 12s per re-scroll attempt
+    private static final int  POST_SCROLL_RETRY_ATTEMPTS  = 5;      // re-swipe up to N times with varied patterns
 
     private static final int  MAX_TREE_DEPTH         = 30;
     private static final int  MAX_NODES_PER_TICK     = 6000;
     private static final int  CARD_MAX_CLIMB         = 9;
     private static final int  CARD_TEXT_DEPTH        = 6;
     private static final int  MIN_TEXT_CHARS_FOR_FP  = 6;
+    private static final int  SNAPSHOT_TEXT_LIMIT    = 700;  // chars hashed as "screen content"
 
     // Stop conditions after the bot has clearly run out of work.
-    private static final int  MAX_SCROLLS_NO_CONTENT_CHANGE = 2;  // truly at end of list
-    private static final int  MAX_SCROLLS_WITHOUT_NEW_LIKE  = 18; // exhausted likeable members
+    // With v5 the retries-per-cycle are 5 × 12s = 60s, so 3 cycles ≈ 3 min
+    // of attempts before declaring true end-of-list.
+    private static final int  MAX_SCROLLS_NO_CONTENT_CHANGE = 3;
+    private static final int  MAX_SCROLLS_WITHOUT_NEW_LIKE  = 30;
 
     private static ClickerService instance;
 
@@ -483,30 +487,52 @@ public class ClickerService extends AccessibilityService {
     // ============================================================
 
     private boolean performSmartScroll(List<AccessibilityNodeInfo> roots) {
-        AccessibilityNodeInfo scrollable = findScrollableInAll(roots);
-        if (scrollable != null) {
-            try {
-                if (scrollable.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)) {
-                    return true;
-                }
-            } catch (Throwable ignore) {}
-        }
-        return performGestureSwipeUp();
+        return performSmartScroll(roots, scrollRetryCount);
     }
 
-    private boolean performGestureSwipeUp() {
+    /**
+     * Pattern-aware scroll. On the first attempt of a MUST_SCROLL session we
+     * try the standard scrollable action; on retries we vary the gesture so
+     * a stubborn paginated list eventually accepts the swipe and triggers a
+     * "load more" request.
+     */
+    private boolean performSmartScroll(List<AccessibilityNodeInfo> roots, int patternIndex) {
+        // ACTION_SCROLL_FORWARD on the scrollable container is the friendliest
+        // option — it lets the app know "we want more content". Try it first.
+        if (patternIndex <= 1) {
+            AccessibilityNodeInfo scrollable = findScrollableInAll(roots);
+            if (scrollable != null) {
+                try {
+                    if (scrollable.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)) {
+                        return true;
+                    }
+                } catch (Throwable ignore) {}
+            }
+        }
+        return performGestureSwipeUp(patternIndex);
+    }
+
+    private boolean performGestureSwipeUp(int patternIndex) {
         try {
             int centerX = screenW / 2;
-            // Slight jitter to break out of identical-frame loops.
+            float startFrac, endFrac;
+            long duration;
+            switch (patternIndex % 5) {
+                case 0: startFrac = 0.72f; endFrac = 0.28f; duration = 450L; break; // standard
+                case 1: startFrac = 0.85f; endFrac = 0.15f; duration = 380L; break; // long fast
+                case 2: startFrac = 0.62f; endFrac = 0.38f; duration = 280L; break; // short flick
+                case 3: startFrac = 0.80f; endFrac = 0.18f; duration = 700L; break; // long slow
+                default: startFrac = 0.75f; endFrac = 0.20f; duration = 250L; break;// hard flick
+            }
             int jitter = (int) ((System.currentTimeMillis() % 7) - 3) * 12;
-            int startY = (int) (screenH * 0.72f);
-            int endY   = (int) (screenH * 0.28f) + jitter;
-            if (endY < (int) (screenH * 0.15f)) endY = (int) (screenH * 0.15f);
+            int startY = (int) (screenH * startFrac);
+            int endY   = (int) (screenH * endFrac) + jitter;
+            if (endY < (int) (screenH * 0.10f)) endY = (int) (screenH * 0.10f);
             Path path = new Path();
             path.moveTo(centerX, startY);
             path.lineTo(centerX, endY);
             GestureDescription.StrokeDescription stroke =
-                    new GestureDescription.StrokeDescription(path, 0L, 450L);
+                    new GestureDescription.StrokeDescription(path, 0L, duration);
             GestureDescription gesture =
                     new GestureDescription.Builder().addStroke(stroke).build();
             return dispatchGesture(gesture, null, null);
@@ -614,37 +640,51 @@ public class ClickerService extends AccessibilityService {
     }
 
     /**
-     * Returns a stable, sorted string of all currently-visible like-button
-     * positions. Used by the AFTER_SCROLL state to detect whether a swipe
-     * actually changed the screen. If two ticks produce the same snapshot,
-     * the screen is frozen (either at the bottom of the list or waiting on
-     * a network response) and we should wait, not declare "stuck".
+     * Returns a content-based fingerprint of what's CURRENTLY visible on
+     * screen. Used by AFTER_SCROLL to decide whether a swipe actually
+     * loaded new content.
+     *
+     * IMPORTANT (v5 fix): the v4 implementation hashed the POSITIONS of the
+     * visible like-buttons. That's broken for any scrollable list because
+     * the viewport stays at the same screen Y coordinates while the content
+     * flows through it — so the bounds-keys after a successful scroll were
+     * identical to the bounds-keys before, and v4 always concluded "scroll
+     * didn't move anything" and stopped after a few tries.
+     *
+     * v5 hashes the actual VISIBLE TEXT (names, ages, cities) on screen,
+     * which DOES change as new members slide into view.
      */
     private String collectLikeButtonsSnapshot(List<AccessibilityNodeInfo> roots) {
-        if (config.likeText == null || config.likeText.isEmpty()) return "";
-        String needle = normalizeArabic(config.likeText);
-        List<String> keys = new ArrayList<>();
+        StringBuilder sb = new StringBuilder(SNAPSHOT_TEXT_LIMIT);
         for (AccessibilityNodeInfo root : roots) {
-            collectMatchingKeys(root, needle, 0, keys);
+            if (sb.length() >= SNAPSHOT_TEXT_LIMIT) break;
+            collectVisibleScreenText(root, sb, 0);
         }
-        Collections.sort(keys);
-        return keys.toString();
+        // Bound the length so very chatty screens don't blow up the hash.
+        if (sb.length() > SNAPSHOT_TEXT_LIMIT) sb.setLength(SNAPSHOT_TEXT_LIMIT);
+        return sb.toString();
     }
 
-    private void collectMatchingKeys(AccessibilityNodeInfo node, String needle,
-                                     int depth, List<String> out) {
-        if (node == null || depth > MAX_TREE_DEPTH) return;
+    private void collectVisibleScreenText(AccessibilityNodeInfo node,
+                                          StringBuilder out, int depth) {
+        if (node == null || depth > 7) return;
         if (++nodesVisitedThisTick > MAX_NODES_PER_TICK) return;
-        if (textMatches(node, needle) && node.isVisibleToUser()) {
-            AccessibilityNodeInfo clickable = climbToClickable(node);
-            if (clickable != null) out.add(boundsKey(clickable));
+        if (out.length() >= SNAPSHOT_TEXT_LIMIT) return;
+
+        if (node.isVisibleToUser()) {
+            CharSequence text = node.getText();
+            if (text != null && text.length() > 0) {
+                out.append(text).append('|');
+                if (out.length() >= SNAPSHOT_TEXT_LIMIT) return;
+            }
         }
         int n = node.getChildCount();
         for (int i = 0; i < n; i++) {
+            if (out.length() >= SNAPSHOT_TEXT_LIMIT) return;
             AccessibilityNodeInfo child = node.getChild(i);
             if (child == null) continue;
             track(child);
-            collectMatchingKeys(child, needle, depth + 1, out);
+            collectVisibleScreenText(child, out, depth + 1);
         }
     }
 
