@@ -100,12 +100,14 @@ public class MainActivity extends AppCompatActivity {
         Button btnOpenAcc      = findViewById(R.id.btnOpenAccessibility);
         Button btnReset        = findViewById(R.id.btnReset);
         Button btnClearHistory = findViewById(R.id.btnClearHistory);
+        Button btnShareDiag    = findViewById(R.id.btnShareDiagnostic);
 
         btnStart.setOnClickListener(v -> onStartClicked());
         btnStop.setOnClickListener(v -> onStopClicked());
         btnOpenAcc.setOnClickListener(v -> openAccessibilitySettings());
         btnReset.setOnClickListener(v -> resetDefaults());
         btnClearHistory.setOnClickListener(v -> confirmClearHistory());
+        btnShareDiag.setOnClickListener(v -> shareLatestDiagnostic());
         btnToggleAdvanced.setOnClickListener(v -> toggleAdvancedSettings());
         checkDedup.setOnCheckedChangeListener((v, checked) ->
                 prefs.edit().putBoolean(K_DEDUP_ENABLED, checked).apply());
@@ -243,6 +245,50 @@ public class MainActivity extends AppCompatActivity {
         if (checkDedup != null) checkDedup.setChecked(true);
         saveCurrentValues();
         toast(getString(R.string.msg_reset_done));
+    }
+
+    private void shareLatestDiagnostic() {
+        ClickerService svc = ClickerService.getInstance();
+        String path = svc == null ? null : svc.getLastDumpPath();
+        if (path == null || path.isEmpty() || !path.startsWith("/")) {
+            // No dump yet — fall back to the newest file in the external dir.
+            java.io.File dir = getExternalFilesDir(null);
+            java.io.File newest = null;
+            if (dir != null && dir.isDirectory()) {
+                java.io.File[] files = dir.listFiles();
+                if (files != null) {
+                    for (java.io.File f : files) {
+                        if (!f.getName().startsWith("dump_")) continue;
+                        if (newest == null || f.lastModified() > newest.lastModified()) {
+                            newest = f;
+                        }
+                    }
+                }
+            }
+            if (newest == null) {
+                toast(getString(R.string.msg_no_diagnostic));
+                return;
+            }
+            path = newest.getAbsolutePath();
+        }
+        java.io.File file = new java.io.File(path);
+        if (!file.exists()) {
+            toast(getString(R.string.msg_no_diagnostic));
+            return;
+        }
+        try {
+            android.net.Uri uri = androidx.core.content.FileProvider.getUriForFile(
+                    this, getPackageName() + ".fileprovider", file);
+            Intent send = new Intent(Intent.ACTION_SEND);
+            send.setType("text/plain");
+            send.putExtra(Intent.EXTRA_STREAM, uri);
+            send.putExtra(Intent.EXTRA_SUBJECT, file.getName());
+            send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivity(Intent.createChooser(send,
+                    getString(R.string.share_diagnostic_title)));
+        } catch (Throwable t) {
+            toast(getString(R.string.msg_share_failed) + ": " + t.getMessage());
+        }
     }
 
     private void confirmClearHistory() {

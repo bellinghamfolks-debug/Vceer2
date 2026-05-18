@@ -129,6 +129,7 @@ public class ClickerService extends AccessibilityService {
             new IdentityHashMap<>(256);
 
     private String lastAction = "";
+    private String lastDumpPath = ""; // v9: latest auto-stop diagnostic file
     private long   lastBackTime = 0L;
     private long   lastButtonFoundMs = 0L;
     private int    state = STATE_LOOK_LIKE;
@@ -214,6 +215,7 @@ public class ClickerService extends AccessibilityService {
     }
 
     public boolean isExecuting()     { return running.get(); }
+    public String  getLastDumpPath() { return lastDumpPath == null ? "" : lastDumpPath; }
     public int     getLikesCount()   { return likesCount.get(); }
     public int     getSkippedCount() { return skippedCount.get(); }
     public LikedMembersDb getDb()    { return db; }
@@ -992,6 +994,7 @@ public class ClickerService extends AccessibilityService {
             summary = "(فشل التشخيص)";
             path    = "—";
         }
+        lastDumpPath = path;
         String full = reasonBase + " | " + summary + " | تشخيص: " + path;
         stopInternal(status, full);
     }

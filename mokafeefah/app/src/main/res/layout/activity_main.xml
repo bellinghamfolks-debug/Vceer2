@@ -443,10 +443,22 @@
             android:textColor="@color/text_primary"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="24dp"
+            android:layout_marginBottom="12dp"
             android:minHeight="56dp"
             android:text="@string/btn_clear_history"
             android:contentDescription="@string/btn_clear_history"
+            android:backgroundTint="@color/surface_elevated"/>
+
+        <Button
+            android:id="@+id/btnShareDiagnostic"
+            android:textSize="17sp"
+            android:textColor="@color/text_primary"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="24dp"
+            android:minHeight="56dp"
+            android:text="@string/btn_share_diagnostic"
+            android:contentDescription="@string/btn_share_diagnostic"
             android:backgroundTint="@color/surface_elevated"/>
     </LinearLayout>
 </ScrollView>

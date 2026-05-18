@@ -90,4 +90,9 @@
     <string name="stop_reason_idle">توقفت — لم يُعثر على أي زر طوال مدة الإيقاف التلقائي</string>
     <string name="stop_reason_no_progress">توقفت — لم تظهر أعضاء جدد لمدة 3 دقائق</string>
     <string name="stop_reason_end_of_list">توقفت — التطبيق المستهدف يقول لا يوجد المزيد من الأعضاء</string>
+
+    <string name="btn_share_diagnostic">مشاركة آخر ملف تشخيص</string>
+    <string name="msg_no_diagnostic">لا يوجد ملف تشخيص بعد. شغّل البوت حتى يتوقف تلقائيًا أولاً.</string>
+    <string name="msg_share_failed">تعذّر فتح نافذة المشاركة</string>
+    <string name="share_diagnostic_title">مشاركة ملف التشخيص</string>
 </resources>
