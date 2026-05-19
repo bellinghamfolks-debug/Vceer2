@@ -1,0 +1,20 @@
+# One-click deploy blueprint for Render (https://render.com).
+# After connecting this GitHub repo to Render, point it at this file:
+#   "New +" → "Blueprint" → pick this repo → confirm.
+# Then set GEMINI_API_KEY in the service's Environment tab.
+services:
+  - type: web
+    name: basir-web
+    runtime: node
+    plan: free
+    rootDir: server
+    buildCommand: npm install
+    startCommand: node index.js
+    healthCheckPath: /health
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false           # set this manually in the Render dashboard
+      - key: BASIR_APP_TOKEN
+        generateValue: true   # optional, shared secret if you want auth
+      - key: NODE_VERSION
+        value: 20
