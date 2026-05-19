@@ -790,22 +790,80 @@ public class ClickerService extends AccessibilityService {
     private AccessibilityNodeInfo findUnprocessedClickable(
             List<AccessibilityNodeInfo> roots, String text) {
         if (text == null || text.isEmpty()) return null;
+        // v9.5: hot path — use the native findAccessibilityNodeInfosByText
+        // API instead of a user-space DFS. Native is implemented in C++ in
+        // the Android framework and avoids the per-node JNI cost of
+        // node.getChild(i) / node.getBoundsInScreen() that our DFS pays.
+        // Profiling a 17-min/111-like session showed Mawada's WebView grows
+        // from ~1.3 K to ~4.5 K accessibility nodes as the user scrolls
+        // (loaded-but-off-screen rows are kept in the DOM), and the DFS
+        // walk grew linearly with the tree — hence the user's 6 → 12 sec
+        // per-like slowdown. Native search returns matches in roughly
+        // constant time regardless of tree size.
+        AccessibilityNodeInfo hit = findByTextNative(roots, text, /* skipProcessed */ true);
+        if (hit != null) return hit;
+        // Fall back to DFS only when the native call returns nothing. Some
+        // AccessibilityNodeInfo implementations on older Android versions
+        // don't implement the text-search method for virtual WebView nodes.
         String needle = normalizeArabic(text);
         for (AccessibilityNodeInfo root : roots) {
-            AccessibilityNodeInfo hit =
+            AccessibilityNodeInfo dfs =
                     findFirstClickableMatching(root, needle, 0, /* skipProcessed */ true);
-            if (hit != null) return hit;
+            if (dfs != null) return dfs;
         }
         return null;
     }
 
     private AccessibilityNodeInfo findClickableInAll(List<AccessibilityNodeInfo> roots, String text) {
         if (text == null || text.isEmpty()) return null;
+        // Same v9.5 native-first approach for one-shot lookups (close, yes,
+        // load-more keywords, etc.).
+        AccessibilityNodeInfo hit = findByTextNative(roots, text, /* skipProcessed */ false);
+        if (hit != null) return hit;
         String needle = normalizeArabic(text);
         for (AccessibilityNodeInfo root : roots) {
-            AccessibilityNodeInfo hit =
+            AccessibilityNodeInfo dfs =
                     findFirstClickableMatching(root, needle, 0, /* skipProcessed */ false);
-            if (hit != null) return hit;
+            if (dfs != null) return dfs;
+        }
+        return null;
+    }
+
+    /**
+     * v9.5 — fast path. AccessibilityNodeInfo.findAccessibilityNodeInfosByText
+     * is a native Android API that returns a flat list of every node whose
+     * text or contentDescription contains the given substring. It's
+     * implemented inside the framework's accessibility cache so it scales
+     * essentially independently of tree size, whereas our user-space DFS
+     * grew linearly with the number of off-screen rows Mawada had loaded.
+     *
+     * Filters applied here, in the order that lets us bail out quickest:
+     *   1. isVisibleToUser()  → skip the hundreds of off-screen rows
+     *   2. climbToClickable() → walk up at most 8 levels to a clickable
+     *   3. processedBounds    → skip rows we already clicked this scroll
+     *
+     * Returns the first match that passes all three.
+     */
+    private AccessibilityNodeInfo findByTextNative(
+            List<AccessibilityNodeInfo> roots, String text, boolean skipProcessed) {
+        for (AccessibilityNodeInfo root : roots) {
+            if (root == null) continue;
+            List<AccessibilityNodeInfo> hits;
+            try {
+                hits = root.findAccessibilityNodeInfosByText(text);
+            } catch (Throwable t) {
+                continue;
+            }
+            if (hits == null) continue;
+            for (AccessibilityNodeInfo h : hits) {
+                if (h == null) continue;
+                track(h);
+                if (!h.isVisibleToUser()) continue;
+                AccessibilityNodeInfo clickable = climbToClickable(h);
+                if (clickable == null) continue;
+                if (skipProcessed && processedBounds.contains(boundsKey(clickable))) continue;
+                return clickable;
+            }
         }
         return null;
     }
