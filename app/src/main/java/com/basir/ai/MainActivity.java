@@ -701,34 +701,122 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
     }
 
     // ============================================================
-    // Home: 5 primary cards + More
+    // Home: tabbed navigation (v2.1.1)
     // ============================================================
+    //
+    // v2.0 used a single long scroll of cards on the home screen. The user
+    // asked for "real tabs" — easier to navigate, less to scroll, less
+    // intimidating for a blind user encountering 9 unfamiliar cards at
+    // once. v2.1.1 splits the cards into four tabs:
+    //
+    //   0  محادثة  / Talk     — Ask Basir + voice conversation
+    //   1  رؤية    / Vision   — Describe + walking + OCR-on-touch
+    //   2  مستندات / Documents — Convert + Q&A + translate
+    //   3  المزيد  / More     — Emergency + memory + archive + settings
+    //
+    // The selected tab persists across navigation, so when the user comes
+    // back from a sub-screen they land on the tab they left from.
+
+    private int currentHomeTab = 0;
 
     private void showHome() {
         resetScreen(t("بصير", "Basir"),
-                t("مساعدك الذكي للقراءة، والوصف، والترجمة، وتحويل المستندات إلى صيغ يسهل الوصول إليها.", "Your smart assistant for reading, description, translation, and converting documents into accessible formats."));
+                t("اختر تبويبًا للوصول إلى الخدمات.",
+                  "Choose a tab to access the services."));
 
+        addTabBar();
+
+        switch (currentHomeTab) {
+            case 1: renderVisionTab();    break;
+            case 2: renderDocumentsTab(); break;
+            case 3: renderMoreTab();      break;
+            case 0:
+            default: renderTalkTab();     break;
+        }
+    }
+
+    /** Horizontal row of 4 tab buttons. Selected tab gets the filled
+     *  primary style; the rest get the outline style. Both styles already
+     *  enforce 64dp min-height, so every tab is a comfortable touch target
+     *  for low-vision users. */
+    private void addTabBar() {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setPadding(0, dp(4), 0, dp(12));
+        String[] arLabels = { "محادثة", "رؤية",   "مستندات",  "المزيد" };
+        String[] enLabels = { "Talk",   "Vision", "Documents","More"   };
+        for (int i = 0; i < 4; i++) {
+            final int idx = i;
+            Button b = new Button(this);
+            String label = isEnglish() ? enLabels[i] : arLabels[i];
+            b.setText(label);
+            b.setAllCaps(false);
+            b.setTextSize(textSize(15));
+            boolean selected = (currentHomeTab == i);
+            b.setTextColor(selected ? Color.WHITE : colorPrimary());
+            b.setTypeface(null, selected ? Typeface.BOLD : Typeface.NORMAL);
+            b.setMinHeight(dp(56));
+            b.setPadding(dp(4), dp(8), dp(4), dp(8));
+            GradientDrawable bg = new GradientDrawable();
+            bg.setShape(GradientDrawable.RECTANGLE);
+            bg.setColor(selected ? colorPrimary() : colorSurface());
+            bg.setCornerRadius(dp(26));
+            bg.setStroke(dp(selected ? 0 : 2), colorPrimary());
+            b.setBackground(bg);
+            // TalkBack: announce position + selected state ("tab 1 of 4,
+            // selected") so a screen-reader user knows where they are.
+            b.setContentDescription(label
+                    + ", " + t("تبويب ", "tab ") + (i + 1) + " " + t("من", "of") + " 4"
+                    + (selected ? ", " + t("محدّد", "selected") : ""));
+            b.setOnClickListener(v -> {
+                if (currentHomeTab != idx) {
+                    currentHomeTab = idx;
+                    showHome();
+                    speak(label);  // confirms the switch for blind users
+                }
+            });
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                    0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+            lp.setMargins(dp(3), 0, dp(3), 0);
+            row.addView(b, lp);
+        }
+        root.addView(row, fullWidth());
+    }
+
+    private void renderTalkTab() {
         addCard(t("اسأل بصير", "Ask Basir"),
                 t("اكتب سؤالك أو أمليه صوتيًا، واحصل على إجابة واضحة ومنظمة.", "Type or dictate your question and get a clear, structured answer."),
                 v -> showAskScreen());
 
-        // v2.0 — Continuous voice conversation. Hands-free dialogue with
-        // Gemini: ask, hear, ask again. The recognizer auto-relaunches.
         addCard(t("محادثة صوتية مستمرة", "Continuous voice conversation"),
                 t("تحدث بحرية مع بصير دون لمس الشاشة بين الأسئلة.",
                   "Talk to Basir freely without touching the screen between questions."),
                 v -> showVoiceConversationScreen());
+    }
 
+    private void renderVisionTab() {
         addCard(t("وصف صورة أو مشهد", "Describe an image or scene"),
                 t("احصل على وصف دقيق للصور ولقطات الشاشة والمشاهد المحيطة بك.", "Get a detailed description of images, screenshots, and surrounding scenes."),
                 v -> showDescribeScreen());
 
+        addCard(t("وضع المشي ووصف ما أمامي", "Walking mode — describe what's ahead"),
+                t("صوّر ما أمامك بضغطة واحدة، استمع للوصف، ثم كرر للمشهد التالي.",
+                  "Capture what's ahead in one tap, hear a description, and repeat for the next scene."),
+                v -> showWalkingModeScreen());
+
+        addCard(t("قراءة نص أي تطبيق (OCR فوري)",
+                  "OCR-on-touch — read text from any app"),
+                t("شغّل خدمة بصير في إمكانية الوصول، ثم اضغط زر إمكانية الوصول في أي تطبيق ليُقرأ كل نص ظاهر — حتى ما داخل الصور.",
+                  "Enable Basir under Accessibility, then tap the accessibility shortcut in any app to read every visible text aloud — even text inside images."),
+                v -> showOcrSetupScreen());
+    }
+
+    private void renderDocumentsTab() {
         addCard(t("قراءة المستندات", "Read documents"),
                 t("حلّل ملفات PDF، والصور، والفواتير، والعقود، والعروض التقديمية.", "Analyze PDF files, images, invoices, contracts, and presentations."),
                 v -> showDocumentScreen());
 
-        // v2.0 — Document Q&A entry on the home screen, shown only when a
-        // recently-converted document is still cached on Gemini's side.
+        // Document Q&A entry shown only when a cached file is available.
         if (ConversionState.get().hasUploadedFile()) {
             String src = ConversionState.get().sourceDisplayName();
             addCard(t("اسأل عن آخر مستند", "Ask about the last document"),
@@ -742,31 +830,38 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
         addCard(t("ترجمة وشرح", "Translate and explain"),
                 t("ترجم النصوص، وافهم المعنى، والنبرة، والسياق بطريقة مبسطة.", "Translate text and understand the meaning, tone, and context in a simple way."),
                 v -> showTranslateScreen());
+    }
 
-        // v2.0 — Walking mode. Single-button rapid-fire camera description
-        // for use while moving: tap to capture, hear a short description,
-        // tap again for the next frame. Auto-loops if the user enables it
-        // on the screen itself.
-        addCard(t("وضع المشي ووصف ما أمامي", "Walking mode — describe what's ahead"),
-                t("صوّر ما أمامك بضغطة واحدة، استمع للوصف، ثم كرر للمشهد التالي.",
-                  "Capture what's ahead in one tap, hear a description, and repeat for the next scene."),
-                v -> showWalkingModeScreen());
-
-        // v2.1 — OCR-on-touch. The most "revolutionary" entry: once enabled,
-        // it lets the user read text from ANY app, not just inside Basir.
-        addCard(t("قراءة نص أي تطبيق (OCR فوري)",
-                  "OCR-on-touch — read text from any app"),
-                t("شغّل خدمة بصير في إمكانية الوصول، ثم اضغط زر إمكانية الوصول في أي تطبيق ليُقرأ كل نص ظاهر — حتى ما داخل الصور.",
-                  "Enable Basir under Accessibility, then tap the accessibility shortcut in any app to read every visible text aloud — even text inside images."),
-                v -> showOcrSetupScreen());
-
+    private void renderMoreTab() {
         addCard(t("الطوارئ والمساعدة", "Emergency and help"),
                 t("أرسل موقعك التقريبي أو اطلب المساعدة من جهة طوارئ محفوظة.", "Share your approximate location or request help from a saved emergency contact."),
                 v -> showEmergencyScreen());
 
-        addOutlineButton(t("المزيد من الأدوات", "More tools"), v -> showMoreScreen());
+        addCard(t("أدوات متقدمة", "Advanced tools"),
+                t("وصف بديل، قراءة لقطات الشاشة، بطاقات مذاكرة، صياغة ردود، وقراءة الجداول كنص.",
+                  "Alt text, screenshot reading, study cards, reply drafting, and table-to-text reading."),
+                v -> showAdvancedScreen());
 
-        // Bottom: status pill
+        addCard(t("محفوظاتي الخاصة", "My saved items"),
+                t("احفظ معلومات الأشخاص، والمنتجات، والأدوية، والأماكن ليسهل الرجوع إليها.",
+                  "Save information about people, products, medications, and places for easy reference."),
+                v -> showMemoryScreen());
+
+        addCard(t("المحفوظات", "Archive"),
+                t("نتائج التحليل المحفوظة محليًا على جهازك.",
+                  "Analysis results saved locally on your device."),
+                v -> showArchiveScreen());
+
+        addCard(t("الإعدادات", "Settings"),
+                t("اللغة، الصوت، المظهر، الخصوصية، Gemini، وجهات الطوارئ.",
+                  "Language, voice, appearance, privacy, Gemini, and emergency contacts."),
+                v -> showSettingsScreen());
+
+        addCard(t("حول التطبيق", "About"),
+                t("معلومات عن بصير وبيانات التواصل مع المطور.",
+                  "About Basir and developer contact details."),
+                v -> showAboutScreen());
+
         addOutlineButton(t("حالة التطبيق", "App status"), v -> showStatusScreen());
     }
 
