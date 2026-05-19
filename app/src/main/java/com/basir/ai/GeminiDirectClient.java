@@ -351,6 +351,13 @@ public final class GeminiDirectClient {
         }
         JSONObject gen = new JSONObject();
         gen.put("temperature", 0.7);
+        // v2.1.1: explicitly request the headroom we need for batched PDF
+        // conversion. The user reported "Unterminated array at character X"
+        // crashes around page 40 — that's Gemini cutting the response off
+        // mid-JSON because we hit its default per-response output budget.
+        // 16384 fits a 4-page batch with detailed image+table descriptions
+        // and stays well under what every modern Gemini model supports.
+        gen.put("maxOutputTokens", 16384);
         body.put("generationConfig", gen);
         return body;
     }
@@ -446,23 +453,91 @@ public final class GeminiDirectClient {
 
     private static JSONObject parseJsonLenient(String text) throws Exception {
         String cleaned = text.trim();
-        try {
-            return new JSONObject(cleaned);
-        } catch (Exception e) {
-            if (cleaned.startsWith("```")) {
-                int firstNl = cleaned.indexOf('\n');
-                if (firstNl > 0) cleaned = cleaned.substring(firstNl + 1);
-                if (cleaned.endsWith("```")) cleaned = cleaned.substring(0, cleaned.length() - 3);
-                cleaned = cleaned.trim();
-            }
-            // Strip non-JSON prefix/suffix the model occasionally adds.
-            int firstBrace = cleaned.indexOf('{');
-            int lastBrace  = cleaned.lastIndexOf('}');
-            if (firstBrace >= 0 && lastBrace > firstBrace) {
-                cleaned = cleaned.substring(firstBrace, lastBrace + 1);
-            }
-            return new JSONObject(cleaned);
+        // Strip markdown fences first — Gemini sometimes wraps JSON in ```json fences.
+        if (cleaned.startsWith("```")) {
+            int firstNl = cleaned.indexOf('\n');
+            if (firstNl > 0) cleaned = cleaned.substring(firstNl + 1);
+            if (cleaned.endsWith("```")) cleaned = cleaned.substring(0, cleaned.length() - 3);
+            cleaned = cleaned.trim();
         }
+        // Try strict parse.
+        try { return new JSONObject(cleaned); } catch (Exception ignore) {}
+        // Strip non-JSON prefix/suffix.
+        int firstBrace = cleaned.indexOf('{');
+        int lastBrace  = cleaned.lastIndexOf('}');
+        if (firstBrace >= 0 && lastBrace > firstBrace) {
+            String trimmed = cleaned.substring(firstBrace, lastBrace + 1);
+            try { return new JSONObject(trimmed); } catch (Exception ignore) {}
+        }
+        // v2.1.1 — last-resort repair for TRUNCATED JSON. The user reported
+        // "Unterminated array at character" failures around page 40 of
+        // long PDFs: Gemini's response is cut off mid-section because the
+        // output token cap was reached. Rather than discard everything,
+        // walk the string and rebuild a valid JSON by dropping any
+        // half-written trailing element and closing all open brackets.
+        // We lose ~1 section worth of content for that batch, but we keep
+        // everything Gemini DID emit, and the document conversion proceeds
+        // to the next batch instead of failing outright.
+        if (firstBrace >= 0) {
+            try {
+                return new JSONObject(repairTruncatedJson(
+                        cleaned.substring(firstBrace)));
+            } catch (Exception ignore) {}
+        }
+        // Out of ideas — surface the original parse error to the caller.
+        return new JSONObject(cleaned);
+    }
+
+    /**
+     * Walks the (likely-truncated) JSON string keeping a bracket stack.
+     * Returns a valid JSON document by rolling back to the last point where
+     * everything was balanced at the current depth (right before a comma,
+     * or right after a closing bracket), then appending the matching
+     * closing brackets for whatever was still open. Designed for the
+     * specific case of {@code {"sections":[{...},{...},{...incomplete}}.
+     */
+    private static String repairTruncatedJson(String input) {
+        char[] cs = input.toCharArray();
+        java.util.Deque<Character> stack = new java.util.ArrayDeque<>();
+        boolean inString = false;
+        boolean escape = false;
+        int safeEnd = 0;
+        java.util.Deque<Character> safeStack = new java.util.ArrayDeque<>();
+
+        for (int i = 0; i < cs.length; i++) {
+            char c = cs[i];
+            if (escape) { escape = false; continue; }
+            if (inString && c == '\\') { escape = true; continue; }
+            if (c == '"') { inString = !inString; continue; }
+            if (inString) continue;
+
+            if (c == '{' || c == '[') {
+                stack.push(c);
+            } else if (c == '}' || c == ']') {
+                if (!stack.isEmpty()) stack.pop();
+                // Just closed a balanced container — safe truncation point.
+                safeEnd = i + 1;
+                safeStack = new java.util.ArrayDeque<>(stack);
+            } else if (c == ',') {
+                // Just finished a complete element at this depth — safe
+                // truncation point is BEFORE the comma. The next element
+                // (which may be incomplete) is dropped.
+                safeEnd = i;
+                safeStack = new java.util.ArrayDeque<>(stack);
+            }
+        }
+
+        // Balanced and complete — nothing to repair.
+        if (stack.isEmpty()) return input;
+
+        // Truncate to last known-safe state, then close the stack.
+        StringBuilder out = new StringBuilder();
+        out.append(cs, 0, safeEnd);
+        while (!safeStack.isEmpty()) {
+            char open = safeStack.pop();
+            out.append(open == '{' ? '}' : ']');
+        }
+        return out.toString();
     }
 
     private static String extractText(JSONObject resp) throws Exception {
