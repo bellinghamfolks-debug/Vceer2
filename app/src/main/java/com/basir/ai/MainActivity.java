@@ -973,6 +973,18 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
                   "Analysis results saved locally on your device."),
                 v -> showArchiveScreen());
 
+        addSectionHeader(t("الألعاب", "Games"));
+
+        addRichCard("🎮", null,
+                t("لعبة: حياة كفيف", "Game: Blind Life"),
+                t("لعبة حياة وقصة. اختر وضع الرؤية، تنقّل في المدينة والجامعة، "
+                + "وتفاعل مع الشخصيات. تتضمن دليل مستخدم تفصيلي.",
+                  "A life simulation game. Pick a vision mode, walk around the "
+                + "city and university, and interact with characters. Includes a "
+                + "full in-game user guide."),
+                v -> startActivity(new android.content.Intent(
+                        this, com.basir.ai.game.BlindLifeActivity.class)));
+
         addSectionHeader(t("التطبيق", "App"));
 
         addRichCard("⚙️", null,

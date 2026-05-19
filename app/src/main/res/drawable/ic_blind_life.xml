@@ -1,0 +1,19 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Warm gold background to set the game icon apart from the
+         deep-navy Basir AI icon. -->
+    <path android:fillColor="#C99A2A" android:pathData="M0,0L108,0L108,108L0,108Z"/>
+    <!-- A closed-eye / "blind" motif: a long horizontal lash line with
+         a small dot below it, suggesting a closed eye. -->
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M22,50 Q54,30 86,50 L86,58 Q54,38 22,58 Z"/>
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M54,72 m-5,0 a5,5 0 1,0 10,0 a5,5 0 1,0 -10,0 Z"/>
+    <!-- A walking cane diagonal to evoke mobility / a blind person's
+         white cane. -->
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M30,84 L78,28 L82,32 L34,88 Z"/>
+</vector>

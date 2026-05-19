@@ -38,6 +38,38 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
+        <!-- "حياة كفيف" – the Blind Life simulation game. Three activities:
+             menu / vision picker (BlindLifeActivity), the detailed in-game
+             user guide (BlindLifeGuideActivity), and the gameplay screen
+             (BlindLifeGameActivity). BlindLifeActivity also declares a
+             LAUNCHER intent-filter so the game shows up as its OWN icon on
+             the home screen in addition to the Basir launcher icon —
+             users can open the game directly without going through the
+             Basir More tab. -->
+        <activity
+            android:name=".game.BlindLifeActivity"
+            android:exported="true"
+            android:label="حياة كفيف"
+            android:icon="@drawable/ic_blind_life"
+            android:roundIcon="@drawable/ic_blind_life"
+            android:configChanges="orientation|screenSize|uiMode|fontScale">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <activity
+            android:name=".game.BlindLifeGuideActivity"
+            android:exported="false"
+            android:label="دليل المستخدم"
+            android:configChanges="orientation|screenSize|uiMode|fontScale" />
+        <activity
+            android:name=".game.BlindLifeGameActivity"
+            android:exported="false"
+            android:label="حياة كفيف"
+            android:screenOrientation="portrait"
+            android:configChanges="orientation|screenSize|uiMode|fontScale" />
+
         <!-- v2.1 — OCR-on-touch accessibility service. The user enables it
              once in Settings → Accessibility → Basir. After that, the
              system shows a small accessibility shortcut button in the
