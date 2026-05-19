@@ -21,11 +21,37 @@ const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const zlib = require('zlib');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { Document, Packer, Paragraph, HeadingLevel } = require('docx');
 
 const app = express();
 app.use(express.json({ limit: '20mb' }));
+
+// Permissive CORS so the PWA can call the API even when hosted on a
+// different origin (e.g. GitHub Pages, custom domain).
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type,X-Basir-Client-Token');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+
+// ---------------- Static web (PWA) ----------------
+// Serve the bundled web app from /web. Generated PNG icons live in
+// web/icons/. Everything else is served as-is.
+const WEB_DIR = path.join(__dirname, '..', 'web');
+ensureIcons(WEB_DIR);
+app.use(express.static(WEB_DIR, {
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.webmanifest')) {
+      res.setHeader('Content-Type', 'application/manifest+json; charset=utf-8');
+    } else if (filePath.endsWith('sw.js')) {
+      res.setHeader('Cache-Control', 'no-cache');
+    }
+  }
+}));
 
 const PORT = process.env.PORT || 3000;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
@@ -466,9 +492,108 @@ app.post('/api/convert', upload.single('file'), async (req, res) => {
   }
 });
 
+// ---------------- PNG icon generator ----------------
+// Minimal solid-color PNG encoder used to materialize the iOS apple-touch-icon
+// at server start. Avoids needing any image-processing dependency.
+function crc32(buf) {
+  let table = crc32.table;
+  if (!table) {
+    table = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) {
+      let c = n;
+      for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+      table[n] = c >>> 0;
+    }
+    crc32.table = table;
+  }
+  let c = 0xFFFFFFFF >>> 0;
+  for (let i = 0; i < buf.length; i++) c = (table[(c ^ buf[i]) & 0xFF] ^ (c >>> 8)) >>> 0;
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+
+function pngChunk(type, data) {
+  const len = Buffer.alloc(4); len.writeUInt32BE(data.length, 0);
+  const typeBuf = Buffer.from(type, 'ascii');
+  const body = Buffer.concat([typeBuf, data]);
+  const crc = Buffer.alloc(4); crc.writeUInt32BE(crc32(body), 0);
+  return Buffer.concat([len, body, crc]);
+}
+
+// Draws a stylized "eye" icon (blue square, white sclera oval, blue iris,
+// white pupil) — the same motif as the Android launcher icon.
+function makeIconPng(size) {
+  const w = size, h = size;
+  // pre-render to RGBA pixel array
+  const px = Buffer.alloc(w * h * 4);
+  const cx = w / 2, cy = h / 2;
+  const scleraRx = w * 0.40, scleraRy = h * 0.22;
+  const irisR = w * 0.14;
+  const pupilR = w * 0.055;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      // default background: brand blue #1565C0
+      let r = 0x15, g = 0x65, b = 0xC0;
+      const dx = x - cx, dy = y - cy;
+      const inSclera = (dx * dx) / (scleraRx * scleraRx) + (dy * dy) / (scleraRy * scleraRy) <= 1;
+      const inIris   = dx * dx + dy * dy <= irisR * irisR;
+      const inPupil  = dx * dx + dy * dy <= pupilR * pupilR;
+      if (inPupil)       { r = 0xFF; g = 0xFF; b = 0xFF; }
+      else if (inIris)   { r = 0x15; g = 0x65; b = 0xC0; }
+      else if (inSclera) { r = 0xFF; g = 0xFF; b = 0xFF; }
+      px[i] = r; px[i + 1] = g; px[i + 2] = b; px[i + 3] = 0xFF;
+    }
+  }
+  // PNG raw data with per-scanline filter byte (0)
+  const raw = Buffer.alloc(h * (1 + w * 4));
+  for (let y = 0; y < h; y++) {
+    raw[y * (1 + w * 4)] = 0;
+    px.copy(raw, y * (1 + w * 4) + 1, y * w * 4, (y + 1) * w * 4);
+  }
+  const idat = zlib.deflateSync(raw);
+  const sig = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(w, 0);
+  ihdr.writeUInt32BE(h, 4);
+  ihdr[8]  = 8;   // bit depth
+  ihdr[9]  = 6;   // RGBA
+  ihdr[10] = 0;   // compression
+  ihdr[11] = 0;   // filter
+  ihdr[12] = 0;   // interlace
+  return Buffer.concat([
+    sig,
+    pngChunk('IHDR', ihdr),
+    pngChunk('IDAT', idat),
+    pngChunk('IEND', Buffer.alloc(0))
+  ]);
+}
+
+function ensureIcons(webDir) {
+  const iconsDir = path.join(webDir, 'icons');
+  try { fs.mkdirSync(iconsDir, { recursive: true }); } catch {}
+  const need = [
+    { name: 'icon-192.png', size: 192 },
+    { name: 'icon-512.png', size: 512 },
+    { name: 'apple-touch-icon.png', size: 180 },
+    { name: 'favicon-32.png', size: 32 }
+  ];
+  for (const it of need) {
+    const p = path.join(iconsDir, it.name);
+    if (!fs.existsSync(p)) {
+      try {
+        fs.writeFileSync(p, makeIconPng(it.size));
+        console.log(`  generated ${it.name}`);
+      } catch (e) {
+        console.warn(`  could not generate ${it.name}: ${e.message}`);
+      }
+    }
+  }
+}
+
 app.listen(PORT, () => {
-  console.log(`Basir Gemini proxy listening on :${PORT}`);
+  console.log(`Basir Gemini proxy + web app listening on :${PORT}`);
   console.log(`  flash lite = ${MODEL_FLASH_LITE}`);
   console.log(`  flash      = ${MODEL_FLASH}`);
   console.log(`  pro        = ${MODEL_PRO}`);
+  console.log(`  web app    = ${WEB_DIR}`);
 });

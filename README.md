@@ -2,10 +2,15 @@
 
 > عينك الذكية في كل مكان · Your smart eye, everywhere
 
-Basir AI is a comprehensive Android assistant for blind and low-vision users.
-It combines AI-powered scene analysis, document reading, smart translation,
-walking guidance, personal memory, and emergency tools — all wired to a secure
-GPT proxy server (so no API key ever lives inside the APK).
+Basir AI is a comprehensive assistant for blind and low-vision users.
+It ships in two flavors:
+
+- **Android app** — native Java app (this repo's `app/`).
+- **Web app / iPhone PWA** — installable progressive web app (this repo's `web/`),
+  served by the same Node.js proxy in `server/`.
+
+Both wire to a secure Gemini proxy server (so no API key ever lives inside the
+client).
 
 ## Features
 
@@ -40,15 +45,71 @@ See [`server/README_SERVER.md`](server/README_SERVER.md) for setup.
 Once your proxy is online, open the app → **Settings → GPT Proxy setup**,
 paste the URL, save, then tap **Test AI connection**.
 
+## Web app / iPhone PWA
+
+The same `server/` Node.js process now also serves a full progressive web app
+from the `web/` folder. It mirrors the Android UI in Arabic and English and
+includes every feature that does not require Android-specific APIs.
+
+### Features in the web app
+
+- 💬 Ask Basir (text + voice dictation)
+- 📷 Image description — camera capture (`<input capture>`) or gallery upload —
+  with three modes: full description, alt text, screenshot reading
+- 🚶 Scene description from typed text
+- 📄 Document analysis — general, invoice, legal, medical
+- 🔁 Convert PDF / PPTX → screen-reader-friendly DOCX (via `/api/convert`)
+- 🌐 Smart translation across 15 languages
+- 🧪 Advanced tools — study cards, polite reply, table-to-text
+- 🆘 Emergency — opens SMS app with location link (`sms:` URI) + locator beep
+- 🧠 Local memory — people, products, places (saved in `localStorage`)
+- 🗂 Archive & history log (all local)
+- ⚙️ Settings — language, TTS rate, font size, vibration, auto-save, proxy URL,
+  app token, quality preset
+- ♿ Accessibility — RTL/LTR, large touch targets, semantic landmarks, ARIA
+  live regions, screen-reader friendly results, dark mode follows system
+- 📱 Installable to iPhone home screen via Safari → Share → "Add to Home Screen"
+
+### Run it locally
+
+```bash
+cd server
+cp .env.example .env          # set GEMINI_API_KEY at minimum
+npm install
+npm start
+# open http://localhost:3000  →  the PWA is served at the root
+```
+
+The server serves the SPA from `web/` and the same `/api/basir` + `/api/convert`
+endpoints used by the Android app. PNG launcher icons are generated on first
+boot into `web/icons/`.
+
+### Deploy from your phone (no computer)
+
+The repo includes a `render.yaml` blueprint. From your phone's browser:
+
+1. Push this repo to GitHub.
+2. Sign in to [render.com](https://render.com) on your phone.
+3. **New +** → **Blueprint** → pick this repo → **Apply**.
+4. In the new service's **Environment**, set `GEMINI_API_KEY` to your Google
+   AI Studio key. Save — Render redeploys.
+5. Open the public `https://*.onrender.com` URL in Safari on your iPhone.
+6. Tap the **Share** icon → **Add to Home Screen** → confirm. The PWA now
+   has its own icon on the home screen and runs full-screen.
+
+Other Node.js hosts (Railway, Fly, Glitch, Heroku-likes) work the same way:
+just run `node server/index.js` and expose port 3000.
+
 ## Stack
 
 | Layer    | Technology                                  |
 |----------|---------------------------------------------|
 | App      | Android Native (Java 17, framework only)    |
+| Web app  | Vanilla JS modules + Service Worker · PWA   |
 | Build    | AGP 8.2.2 · Gradle 8.5 · compileSdk 34      |
 | CI       | GitHub Actions (Ubuntu, Temurin JDK 17)     |
-| Proxy    | Node.js 18+ · Express                       |
-| AI       | OpenAI Chat Completions (text + vision)     |
+| Proxy    | Node.js 18+ · Express · serves both API+PWA |
+| AI       | Google Gemini (text + vision)               |
 
 ## Contact
 

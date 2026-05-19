@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#1565C0" media="(prefers-color-scheme: light)" />
+  <meta name="theme-color" content="#0a1a2e" media="(prefers-color-scheme: dark)" />
+  <meta name="color-scheme" content="light dark" />
+  <meta name="description" content="بصير — مساعد ذكي للمكفوفين وضعاف البصر. Basir — a smart assistant for blind and low-vision users." />
+  <meta name="format-detection" content="telephone=no" />
+  <title>بصير · Basir</title>
+
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" type="image/png" href="icons/favicon-32.png" sizes="32x32" />
+  <link rel="icon" type="image/svg+xml" href="icons/icon.svg" />
+
+  <!-- iOS PWA support -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="بصير" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <a class="skip-link" href="#main">تخطّي إلى المحتوى</a>
+
+  <header class="appbar" role="banner">
+    <button type="button" id="backBtn" class="iconbtn" aria-label="رجوع" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <h1 id="appTitle" class="appbar-title">بصير</h1>
+    <button type="button" id="ttsToggleBtn" class="iconbtn" aria-label="إيقاف القراءة الصوتية" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4z M16 8a5 5 0 010 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+  </header>
+
+  <main id="main" class="screen" tabindex="-1" aria-live="polite"></main>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" aria-atomic="true" hidden></div>
+
+  <dialog id="dialog" class="dialog" aria-modal="true"></dialog>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
