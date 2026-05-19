@@ -129,7 +129,7 @@ public class BasirOcrService extends AccessibilityService {
                     getMainExecutor(),
                     new TakeScreenshotCallback() {
                         @Override
-                        public void onSuccess(ScreenshotResult screenshot) {
+                        public void onSuccess(android.accessibilityservice.AccessibilityService.ScreenshotResult screenshot) {
                             io.execute(() -> processScreenshot(screenshot));
                         }
                         @Override
@@ -146,7 +146,12 @@ public class BasirOcrService extends AccessibilityService {
         }
     }
 
-    private void processScreenshot(TakeScreenshotCallback.ScreenshotResult screenshot) {
+    /** Decode the bitmap on the IO thread, then OCR via Gemini. We use
+     *  the fully-qualified type because {@code ScreenshotResult} is a
+     *  static nested class of {@link android.accessibilityservice.AccessibilityService}
+     *  — addressing it via {@code TakeScreenshotCallback.ScreenshotResult}
+     *  (the obvious-looking guess) does not compile. */
+    private void processScreenshot(android.accessibilityservice.AccessibilityService.ScreenshotResult screenshot) {
         Bitmap bm = null;
         try {
             android.hardware.HardwareBuffer hwBuffer = screenshot.getHardwareBuffer();
