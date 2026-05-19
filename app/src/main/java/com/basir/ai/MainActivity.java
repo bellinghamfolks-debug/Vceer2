@@ -319,69 +319,128 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
     }
 
     /** Large primary action card: title + description, full width, rounded.
-     *  v2.1 redesign: bigger padding, larger heading, stronger separation —
-     *  every card is a proper touch target for low-vision users. */
+     *  v2.1.2 redesign: optional leading icon in a tinted circle on the
+     *  start side, trailing chevron on the end. Cards now look like
+     *  interactive list items instead of static text blocks. */
     private void addCard(String title, String description, View.OnClickListener listener) {
+        addRichCard(null, null, title, description, listener);
+    }
+
+    /** Card variant with a leading icon. The icon is a short string
+     *  (typically an emoji or a single Unicode glyph), drawn inside a
+     *  colored circle on the start side of the card. Pass {@code null}
+     *  for tint to use the default primary-soft background.
+     *
+     *  This is the canonical v2.1.2 home-card style. Pure-text addCard()
+     *  delegates here with no icon. */
+    private void addRichCard(String icon, Integer iconTint,
+                              String title, String description,
+                              View.OnClickListener listener) {
         LinearLayout card = new LinearLayout(this);
-        card.setOrientation(LinearLayout.VERTICAL);
-        // v2.1: 24/22 (was 20/18) — bigger padding gives the heading more
-        // breathing room and grows the touch hitbox without changing layout.
-        card.setPadding(dp(24), dp(22), dp(24), dp(24));
+        card.setOrientation(LinearLayout.HORIZONTAL);
+        card.setGravity(Gravity.CENTER_VERTICAL);
+        card.setPadding(dp(18), dp(18), dp(18), dp(18));
         card.setClickable(true);
         card.setFocusable(true);
-        // v2.1: enforce a 96 dp minimum height. Larger than the Material 56 dp
-        // target — low-vision users frequently miss small touch areas.
         card.setMinimumHeight(dp(96));
 
         GradientDrawable bg = new GradientDrawable();
         bg.setShape(GradientDrawable.RECTANGLE);
         bg.setColor(colorSurface());
-        bg.setCornerRadius(dp(20));    // v2.1: was 18
+        bg.setCornerRadius(dp(20));
         bg.setStroke(dp(1), colorStroke());
         card.setBackground(bg);
-        if (Build.VERSION.SDK_INT >= 21) {
-            card.setElevation(dp(3));   // v2.1: was 2 — slightly stronger shadow
+        if (Build.VERSION.SDK_INT >= 21) card.setElevation(dp(3));
+
+        // ----- Leading icon -----
+        if (icon != null && !icon.isEmpty()) {
+            TextView ic = new TextView(this);
+            ic.setText(icon);
+            ic.setTextSize(textSize(22));
+            ic.setGravity(Gravity.CENTER);
+            ic.setMinWidth(dp(48));
+            ic.setMinHeight(dp(48));
+            GradientDrawable ibg = new GradientDrawable();
+            ibg.setShape(GradientDrawable.OVAL);
+            ibg.setColor(iconTint != null ? iconTint : getColor(R.color.basir_primary_soft));
+            ic.setBackground(ibg);
+            // Decorative — TalkBack should skip it and just read the title/description.
+            if (Build.VERSION.SDK_INT >= 16) {
+                ic.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+            }
+            LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(
+                    dp(48), dp(48));
+            ip.setMarginEnd(dp(14));
+            card.addView(ic, ip);
         }
+
+        // ----- Title + description (center, fills the rest) -----
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams bodyLp = new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        card.addView(body, bodyLp);
 
         TextView t = new TextView(this);
         t.setText(title);
-        t.setTextSize(textSize(21));    // v2.1: was 19 — bolder heading
+        t.setTextSize(textSize(20));
         t.setTypeface(null, Typeface.BOLD);
         t.setTextColor(colorText());
-        t.setLetterSpacing(0.005f);
-        // TalkBack heading semantics: the screen reader announces "heading"
-        // before the title, helping blind users quickly navigate cards.
-        if (Build.VERSION.SDK_INT >= 28) {
-            t.setAccessibilityHeading(true);
+        if (Build.VERSION.SDK_INT >= 28) t.setAccessibilityHeading(true);
+        if (Build.VERSION.SDK_INT >= 16) {
+            t.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         }
-        card.addView(t, fullWidth());
+        body.addView(t, fullWidth());
 
         if (description != null && !description.isEmpty()) {
             TextView d = new TextView(this);
             d.setText(description);
-            d.setTextSize(textSize(15));   // v2.1: was 14
+            d.setTextSize(textSize(14));
             d.setTextColor(colorTextSec());
             d.setLineSpacing(dp(2), 1.25f);
             LinearLayout.LayoutParams dp_ = fullWidth();
-            dp_.setMargins(0, dp(8), 0, 0);
-            card.addView(d, dp_);
+            dp_.setMargins(0, dp(4), 0, 0);
+            if (Build.VERSION.SDK_INT >= 16) {
+                d.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+            }
+            body.addView(d, dp_);
         }
 
-        // Each child text node sets its own importantForAccessibility so
-        // TalkBack reads the card as a single unit instead of three
-        // overlapping nodes (heading + body + card).
+        // ----- Trailing chevron (visual affordance for "tap me") -----
+        TextView chev = new TextView(this);
+        chev.setText(isEnglish() ? "›" : "‹");   // arrow points toward content edge
+        chev.setTextSize(textSize(28));
+        chev.setTextColor(colorTextSec());
+        chev.setPadding(dp(8), 0, dp(4), 0);
         if (Build.VERSION.SDK_INT >= 16) {
-            for (int i = 0; i < card.getChildCount(); i++) {
-                card.getChildAt(i).setImportantForAccessibility(
-                        View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-            }
+            chev.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         }
+        card.addView(chev,
+                new LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.WRAP_CONTENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT));
+
         card.setContentDescription(title + ". " + (description == null ? "" : description));
         card.setOnClickListener(listener);
 
         LinearLayout.LayoutParams p = fullWidth();
-        p.setMargins(0, dp(8), 0, dp(8));   // v2.1: was 7 — more breathing room
+        p.setMargins(0, dp(6), 0, dp(6));
         root.addView(card, p);
+    }
+
+    /** Visual section header (sub-section within a tab). Smaller than the
+     *  screen heading. Used in v2.1.2 to group cards within a tab. */
+    private void addSectionHeader(String text) {
+        TextView tv = new TextView(this);
+        tv.setText(text);
+        tv.setTextSize(textSize(13));
+        tv.setTypeface(null, Typeface.BOLD);
+        tv.setTextColor(colorTextSec());
+        tv.setAllCaps(false);
+        tv.setLetterSpacing(0.08f);
+        tv.setPadding(dp(4), dp(14), dp(4), dp(6));
+        if (Build.VERSION.SDK_INT >= 28) tv.setAccessibilityHeading(true);
+        root.addView(tv, fullWidth());
     }
 
     /** Secondary outline button. v2.1: 64 dp min height (was 56). */
@@ -735,91 +794,140 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
         }
     }
 
-    /** Horizontal row of 4 tab buttons. Selected tab gets the filled
-     *  primary style; the rest get the outline style. Both styles already
-     *  enforce 64dp min-height, so every tab is a comfortable touch target
-     *  for low-vision users. */
+    /** Horizontal row of 4 tab buttons with icon + label, both stacked
+     *  vertically. The selected tab gets a filled primary background; the
+     *  rest stay on the surface color with a primary-tinted icon. */
     private void addTabBar() {
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setPadding(0, dp(4), 0, dp(12));
+        // Outer container with a subtle "card" feel — frames the tab row.
+        LinearLayout shell = new LinearLayout(this);
+        shell.setOrientation(LinearLayout.HORIZONTAL);
+        shell.setPadding(dp(4), dp(4), dp(4), dp(4));
+        GradientDrawable shellBg = new GradientDrawable();
+        shellBg.setShape(GradientDrawable.RECTANGLE);
+        shellBg.setColor(getColor(R.color.basir_surface_alt));
+        shellBg.setCornerRadius(dp(28));
+        shellBg.setStroke(dp(1), colorStroke());
+        shell.setBackground(shellBg);
+
         String[] arLabels = { "محادثة", "رؤية",   "مستندات",  "المزيد" };
         String[] enLabels = { "Talk",   "Vision", "Documents","More"   };
+        String[] icons    = { "💬",     "👁",     "📄",       "⋯"      };
         for (int i = 0; i < 4; i++) {
             final int idx = i;
-            Button b = new Button(this);
+            final boolean selected = (currentHomeTab == i);
             String label = isEnglish() ? enLabels[i] : arLabels[i];
-            b.setText(label);
-            b.setAllCaps(false);
-            b.setTextSize(textSize(15));
-            boolean selected = (currentHomeTab == i);
-            b.setTextColor(selected ? Color.WHITE : colorPrimary());
-            b.setTypeface(null, selected ? Typeface.BOLD : Typeface.NORMAL);
-            b.setMinHeight(dp(56));
-            b.setPadding(dp(4), dp(8), dp(4), dp(8));
+
+            LinearLayout tab = new LinearLayout(this);
+            tab.setOrientation(LinearLayout.VERTICAL);
+            tab.setGravity(Gravity.CENTER);
+            tab.setPadding(dp(6), dp(10), dp(6), dp(10));
+            tab.setClickable(true);
+            tab.setFocusable(true);
+            tab.setMinimumHeight(dp(64));
+
             GradientDrawable bg = new GradientDrawable();
             bg.setShape(GradientDrawable.RECTANGLE);
-            bg.setColor(selected ? colorPrimary() : colorSurface());
-            bg.setCornerRadius(dp(26));
-            bg.setStroke(dp(selected ? 0 : 2), colorPrimary());
-            b.setBackground(bg);
-            // TalkBack: announce position + selected state ("tab 1 of 4,
-            // selected") so a screen-reader user knows where they are.
-            b.setContentDescription(label
+            bg.setColor(selected ? colorPrimary() : android.graphics.Color.TRANSPARENT);
+            bg.setCornerRadius(dp(24));
+            tab.setBackground(bg);
+
+            TextView iconTv = new TextView(this);
+            iconTv.setText(icons[i]);
+            iconTv.setTextSize(textSize(18));
+            iconTv.setGravity(Gravity.CENTER);
+            if (Build.VERSION.SDK_INT >= 16) {
+                iconTv.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+            }
+            tab.addView(iconTv);
+
+            TextView labelTv = new TextView(this);
+            labelTv.setText(label);
+            labelTv.setTextSize(textSize(12));
+            labelTv.setGravity(Gravity.CENTER);
+            labelTv.setTextColor(selected ? android.graphics.Color.WHITE : colorPrimary());
+            labelTv.setTypeface(null, selected ? Typeface.BOLD : Typeface.NORMAL);
+            labelTv.setPadding(0, dp(2), 0, 0);
+            if (Build.VERSION.SDK_INT >= 16) {
+                labelTv.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+            }
+            tab.addView(labelTv);
+
+            // TalkBack: position + selected state on the whole tab unit.
+            tab.setContentDescription(label
                     + ", " + t("تبويب ", "tab ") + (i + 1) + " " + t("من", "of") + " 4"
                     + (selected ? ", " + t("محدّد", "selected") : ""));
-            b.setOnClickListener(v -> {
+            tab.setOnClickListener(v -> {
                 if (currentHomeTab != idx) {
                     currentHomeTab = idx;
                     showHome();
-                    speak(label);  // confirms the switch for blind users
+                    speak(label);
                 }
             });
+
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                    0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
-            lp.setMargins(dp(3), 0, dp(3), 0);
-            row.addView(b, lp);
+                    0, LinearLayout.LayoutParams.MATCH_PARENT, 1f);
+            shell.addView(tab, lp);
         }
-        root.addView(row, fullWidth());
+
+        LinearLayout.LayoutParams outer = fullWidth();
+        outer.setMargins(0, 0, 0, dp(14));
+        root.addView(shell, outer);
     }
 
     private void renderTalkTab() {
-        addCard(t("اسأل بصير", "Ask Basir"),
-                t("اكتب سؤالك أو أمليه صوتيًا، واحصل على إجابة واضحة ومنظمة.", "Type or dictate your question and get a clear, structured answer."),
+        addSectionHeader(t("الأسئلة والمحادثة", "Questions and conversation"));
+
+        addRichCard("💬", null,
+                t("اسأل بصير", "Ask Basir"),
+                t("اكتب سؤالك أو أمليه صوتيًا، واحصل على إجابة واضحة ومنظمة.",
+                  "Type or dictate your question and get a clear, structured answer."),
                 v -> showAskScreen());
 
-        addCard(t("محادثة صوتية مستمرة", "Continuous voice conversation"),
+        addRichCard("🎙️", null,
+                t("محادثة صوتية مستمرة", "Continuous voice conversation"),
                 t("تحدث بحرية مع بصير دون لمس الشاشة بين الأسئلة.",
                   "Talk to Basir freely without touching the screen between questions."),
                 v -> showVoiceConversationScreen());
     }
 
     private void renderVisionTab() {
-        addCard(t("وصف صورة أو مشهد", "Describe an image or scene"),
-                t("احصل على وصف دقيق للصور ولقطات الشاشة والمشاهد المحيطة بك.", "Get a detailed description of images, screenshots, and surrounding scenes."),
+        addSectionHeader(t("الصور والمشاهد", "Images and scenes"));
+
+        addRichCard("📷", null,
+                t("وصف صورة أو مشهد", "Describe an image or scene"),
+                t("التقط صورة أو اختر من المعرض، واحصل على وصف دقيق.",
+                  "Take a photo or pick from gallery to get a detailed description."),
                 v -> showDescribeScreen());
 
-        addCard(t("وضع المشي ووصف ما أمامي", "Walking mode — describe what's ahead"),
+        addRichCard("🚶", null,
+                t("وضع المشي", "Walking mode"),
                 t("صوّر ما أمامك بضغطة واحدة، استمع للوصف، ثم كرر للمشهد التالي.",
-                  "Capture what's ahead in one tap, hear a description, and repeat for the next scene."),
+                  "Capture what's ahead in one tap, hear a description, repeat."),
                 v -> showWalkingModeScreen());
 
-        addCard(t("قراءة نص أي تطبيق (OCR فوري)",
-                  "OCR-on-touch — read text from any app"),
-                t("شغّل خدمة بصير في إمكانية الوصول، ثم اضغط زر إمكانية الوصول في أي تطبيق ليُقرأ كل نص ظاهر — حتى ما داخل الصور.",
-                  "Enable Basir under Accessibility, then tap the accessibility shortcut in any app to read every visible text aloud — even text inside images."),
+        addSectionHeader(t("قراءة النصوص", "Text reading"));
+
+        addRichCard("👁️", null,
+                t("قراءة نص أي تطبيق", "OCR-on-touch"),
+                t("اضغط زر إمكانية الوصول في أي تطبيق ليُقرأ كل نص ظاهر — حتى ما داخل الصور.",
+                  "Tap the accessibility shortcut in any app to read every visible text — even text inside images."),
                 v -> showOcrSetupScreen());
     }
 
     private void renderDocumentsTab() {
-        addCard(t("قراءة المستندات", "Read documents"),
-                t("حلّل ملفات PDF، والصور، والفواتير، والعقود، والعروض التقديمية.", "Analyze PDF files, images, invoices, contracts, and presentations."),
+        addSectionHeader(t("تحليل وتحويل", "Analysis and conversion"));
+
+        addRichCard("📄", null,
+                t("قراءة المستندات", "Read documents"),
+                t("حوّل PDF و PPT إلى Word منسّق مع وصف الصور والجداول.",
+                  "Convert PDF and PPT to formatted Word with image and table descriptions."),
                 v -> showDocumentScreen());
 
         // Document Q&A entry shown only when a cached file is available.
         if (ConversionState.get().hasUploadedFile()) {
             String src = ConversionState.get().sourceDisplayName();
-            addCard(t("اسأل عن آخر مستند", "Ask about the last document"),
+            addRichCard("❓", null,
+                    t("اسأل عن آخر مستند", "Ask about the last document"),
                     src != null && !src.isEmpty()
                         ? t("اطرح أي سؤال عن: ", "Ask anything about: ") + src
                         : t("اطرح أي سؤال عن المستند الذي قمت بتحويله للتو.",
@@ -827,37 +935,54 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
                     v -> showDocumentQAScreen());
         }
 
-        addCard(t("ترجمة وشرح", "Translate and explain"),
-                t("ترجم النصوص، وافهم المعنى، والنبرة، والسياق بطريقة مبسطة.", "Translate text and understand the meaning, tone, and context in a simple way."),
+        addSectionHeader(t("اللغة", "Language"));
+
+        addRichCard("🌐", null,
+                t("ترجمة وشرح", "Translate and explain"),
+                t("ترجم النصوص وافهم المعنى والنبرة والسياق.",
+                  "Translate text and understand meaning, tone, and context."),
                 v -> showTranslateScreen());
     }
 
     private void renderMoreTab() {
-        addCard(t("الطوارئ والمساعدة", "Emergency and help"),
-                t("أرسل موقعك التقريبي أو اطلب المساعدة من جهة طوارئ محفوظة.", "Share your approximate location or request help from a saved emergency contact."),
+        addSectionHeader(t("مساعدة سريعة", "Quick help"));
+
+        addRichCard("🆘", null,
+                t("الطوارئ والمساعدة", "Emergency and help"),
+                t("أرسل موقعك التقريبي أو اطلب المساعدة من جهة محفوظة.",
+                  "Share your approximate location or request help from a saved contact."),
                 v -> showEmergencyScreen());
 
-        addCard(t("أدوات متقدمة", "Advanced tools"),
-                t("وصف بديل، قراءة لقطات الشاشة، بطاقات مذاكرة، صياغة ردود، وقراءة الجداول كنص.",
-                  "Alt text, screenshot reading, study cards, reply drafting, and table-to-text reading."),
+        addSectionHeader(t("الأدوات", "Tools"));
+
+        addRichCard("🛠", null,
+                t("أدوات متقدمة", "Advanced tools"),
+                t("وصف بديل، قراءة لقطات الشاشة، بطاقات مذاكرة، صياغة ردود.",
+                  "Alt text, screenshot reading, study cards, reply drafting."),
                 v -> showAdvancedScreen());
 
-        addCard(t("محفوظاتي الخاصة", "My saved items"),
-                t("احفظ معلومات الأشخاص، والمنتجات، والأدوية، والأماكن ليسهل الرجوع إليها.",
-                  "Save information about people, products, medications, and places for easy reference."),
+        addRichCard("🧠", null,
+                t("محفوظاتي الخاصة", "My saved items"),
+                t("احفظ معلومات الأشخاص، والمنتجات، والأدوية، والأماكن.",
+                  "Save information about people, products, medications, and places."),
                 v -> showMemoryScreen());
 
-        addCard(t("المحفوظات", "Archive"),
+        addRichCard("📚", null,
+                t("المحفوظات", "Archive"),
                 t("نتائج التحليل المحفوظة محليًا على جهازك.",
                   "Analysis results saved locally on your device."),
                 v -> showArchiveScreen());
 
-        addCard(t("الإعدادات", "Settings"),
-                t("اللغة، الصوت، المظهر، الخصوصية، Gemini، وجهات الطوارئ.",
-                  "Language, voice, appearance, privacy, Gemini, and emergency contacts."),
+        addSectionHeader(t("التطبيق", "App"));
+
+        addRichCard("⚙️", null,
+                t("الإعدادات", "Settings"),
+                t("اللغة، الصوت، المظهر، الخصوصية، Gemini.",
+                  "Language, voice, appearance, privacy, Gemini."),
                 v -> showSettingsScreen());
 
-        addCard(t("حول التطبيق", "About"),
+        addRichCard("ℹ️", null,
+                t("حول التطبيق", "About"),
                 t("معلومات عن بصير وبيانات التواصل مع المطور.",
                   "About Basir and developer contact details."),
                 v -> showAboutScreen());
