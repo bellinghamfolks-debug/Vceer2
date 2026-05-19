@@ -68,6 +68,26 @@ public class BasirOcrService extends AccessibilityService {
                 applyTtsLocale();
             }
         });
+        // v2.1 fix: AccessibilityService doesn't expose
+        // onAccessibilityButtonClicked() as an overridable method
+        // (despite a common assumption — even the Android docs phrase
+        // it ambiguously). The correct API is to grab the
+        // AccessibilityButtonController and REGISTER a callback on it.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            try {
+                android.accessibilityservice.AccessibilityButtonController ctl =
+                        getAccessibilityButtonController();
+                if (ctl != null) {
+                    ctl.registerAccessibilityButtonCallback(
+                        new android.accessibilityservice.AccessibilityButtonController.AccessibilityButtonCallback() {
+                            @Override
+                            public void onClicked(android.accessibilityservice.AccessibilityButtonController c) {
+                                runOcrTrigger();
+                            }
+                        });
+                }
+            } catch (Throwable ignore) {}
+        }
     }
 
     @Override
@@ -92,12 +112,6 @@ public class BasirOcrService extends AccessibilityService {
 
     @Override
     public void onInterrupt() { /* no-op */ }
-
-    /** Fired when the user taps the accessibility shortcut button. */
-    @Override
-    public void onAccessibilityButtonClicked() {
-        runOcrTrigger();
-    }
 
     /** Public entry point so MainActivity can also kick OCR off without
      *  the user tapping the system shortcut (e.g. a settings test button). */
