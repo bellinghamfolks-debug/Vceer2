@@ -375,15 +375,41 @@ public final class AiClient {
         if (totalPages <= 0) totalPages = 1;
         if (progress != null) progress.onProgress(0, totalPages, "preparing");
 
-        // 2) Read the PDF bytes once. For big files we'll route through the
-        //    Files API (handled inside GeminiDirectClient.fileDataOrInlinePart).
+        // 2) Read the PDF bytes once.
         byte[] bytes = readUriBytesRaw(ctx, sourceUri, 200 * 1024 * 1024);
         if (progress != null) progress.onProgress(0, totalPages, "uploading");
 
-        // 3) Build a single file part (uploads once if needed). Reusing the
-        //    same fileData across all batches avoids re-uploading the PDF for
-        //    every Gemini call.
-        JSONObject filePart = GeminiDirectClient.fileDataOrInlinePart(key, bytes, "application/pdf");
+        // 3) v2.0 root-cause fix: ALWAYS upload via the Files API for batched
+        //    conversion, regardless of file size. Previously we used
+        //    fileDataOrInlinePart, which embedded the entire PDF as base64
+        //    inside every batch request whenever the file was under
+        //    INLINE_MAX_BYTES (18 MB). A typical 5 MB scanned PDF therefore
+        //    re-uploaded itself in EVERY one of the 60 possible batches,
+        //    exhausting the per-minute token quota and the network
+        //    connection after batch 3-5 — the "stops at page 40-50" bug
+        //    the user has been hitting since v1.0.
+        //
+        //    Uploading once and referencing the file by URI shrinks each
+        //    batch from megabytes to a few hundred bytes and lets the
+        //    pipeline finish documents of hundreds of pages.
+        GeminiDirectClient.UploadedFile uploaded;
+        try {
+            uploaded = GeminiDirectClient.uploadFile(
+                    key, bytes, "application/pdf", "basir-doc");
+            // Quick state poll so the first batch never hits "FILE not ACTIVE".
+            GeminiDirectClient.waitForFileActive(key, uploaded.name, 30_000L);
+        } catch (Exception uploadErr) {
+            throw new Exception("Upload failed: " + uploadErr.getMessage());
+        }
+
+        // Remember the uploaded file so the v2.0 Document Q&A feature can ask
+        // follow-up questions about it without re-uploading anything.
+        ConversionState.get().setUploadedFile(uploaded.name, uploaded.uri, uploaded.mimeType);
+
+        JSONObject filePart = new JSONObject().put("fileData",
+                new JSONObject()
+                        .put("fileUri", uploaded.uri)
+                        .put("mimeType", uploaded.mimeType));
 
         boolean arabic = language != null && language.toLowerCase().startsWith("ar");
         String langName = arabic ? "Arabic" : "English";

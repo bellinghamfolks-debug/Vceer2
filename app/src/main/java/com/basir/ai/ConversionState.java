@@ -41,6 +41,16 @@ public final class ConversionState {
      *  on its next progress callback. */
     private volatile boolean cancelRequested = false;
 
+    // v2.0 — Document Q&A. After a successful conversion we keep a reference
+    // to the file that was uploaded to Gemini's Files API, so the user can
+    // ask follow-up questions about it ("how much does this invoice total
+    // come to?", "what's the address on page 3?") without re-uploading
+    // anything. The file auto-expires on Gemini's side after 48 h.
+    private String uploadedFileName;  // e.g. "files/abc123"
+    private String uploadedFileUri;   // full URI for fileData.fileUri
+    private String uploadedFileMime;  // e.g. "application/pdf"
+    private String sourceDisplayName; // user-visible name of the original
+
     private ConversionState() {}
 
     public synchronized Status status() { return status; }
@@ -51,6 +61,41 @@ public final class ConversionState {
     public synchronized String error() { return errorMessage; }
     public synchronized boolean isRunning() { return status == Status.RUNNING; }
     public boolean isCancelRequested() { return cancelRequested; }
+
+    public synchronized String uploadedFileUri()  { return uploadedFileUri; }
+    public synchronized String uploadedFileName() { return uploadedFileName; }
+    public synchronized String uploadedFileMime() { return uploadedFileMime; }
+    public synchronized String sourceDisplayName() { return sourceDisplayName; }
+    public synchronized boolean hasUploadedFile() {
+        return uploadedFileUri != null && !uploadedFileUri.isEmpty();
+    }
+
+    /** Called by the conversion pipeline as soon as the upload completes. */
+    public void setUploadedFile(String name, String uri, String mimeType) {
+        synchronized (this) {
+            this.uploadedFileName = name;
+            this.uploadedFileUri = uri;
+            this.uploadedFileMime = mimeType;
+        }
+        broadcast();
+    }
+
+    /** Called by the picker when the user selects a source file. */
+    public void setSourceDisplayName(String displayName) {
+        synchronized (this) { this.sourceDisplayName = displayName; }
+    }
+
+    /** Wipe the uploaded-file reference. The file is left on Gemini's side
+     *  to auto-expire — we only forget about it locally. */
+    public void clearUploadedFile() {
+        synchronized (this) {
+            this.uploadedFileName = null;
+            this.uploadedFileUri = null;
+            this.uploadedFileMime = null;
+            this.sourceDisplayName = null;
+        }
+        broadcast();
+    }
 
     public void addListener(Listener l) {
         synchronized (this) {

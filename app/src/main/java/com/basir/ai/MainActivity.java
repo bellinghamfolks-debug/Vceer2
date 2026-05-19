@@ -19,6 +19,8 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.ParcelFileDescriptor;
 import android.os.StrictMode;
 import android.os.VibrationEffect;
@@ -35,6 +37,7 @@ import android.view.ViewGroup;
 import android.view.accessibility.AccessibilityManager;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
@@ -76,6 +79,14 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
 
     private TextToSpeech tts;
     private boolean ttsReady = false;
+
+    // v2.0 — continuous voice conversation. When true, every voice command
+    // is treated as a question to Gemini (not a navigation command), the
+    // answer is spoken via TTS, and the recognizer auto-relaunches as soon
+    // as TTS finishes — so the user can hold an unbroken hands-free chat.
+    private volatile boolean inConversationMode = false;
+    private final List<String[]> conversationHistory = new ArrayList<>(); // [q, a] pairs
+    private TextView conversationStatusText;
 
     // Settings cache
     private String lang = "ar";
@@ -134,7 +145,34 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
         if (status != TextToSpeech.SUCCESS) return;
         ttsReady = true;
         applyTtsConfig();
-        speak(t("مرحبًا بك في بصير، مساعدك الذكي للقراءة والوصف والترجمة وتحليل المستندات.", "Welcome to Basir, your smart assistant for reading, description, translation, and document analysis."));
+        // v2.0: continuous voice mode hooks here. When the TTS finishes
+        // speaking an utterance tagged with our "convo-" prefix, AND we're
+        // still in conversation mode, automatically launch the next
+        // recognizer turn so the user never has to touch the screen
+        // between question and answer.
+        try {
+            tts.setOnUtteranceProgressListener(
+                    new android.speech.tts.UtteranceProgressListener() {
+                @Override public void onStart(String utteranceId) {}
+                @Override public void onError(String utteranceId) {
+                    if (utteranceId == null) return;
+                    if (utteranceId.startsWith("convo-") && inConversationMode) {
+                        runOnUiThread(() -> launchConversationListenStep());
+                    } else if (utteranceId.startsWith("walk-") && walkingModeAuto) {
+                        runOnUiThread(() -> launchWalkingCapture());
+                    }
+                }
+                @Override public void onDone(String utteranceId) {
+                    if (utteranceId == null) return;
+                    if (utteranceId.startsWith("convo-") && inConversationMode) {
+                        runOnUiThread(() -> launchConversationListenStep());
+                    } else if (utteranceId.startsWith("walk-") && walkingModeAuto) {
+                        runOnUiThread(() -> launchWalkingCapture());
+                    }
+                }
+            });
+        } catch (Throwable ignore) {}
+        speak(t("مرحبًا بك في بصير الإصدار الثاني. أصبح بإمكانك الآن تحويل ملفات PDF كبيرة، وطرح أسئلة حول مستنداتك، وإجراء محادثة صوتية مستمرة، وقراءة العملات والفواتير، واستخدام وضع المشي للوصف الفوري.", "Welcome to Basir version 2. You can now convert large PDF files, ask questions about your documents, hold a continuous voice conversation, read currency and receipts, and use walking mode for instant scene descriptions."));
     }
 
     @Override
@@ -237,23 +275,30 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
         scroll.addView(root);
         setContentView(scroll);
 
+        // v2.1: larger, more prominent screen titles. For someone with low
+        // vision, a 32 sp bold heading is far easier to spot than the old
+        // 28 sp — and the auto-announce on screen change means TalkBack
+        // says the heading the moment the screen rebuilds.
         TextView heading = new TextView(this);
         heading.setText(title);
-        heading.setTextSize(textSize(28));
+        heading.setTextSize(textSize(32));     // v2.1: was 28
         heading.setTypeface(null, Typeface.BOLD);
         heading.setTextColor(colorText());
-        heading.setPadding(0, dp(4), 0, dp(6));
+        heading.setPadding(0, dp(6), 0, dp(8));
         heading.setContentDescription(title);
         if (Build.VERSION.SDK_INT >= 28) heading.setAccessibilityHeading(true);
+        // LiveRegion ASSERTIVE so screen readers announce the new screen
+        // title immediately when navigation happens.
+        heading.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_ASSERTIVE);
         root.addView(heading, fullWidth());
 
         if (subtitle != null && !subtitle.isEmpty()) {
             TextView sub = new TextView(this);
             sub.setText(subtitle);
-            sub.setTextSize(textSize(16));
+            sub.setTextSize(textSize(17));     // v2.1: was 16
             sub.setTextColor(colorTextSec());
-            sub.setPadding(0, 0, 0, dp(16));
-            sub.setLineSpacing(dp(2), 1.1f);
+            sub.setPadding(0, 0, 0, dp(20));   // v2.1: was 16
+            sub.setLineSpacing(dp(2), 1.25f);
             root.addView(sub, fullWidth());
         }
     }
@@ -273,92 +318,174 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
         root.addView(tv, p);
     }
 
-    /** Large primary action card: title + description, full width, rounded. */
+    /** Large primary action card: title + description, full width, rounded.
+     *  v2.1.2 redesign: optional leading icon in a tinted circle on the
+     *  start side, trailing chevron on the end. Cards now look like
+     *  interactive list items instead of static text blocks. */
     private void addCard(String title, String description, View.OnClickListener listener) {
+        addRichCard(null, null, title, description, listener);
+    }
+
+    /** Card variant with a leading icon. The icon is a short string
+     *  (typically an emoji or a single Unicode glyph), drawn inside a
+     *  colored circle on the start side of the card. Pass {@code null}
+     *  for tint to use the default primary-soft background.
+     *
+     *  This is the canonical v2.1.2 home-card style. Pure-text addCard()
+     *  delegates here with no icon. */
+    private void addRichCard(String icon, Integer iconTint,
+                              String title, String description,
+                              View.OnClickListener listener) {
         LinearLayout card = new LinearLayout(this);
-        card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(20), dp(18), dp(20), dp(20));
+        card.setOrientation(LinearLayout.HORIZONTAL);
+        card.setGravity(Gravity.CENTER_VERTICAL);
+        card.setPadding(dp(18), dp(18), dp(18), dp(18));
         card.setClickable(true);
         card.setFocusable(true);
+        card.setMinimumHeight(dp(96));
 
         GradientDrawable bg = new GradientDrawable();
         bg.setShape(GradientDrawable.RECTANGLE);
         bg.setColor(colorSurface());
-        bg.setCornerRadius(dp(18));
+        bg.setCornerRadius(dp(20));
         bg.setStroke(dp(1), colorStroke());
         card.setBackground(bg);
-        // Soft elevation (Android 5+; programmatic styles can't use stateListAnimator).
-        if (Build.VERSION.SDK_INT >= 21) {
-            card.setElevation(dp(2));
+        if (Build.VERSION.SDK_INT >= 21) card.setElevation(dp(3));
+
+        // ----- Leading icon -----
+        if (icon != null && !icon.isEmpty()) {
+            TextView ic = new TextView(this);
+            ic.setText(icon);
+            ic.setTextSize(textSize(22));
+            ic.setGravity(Gravity.CENTER);
+            ic.setMinWidth(dp(48));
+            ic.setMinHeight(dp(48));
+            GradientDrawable ibg = new GradientDrawable();
+            ibg.setShape(GradientDrawable.OVAL);
+            ibg.setColor(iconTint != null ? iconTint : getColor(R.color.basir_primary_soft));
+            ic.setBackground(ibg);
+            // Decorative — TalkBack should skip it and just read the title/description.
+            if (Build.VERSION.SDK_INT >= 16) {
+                ic.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+            }
+            LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(
+                    dp(48), dp(48));
+            ip.setMarginEnd(dp(14));
+            card.addView(ic, ip);
         }
+
+        // ----- Title + description (center, fills the rest) -----
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams bodyLp = new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        card.addView(body, bodyLp);
 
         TextView t = new TextView(this);
         t.setText(title);
-        t.setTextSize(textSize(19));
+        t.setTextSize(textSize(20));
         t.setTypeface(null, Typeface.BOLD);
         t.setTextColor(colorText());
-        t.setLetterSpacing(0.005f);
-        card.addView(t, fullWidth());
+        if (Build.VERSION.SDK_INT >= 28) t.setAccessibilityHeading(true);
+        if (Build.VERSION.SDK_INT >= 16) {
+            t.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        }
+        body.addView(t, fullWidth());
 
         if (description != null && !description.isEmpty()) {
             TextView d = new TextView(this);
             d.setText(description);
             d.setTextSize(textSize(14));
             d.setTextColor(colorTextSec());
-            d.setLineSpacing(dp(2), 1.2f);
+            d.setLineSpacing(dp(2), 1.25f);
             LinearLayout.LayoutParams dp_ = fullWidth();
-            dp_.setMargins(0, dp(6), 0, 0);
-            card.addView(d, dp_);
+            dp_.setMargins(0, dp(4), 0, 0);
+            if (Build.VERSION.SDK_INT >= 16) {
+                d.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+            }
+            body.addView(d, dp_);
         }
+
+        // ----- Trailing chevron (visual affordance for "tap me") -----
+        TextView chev = new TextView(this);
+        chev.setText(isEnglish() ? "›" : "‹");   // arrow points toward content edge
+        chev.setTextSize(textSize(28));
+        chev.setTextColor(colorTextSec());
+        chev.setPadding(dp(8), 0, dp(4), 0);
+        if (Build.VERSION.SDK_INT >= 16) {
+            chev.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        }
+        card.addView(chev,
+                new LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.WRAP_CONTENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT));
 
         card.setContentDescription(title + ". " + (description == null ? "" : description));
         card.setOnClickListener(listener);
 
         LinearLayout.LayoutParams p = fullWidth();
-        p.setMargins(0, dp(7), 0, dp(7));
+        p.setMargins(0, dp(6), 0, dp(6));
         root.addView(card, p);
     }
 
-    /** Secondary outline button. */
+    /** Visual section header (sub-section within a tab). Smaller than the
+     *  screen heading. Used in v2.1.2 to group cards within a tab. */
+    private void addSectionHeader(String text) {
+        TextView tv = new TextView(this);
+        tv.setText(text);
+        tv.setTextSize(textSize(13));
+        tv.setTypeface(null, Typeface.BOLD);
+        tv.setTextColor(colorTextSec());
+        tv.setAllCaps(false);
+        tv.setLetterSpacing(0.08f);
+        tv.setPadding(dp(4), dp(14), dp(4), dp(6));
+        if (Build.VERSION.SDK_INT >= 28) tv.setAccessibilityHeading(true);
+        root.addView(tv, fullWidth());
+    }
+
+    /** Secondary outline button. v2.1: 64 dp min height (was 56). */
     private void addOutlineButton(String text, View.OnClickListener listener) {
         Button b = new Button(this);
         b.setText(text);
         b.setAllCaps(false);
-        b.setTextSize(textSize(16));
+        b.setTextSize(textSize(17));    // v2.1: was 16
         b.setTextColor(colorPrimary());
-        b.setMinHeight(dp(56));
-        b.setPadding(dp(16), dp(12), dp(16), dp(12));
+        b.setMinHeight(dp(64));          // v2.1: was 56 — accessible touch target
+        b.setPadding(dp(18), dp(14), dp(18), dp(14));
         GradientDrawable bg = new GradientDrawable();
         bg.setShape(GradientDrawable.RECTANGLE);
         bg.setColor(colorSurface());
-        bg.setCornerRadius(dp(28));
-        bg.setStroke(dp(1), colorStroke());
+        bg.setCornerRadius(dp(32));      // v2.1: was 28
+        bg.setStroke(dp(2), colorPrimary());  // v2.1: 2dp primary-colored stroke (was 1dp grey)
         b.setBackground(bg);
         b.setOnClickListener(listener);
         b.setContentDescription(text);
         LinearLayout.LayoutParams p = fullWidth();
-        p.setMargins(0, dp(6), 0, dp(6));
+        p.setMargins(0, dp(7), 0, dp(7));
         root.addView(b, p);
     }
 
-    /** Filled primary button (call to action). */
+    /** Filled primary button (call to action). v2.1: 64 dp min height. */
     private void addPrimaryButton(String text, View.OnClickListener listener) {
         Button b = new Button(this);
         b.setText(text);
         b.setAllCaps(false);
-        b.setTextSize(textSize(17));
+        b.setTextSize(textSize(18));     // v2.1: was 17
         b.setTextColor(Color.WHITE);
         b.setTypeface(null, Typeface.BOLD);
-        b.setMinHeight(dp(56));
+        b.setMinHeight(dp(64));          // v2.1: was 56
         GradientDrawable bg = new GradientDrawable();
         bg.setShape(GradientDrawable.RECTANGLE);
         bg.setColor(colorPrimary());
-        bg.setCornerRadius(dp(28));
+        bg.setCornerRadius(dp(32));      // v2.1: was 28
         b.setBackground(bg);
+        if (Build.VERSION.SDK_INT >= 21) {
+            b.setElevation(dp(2));
+        }
         b.setOnClickListener(listener);
         b.setContentDescription(text);
         LinearLayout.LayoutParams p = fullWidth();
-        p.setMargins(0, dp(8), 0, dp(8));
+        p.setMargins(0, dp(10), 0, dp(10));  // v2.1: was 8 — more breathing room
         root.addView(b, p);
     }
 
@@ -633,36 +760,233 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
     }
 
     // ============================================================
-    // Home: 5 primary cards + More
+    // Home: tabbed navigation (v2.1.1)
     // ============================================================
+    //
+    // v2.0 used a single long scroll of cards on the home screen. The user
+    // asked for "real tabs" — easier to navigate, less to scroll, less
+    // intimidating for a blind user encountering 9 unfamiliar cards at
+    // once. v2.1.1 splits the cards into four tabs:
+    //
+    //   0  محادثة  / Talk     — Ask Basir + voice conversation
+    //   1  رؤية    / Vision   — Describe + walking + OCR-on-touch
+    //   2  مستندات / Documents — Convert + Q&A + translate
+    //   3  المزيد  / More     — Emergency + memory + archive + settings
+    //
+    // The selected tab persists across navigation, so when the user comes
+    // back from a sub-screen they land on the tab they left from.
+
+    private int currentHomeTab = 0;
 
     private void showHome() {
         resetScreen(t("بصير", "Basir"),
-                t("مساعدك الذكي للقراءة، والوصف، والترجمة، وتحويل المستندات إلى صيغ يسهل الوصول إليها.", "Your smart assistant for reading, description, translation, and converting documents into accessible formats."));
+                t("اختر تبويبًا للوصول إلى الخدمات.",
+                  "Choose a tab to access the services."));
 
-        addCard(t("اسأل بصير", "Ask Basir"),
-                t("اكتب سؤالك أو أمليه صوتيًا، واحصل على إجابة واضحة ومنظمة.", "Type or dictate your question and get a clear, structured answer."),
+        addTabBar();
+
+        switch (currentHomeTab) {
+            case 1: renderVisionTab();    break;
+            case 2: renderDocumentsTab(); break;
+            case 3: renderMoreTab();      break;
+            case 0:
+            default: renderTalkTab();     break;
+        }
+    }
+
+    /** Horizontal row of 4 tab buttons with icon + label, both stacked
+     *  vertically. The selected tab gets a filled primary background; the
+     *  rest stay on the surface color with a primary-tinted icon. */
+    private void addTabBar() {
+        // Outer container with a subtle "card" feel — frames the tab row.
+        LinearLayout shell = new LinearLayout(this);
+        shell.setOrientation(LinearLayout.HORIZONTAL);
+        shell.setPadding(dp(4), dp(4), dp(4), dp(4));
+        GradientDrawable shellBg = new GradientDrawable();
+        shellBg.setShape(GradientDrawable.RECTANGLE);
+        shellBg.setColor(getColor(R.color.basir_surface_alt));
+        shellBg.setCornerRadius(dp(28));
+        shellBg.setStroke(dp(1), colorStroke());
+        shell.setBackground(shellBg);
+
+        String[] arLabels = { "محادثة", "رؤية",   "مستندات",  "المزيد" };
+        String[] enLabels = { "Talk",   "Vision", "Documents","More"   };
+        String[] icons    = { "💬",     "👁",     "📄",       "⋯"      };
+        for (int i = 0; i < 4; i++) {
+            final int idx = i;
+            final boolean selected = (currentHomeTab == i);
+            String label = isEnglish() ? enLabels[i] : arLabels[i];
+
+            LinearLayout tab = new LinearLayout(this);
+            tab.setOrientation(LinearLayout.VERTICAL);
+            tab.setGravity(Gravity.CENTER);
+            tab.setPadding(dp(6), dp(10), dp(6), dp(10));
+            tab.setClickable(true);
+            tab.setFocusable(true);
+            tab.setMinimumHeight(dp(64));
+
+            GradientDrawable bg = new GradientDrawable();
+            bg.setShape(GradientDrawable.RECTANGLE);
+            bg.setColor(selected ? colorPrimary() : android.graphics.Color.TRANSPARENT);
+            bg.setCornerRadius(dp(24));
+            tab.setBackground(bg);
+
+            TextView iconTv = new TextView(this);
+            iconTv.setText(icons[i]);
+            iconTv.setTextSize(textSize(18));
+            iconTv.setGravity(Gravity.CENTER);
+            if (Build.VERSION.SDK_INT >= 16) {
+                iconTv.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+            }
+            tab.addView(iconTv);
+
+            TextView labelTv = new TextView(this);
+            labelTv.setText(label);
+            labelTv.setTextSize(textSize(12));
+            labelTv.setGravity(Gravity.CENTER);
+            labelTv.setTextColor(selected ? android.graphics.Color.WHITE : colorPrimary());
+            labelTv.setTypeface(null, selected ? Typeface.BOLD : Typeface.NORMAL);
+            labelTv.setPadding(0, dp(2), 0, 0);
+            if (Build.VERSION.SDK_INT >= 16) {
+                labelTv.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+            }
+            tab.addView(labelTv);
+
+            // TalkBack: position + selected state on the whole tab unit.
+            tab.setContentDescription(label
+                    + ", " + t("تبويب ", "tab ") + (i + 1) + " " + t("من", "of") + " 4"
+                    + (selected ? ", " + t("محدّد", "selected") : ""));
+            tab.setOnClickListener(v -> {
+                if (currentHomeTab != idx) {
+                    currentHomeTab = idx;
+                    showHome();
+                    speak(label);
+                }
+            });
+
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                    0, LinearLayout.LayoutParams.MATCH_PARENT, 1f);
+            shell.addView(tab, lp);
+        }
+
+        LinearLayout.LayoutParams outer = fullWidth();
+        outer.setMargins(0, 0, 0, dp(14));
+        root.addView(shell, outer);
+    }
+
+    private void renderTalkTab() {
+        addSectionHeader(t("الأسئلة والمحادثة", "Questions and conversation"));
+
+        addRichCard("💬", null,
+                t("اسأل بصير", "Ask Basir"),
+                t("اكتب سؤالك أو أمليه صوتيًا، واحصل على إجابة واضحة ومنظمة.",
+                  "Type or dictate your question and get a clear, structured answer."),
                 v -> showAskScreen());
 
-        addCard(t("وصف صورة أو مشهد", "Describe an image or scene"),
-                t("احصل على وصف دقيق للصور ولقطات الشاشة والمشاهد المحيطة بك.", "Get a detailed description of images, screenshots, and surrounding scenes."),
+        addRichCard("🎙️", null,
+                t("محادثة صوتية مستمرة", "Continuous voice conversation"),
+                t("تحدث بحرية مع بصير دون لمس الشاشة بين الأسئلة.",
+                  "Talk to Basir freely without touching the screen between questions."),
+                v -> showVoiceConversationScreen());
+    }
+
+    private void renderVisionTab() {
+        addSectionHeader(t("الصور والمشاهد", "Images and scenes"));
+
+        addRichCard("📷", null,
+                t("وصف صورة أو مشهد", "Describe an image or scene"),
+                t("التقط صورة أو اختر من المعرض، واحصل على وصف دقيق.",
+                  "Take a photo or pick from gallery to get a detailed description."),
                 v -> showDescribeScreen());
 
-        addCard(t("قراءة المستندات", "Read documents"),
-                t("حلّل ملفات PDF، والصور، والفواتير، والعقود، والعروض التقديمية.", "Analyze PDF files, images, invoices, contracts, and presentations."),
+        addRichCard("🚶", null,
+                t("وضع المشي", "Walking mode"),
+                t("صوّر ما أمامك بضغطة واحدة، استمع للوصف، ثم كرر للمشهد التالي.",
+                  "Capture what's ahead in one tap, hear a description, repeat."),
+                v -> showWalkingModeScreen());
+
+        addSectionHeader(t("قراءة النصوص", "Text reading"));
+
+        addRichCard("👁️", null,
+                t("قراءة نص أي تطبيق", "OCR-on-touch"),
+                t("اضغط زر إمكانية الوصول في أي تطبيق ليُقرأ كل نص ظاهر — حتى ما داخل الصور.",
+                  "Tap the accessibility shortcut in any app to read every visible text — even text inside images."),
+                v -> showOcrSetupScreen());
+    }
+
+    private void renderDocumentsTab() {
+        addSectionHeader(t("تحليل وتحويل", "Analysis and conversion"));
+
+        addRichCard("📄", null,
+                t("قراءة المستندات", "Read documents"),
+                t("حوّل PDF و PPT إلى Word منسّق مع وصف الصور والجداول.",
+                  "Convert PDF and PPT to formatted Word with image and table descriptions."),
                 v -> showDocumentScreen());
 
-        addCard(t("ترجمة وشرح", "Translate and explain"),
-                t("ترجم النصوص، وافهم المعنى، والنبرة، والسياق بطريقة مبسطة.", "Translate text and understand the meaning, tone, and context in a simple way."),
-                v -> showTranslateScreen());
+        // Document Q&A entry shown only when a cached file is available.
+        if (ConversionState.get().hasUploadedFile()) {
+            String src = ConversionState.get().sourceDisplayName();
+            addRichCard("❓", null,
+                    t("اسأل عن آخر مستند", "Ask about the last document"),
+                    src != null && !src.isEmpty()
+                        ? t("اطرح أي سؤال عن: ", "Ask anything about: ") + src
+                        : t("اطرح أي سؤال عن المستند الذي قمت بتحويله للتو.",
+                            "Ask any question about the document you just converted."),
+                    v -> showDocumentQAScreen());
+        }
 
-        addCard(t("الطوارئ والمساعدة", "Emergency and help"),
-                t("أرسل موقعك التقريبي أو اطلب المساعدة من جهة طوارئ محفوظة.", "Share your approximate location or request help from a saved emergency contact."),
+        addSectionHeader(t("اللغة", "Language"));
+
+        addRichCard("🌐", null,
+                t("ترجمة وشرح", "Translate and explain"),
+                t("ترجم النصوص وافهم المعنى والنبرة والسياق.",
+                  "Translate text and understand meaning, tone, and context."),
+                v -> showTranslateScreen());
+    }
+
+    private void renderMoreTab() {
+        addSectionHeader(t("مساعدة سريعة", "Quick help"));
+
+        addRichCard("🆘", null,
+                t("الطوارئ والمساعدة", "Emergency and help"),
+                t("أرسل موقعك التقريبي أو اطلب المساعدة من جهة محفوظة.",
+                  "Share your approximate location or request help from a saved contact."),
                 v -> showEmergencyScreen());
 
-        addOutlineButton(t("المزيد من الأدوات", "More tools"), v -> showMoreScreen());
+        addSectionHeader(t("الأدوات", "Tools"));
 
-        // Bottom: status pill
+        addRichCard("🛠", null,
+                t("أدوات متقدمة", "Advanced tools"),
+                t("وصف بديل، قراءة لقطات الشاشة، بطاقات مذاكرة، صياغة ردود.",
+                  "Alt text, screenshot reading, study cards, reply drafting."),
+                v -> showAdvancedScreen());
+
+        addRichCard("🧠", null,
+                t("محفوظاتي الخاصة", "My saved items"),
+                t("احفظ معلومات الأشخاص، والمنتجات، والأدوية، والأماكن.",
+                  "Save information about people, products, medications, and places."),
+                v -> showMemoryScreen());
+
+        addRichCard("📚", null,
+                t("المحفوظات", "Archive"),
+                t("نتائج التحليل المحفوظة محليًا على جهازك.",
+                  "Analysis results saved locally on your device."),
+                v -> showArchiveScreen());
+
+        addSectionHeader(t("التطبيق", "App"));
+
+        addRichCard("⚙️", null,
+                t("الإعدادات", "Settings"),
+                t("اللغة، الصوت، المظهر، الخصوصية، Gemini.",
+                  "Language, voice, appearance, privacy, Gemini."),
+                v -> showSettingsScreen());
+
+        addRichCard("ℹ️", null,
+                t("حول التطبيق", "About"),
+                t("معلومات عن بصير وبيانات التواصل مع المطور.",
+                  "About Basir and developer contact details."),
+                v -> showAboutScreen());
+
         addOutlineButton(t("حالة التطبيق", "App status"), v -> showStatusScreen());
     }
 
@@ -788,6 +1112,28 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
                         t("قراءة لقطة الشاشة", "Screenshot reading"),
                         "Explain the screenshot for a screen-reader user: page, buttons, messages, errors, and the next useful step.",
                         "Read this screenshot."));
+
+        // v2.0 — Currency / receipt reader. Same image pipeline as the
+        // other describe-* cards, just with a tight prompt tuned for the
+        // single answer a blind user actually wants to hear ("twenty
+        // riyals", "total is 187 SAR"). The model is instructed to lead
+        // with the headline number/denomination so a TTS-only reading
+        // still gets the critical info in the first second.
+        addCard(t("قراءة العملات والفواتير", "Read currency and receipts"),
+                t("صوّر العملة أو الفاتورة، وسأقرأ الفئة أو المجموع بسرعة ووضوح.",
+                  "Photograph the currency or receipt, and I'll read the denomination or total quickly and clearly."),
+                v -> pickImageForAi("currency_or_receipt",
+                        t("قراءة العملات والفواتير", "Currency / receipt reader"),
+                        "You are Basir, an assistant for blind and low-vision users. " +
+                        "The image contains either banknotes/coins OR a paid receipt/invoice. " +
+                        "BANKNOTES/COINS: state the currency and denomination in the FIRST sentence, e.g. " +
+                        "'هذه ورقة من فئة 100 ريال سعودي' / 'This is a 100 Saudi Riyal banknote'. " +
+                        "If multiple notes are visible, list each one. Mention the total at the end. " +
+                        "RECEIPTS/INVOICES: state the grand total and the currency in the FIRST sentence. " +
+                        "Then briefly list the merchant name, date, and 3-4 most expensive line items if " +
+                        "they're legible. Keep the entire answer under 80 words, plain prose, no bullets " +
+                        "or markdown — this is read aloud by TTS.",
+                        "Read the currency or receipt in this image."));
 
         addOutlineButton(t("وصف نصي للمشهد", "Text description of a scene"),
                 v -> showTextTaskScreen("scene_text",
@@ -1139,6 +1485,25 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
         }
     }
 
+    /** Resolve the user-visible name of a content URI ("contract.pdf").
+     *  Returns the last path segment as a fallback. */
+    private String resolveDisplayName(Uri uri) {
+        if (uri == null) return null;
+        try (android.database.Cursor c = getContentResolver().query(uri,
+                new String[]{ android.provider.OpenableColumns.DISPLAY_NAME },
+                null, null, null)) {
+            if (c != null && c.moveToFirst()) {
+                int idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME);
+                if (idx >= 0) {
+                    String name = c.getString(idx);
+                    if (name != null && !name.isEmpty()) return name;
+                }
+            }
+        } catch (Throwable ignore) {}
+        String last = uri.getLastPathSegment();
+        return last == null ? "" : last;
+    }
+
     private TextView convertProgressText;
     private TextView convertStageText;
     private ProgressBar convertProgressBar;
@@ -1159,6 +1524,12 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
             getContentResolver().takePersistableUriPermission(uri,
                     Intent.FLAG_GRANT_READ_URI_PERMISSION);
         } catch (Exception ignore) {}
+
+        // v2.0: remember the display name now and forget any previous
+        // upload — the Document Q&A entry on the home screen will hide
+        // itself until this conversion completes successfully.
+        ConversionState.get().clearUploadedFile();
+        ConversionState.get().setSourceDisplayName(resolveDisplayName(uri));
 
         String outputMode = prefs.getString("convert_output_mode", "full");
         Intent svc = new Intent(this, ConversionService.class);
@@ -1417,6 +1788,13 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
                 speak(t("تعذرت مشاركة الملف.", "Could not share the file."));
             }
         });
+        // v2.0: Ask follow-up questions about the just-converted document.
+        // The file is still cached on Gemini's side from the conversion run,
+        // so no re-upload is needed — answers come back in a second or two.
+        if (ConversionState.get().hasUploadedFile()) {
+            addPrimaryButton(t("اسأل عن المستند", "Ask about the document"),
+                    v -> showDocumentQAScreen());
+        }
         addOutlineButton(t("حذف الملف من الجهاز", "Delete file from device"), v -> {
             try {
                 int deleted = getContentResolver().delete(docxUri, null, null);
@@ -1428,6 +1806,503 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
             showHome();
         });
         addBackButton();
+    }
+
+    // ============================================================
+    // v2.0 — Document Q&A
+    // ============================================================
+    //
+    // After a PDF conversion the document stays cached on Gemini's Files
+    // API for 48 h. This screen lets the user ask any number of follow-up
+    // questions about it ("how much is the total on this invoice?",
+    // "what's the address on page 3?", "summarize the warranty section")
+    // without re-uploading anything — each question is a kilobyte over
+    // the wire and the answer comes back in a few seconds.
+    //
+    // For a blind user, a focused single-Q-single-A layout is more usable
+    // than a scrollable chat log: TalkBack reads one block at a time, and
+    // the answer is also spoken via TTS the moment it arrives.
+
+    /** Last question the user asked, kept across rebuilds of the screen. */
+    private String lastDocQaQuestion = "";
+    private String lastDocQaAnswer   = "";
+
+    private void showDocumentQAScreen() {
+        ConversionState st = ConversionState.get();
+        if (!st.hasUploadedFile()) {
+            resetScreen(t("اسأل عن المستند", "Ask about the document"),
+                    t("لا يوجد مستند محفوظ للأسئلة. حوّل ملف PDF أولًا ثم ارجع إلى هذه الشاشة.",
+                      "No document is cached for questions. Convert a PDF first, then come back to this screen."));
+            addBackButton();
+            return;
+        }
+
+        String src = st.sourceDisplayName();
+        resetScreen(t("اسأل عن المستند", "Ask about the document"),
+                src != null && !src.isEmpty()
+                    ? t("اطرح أي سؤال عن: ", "Ask anything about: ") + src
+                    : t("اطرح أي سؤال عن المستند الذي تم تحويله.",
+                        "Ask any question about the document you just converted."));
+
+        // Show the previous answer (if any) so the user can refer back to it
+        // while typing the next question. announceForAccessibility makes
+        // TalkBack read it the moment the screen rebuilds.
+        if (!lastDocQaQuestion.isEmpty()) {
+            addPlainText(t("سؤالك السابق: ", "Your previous question: ") + lastDocQaQuestion);
+        }
+        if (!lastDocQaAnswer.isEmpty()) {
+            addPlainText(t("الإجابة: ", "Answer: ") + lastDocQaAnswer);
+        }
+
+        final EditText input = makeInput(
+                t("اكتب سؤالك هنا (مثلاً: ما هو إجمالي الفاتورة؟)",
+                  "Type your question here (e.g. what's the invoice total?)"),
+                true);
+        root.addView(input, fullWidth());
+
+        addPrimaryButton(t("إرسال السؤال", "Send question"), v -> {
+            String q = input.getText().toString().trim();
+            if (q.isEmpty()) {
+                speak(t("اكتب سؤالًا أولًا.", "Type a question first."));
+                return;
+            }
+            askAboutDocument(q);
+        });
+
+        if (!lastDocQaQuestion.isEmpty() || !lastDocQaAnswer.isEmpty()) {
+            addOutlineButton(t("مسح المحادثة", "Clear conversation"), v -> {
+                lastDocQaQuestion = "";
+                lastDocQaAnswer = "";
+                showDocumentQAScreen();
+            });
+        }
+        addBackButton();
+    }
+
+    private void askAboutDocument(String question) {
+        ConversionState st = ConversionState.get();
+        if (!st.hasUploadedFile()) {
+            speak(t("لا يوجد مستند للسؤال عنه.", "No document available to ask about."));
+            return;
+        }
+        if (!AiClient.isConfigured(prefs)) { showAiSettingsDialog(); return; }
+
+        lastDocQaQuestion = question;
+        lastDocQaAnswer = "";
+        resetScreen(t("اسأل عن المستند", "Ask about the document"),
+                t("جاري البحث في المستند...", "Searching the document..."));
+        addPlainText(t("سؤالك: ", "Your question: ") + question);
+        speak(t("جاري البحث في المستند...", "Searching the document..."));
+
+        final String fileUri  = st.uploadedFileUri();
+        final String mimeType = st.uploadedFileMime();
+        final String apiKey   = prefs.getString("gemini_api_key", "");
+        final String model    = AiClient.pickModel(prefs, "convert");
+        final boolean arabic  = lang != null && lang.toLowerCase().startsWith("ar");
+        final String system   = arabic
+                ? "أنت بصير، مساعد للمستخدمين المكفوفين. أجب باللغة العربية بلغة واضحة ومنظمة، واذكر رقم الصفحة عند الإمكان."
+                : "You are Basir, an assistant for blind and low-vision users. Answer in clear, structured English and cite page numbers when possible.";
+
+        aiExecutor.execute(() -> {
+            try {
+                String answer = GeminiDirectClient.askAboutFile(
+                        apiKey, model, system, question, fileUri, mimeType);
+                if (answer == null) answer = "";
+                final String a = answer.trim();
+                lastDocQaAnswer = a;
+                log("doc_qa", question + "\n→ " + a);
+                runOnUiThread(() -> {
+                    resetScreen(t("اسأل عن المستند", "Ask about the document"), null);
+                    addPlainText(t("سؤالك: ", "Your question: ") + question);
+                    addPlainText(t("الإجابة: ", "Answer: ") + a);
+                    speak(a);
+                    addPrimaryButton(t("سؤال آخر", "Another question"), v -> showDocumentQAScreen());
+                    addOutlineButton(t("مسح المحادثة", "Clear conversation"), v -> {
+                        lastDocQaQuestion = "";
+                        lastDocQaAnswer = "";
+                        showDocumentQAScreen();
+                    });
+                    addBackButton();
+                });
+            } catch (Exception e) {
+                final String msg = errorMessage(e);
+                log("doc_qa_error", msg);
+                runOnUiThread(() -> {
+                    resetScreen(t("تعذر الإجابة عن السؤال",
+                                  "Could not answer the question"), msg);
+                    addPrimaryButton(t("حاول مرة أخرى", "Try again"), v -> showDocumentQAScreen());
+                    addBackButton();
+                });
+            }
+        });
+    }
+
+    // ============================================================
+    // v2.1 — OCR-on-touch setup screen
+    // ============================================================
+    //
+    // The actual capture-and-read logic lives in BasirOcrService (an
+    // AccessibilityService). This screen is just the on-boarding: it tells
+    // the user what the feature does, opens Android's Accessibility
+    // settings page so they can enable Basir, and reports whether the
+    // service is currently running. After enabling, the user just taps
+    // the system accessibility shortcut button from any app.
+
+    private void showOcrSetupScreen() {
+        boolean enabled = com.basir.ai.accessibility.BasirOcrService.isEnabled();
+        resetScreen(t("قراءة نص أي تطبيق", "OCR-on-touch"),
+                enabled
+                    ? t("الخدمة مفعّلة. اضغط زر إمكانية الوصول في أي تطبيق لقراءة كل نص ظاهر.",
+                        "The service is enabled. Tap the accessibility shortcut in any app to read every visible text aloud.")
+                    : t("لم يتم تفعيل الخدمة بعد. افتح إعدادات إمكانية الوصول لتفعيل بصير.",
+                        "The service isn't enabled yet. Open Accessibility settings to enable Basir."));
+
+        addPlainText(t(
+            "كيف يعمل:\n" +
+            "1) فعّل الخدمة من إعدادات إمكانية الوصول.\n" +
+            "2) افتح أي تطبيق (واتساب، متصفح، إيصال، صورة...).\n" +
+            "3) اضغط زر إمكانية الوصول في شريط التنقل.\n" +
+            "4) سيلتقط بصير الشاشة، يستخرج النص (حتى لو داخل صورة)، ويقرأه صوتيًا.",
+            "How it works:\n" +
+            "1) Enable the service from Accessibility settings.\n" +
+            "2) Open any app (WhatsApp, browser, receipt, image...).\n" +
+            "3) Tap the accessibility shortcut button in the navigation bar.\n" +
+            "4) Basir captures the screen, extracts text (even from images), and reads it aloud."));
+
+        addPrimaryButton(
+                enabled
+                    ? t("إعدادات إمكانية الوصول", "Accessibility settings")
+                    : t("فتح إعدادات إمكانية الوصول لتفعيل بصير",
+                        "Open Accessibility settings to enable Basir"),
+                v -> {
+                    try {
+                        startActivity(new Intent(
+                            android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS));
+                    } catch (Exception e) {
+                        speak(t("تعذر فتح الإعدادات.", "Could not open settings."));
+                    }
+                });
+
+        if (enabled) {
+            addOutlineButton(
+                    t("تجربة قراءة الشاشة الحالية الآن",
+                      "Try reading the current screen now"),
+                    v -> {
+                        com.basir.ai.accessibility.BasirOcrService svc =
+                                com.basir.ai.accessibility.BasirOcrService.getInstance();
+                        if (svc != null) {
+                            speak(t("جاري التجربة...", "Trying..."));
+                            svc.runOcrTrigger();
+                        }
+                    });
+        }
+        if (!AiClient.isConfigured(prefs)) {
+            addPlainText(t(
+                "ملاحظة: قراءة النص تستخدم Gemini. يجب إعداد المفتاح أولًا.",
+                "Note: text extraction uses Gemini. The API key must be set first."));
+            addOutlineButton(t("فتح إعداد Gemini الآن", "Open Gemini setup now"),
+                    v -> showAiSettingsDialog());
+        }
+        addBackButton();
+    }
+
+    // ============================================================
+    // v2.0 — Walking mode (rapid-fire camera scene description)
+    // ============================================================
+    //
+    // Tap-to-capture → describe → speak → ready for next tap. Uses the
+    // same one-shot camera + Gemini image pipeline as the regular
+    // Describe screen, but rebuilds the same screen after each
+    // description so the user never has to navigate back. A toggle
+    // re-enables auto-capture when TTS finishes for a true hands-free
+    // walking experience.
+
+    private volatile boolean walkingModeAuto = false;
+    private volatile boolean walkingModeBusy = false;
+    private String lastWalkingDescription = "";
+
+    private void showWalkingModeScreen() {
+        if (!AiClient.isConfigured(prefs)) {
+            resetScreen(t("وضع المشي", "Walking mode"),
+                    t("يجب إعداد Gemini أولًا.", "Gemini must be set up first."));
+            addOutlineButton(t("فتح إعداد Gemini الآن", "Open Gemini setup now"),
+                    v -> showAiSettingsDialog());
+            addBackButton();
+            return;
+        }
+        resetScreen(t("وضع المشي", "Walking mode"),
+                t("اضغط لالتقاط ما أمامك. سأصف المشهد في جملة أو اثنتين، ثم يمكنك التقاط التالي.",
+                  "Tap to capture what's in front. I'll describe the scene in a sentence or two, and you can capture the next."));
+
+        if (!lastWalkingDescription.isEmpty()) {
+            addPlainText(t("آخر وصف: ", "Last description: ") + lastWalkingDescription);
+        }
+
+        Button bigCapture = new Button(this);
+        bigCapture.setText(walkingModeBusy
+                ? t("جاري المعالجة...", "Processing...")
+                : t("التقاط ووصف ما أمامي", "Capture and describe"));
+        bigCapture.setTextSize(textSize(18f));
+        bigCapture.setContentDescription(bigCapture.getText());
+        bigCapture.setMinHeight(dp(72));  // larger touch target for blind users
+        bigCapture.setEnabled(!walkingModeBusy);
+        LinearLayout.LayoutParams lp = fullWidth();
+        lp.topMargin = dp(8);
+        lp.bottomMargin = dp(8);
+        bigCapture.setOnClickListener(v -> launchWalkingCapture());
+        root.addView(bigCapture, lp);
+
+        // Auto-loop toggle. When on, every successful description ends with
+        // a re-launch of the camera, so the user can walk and tap-trigger
+        // hands-free using only volume keys or whatever invokes the
+        // shutter on their device.
+        CheckBox autoToggle = new CheckBox(this);
+        autoToggle.setText(t("تشغيل تلقائي بعد كل وصف",
+                             "Auto-relaunch after each description"));
+        autoToggle.setTextColor(colorText());
+        autoToggle.setContentDescription(autoToggle.getText());
+        autoToggle.setChecked(walkingModeAuto);
+        autoToggle.setOnCheckedChangeListener(
+                (cb, isChecked) -> walkingModeAuto = isChecked);
+        root.addView(autoToggle, fullWidth());
+
+        addBackButton();
+    }
+
+    private void launchWalkingCapture() {
+        if (walkingModeBusy) return;
+        // Cache that we're now in walking mode so onActivityResult routes
+        // the captured image to walking-mode description instead of the
+        // generic describe flow.
+        pendingTask = "walking_scene";
+        pendingTitle = t("وضع المشي", "Walking mode");
+        pendingInstruction =
+                "You are Basir helping a blind user walk safely. Describe the scene in 1-2 short " +
+                "sentences. LEAD with anything immediately important (obstacle, person, vehicle, " +
+                "stairs, door, road crossing). Then mention general surroundings if space allows. " +
+                "No markdown, no lists — read aloud by TTS.";
+        pendingPrompt = "Describe what's ahead of the blind user in this image.";
+        captureFromCamera();
+    }
+
+    /** Called by handlePickedImage when the user is in walking mode. */
+    void onWalkingImageReady(Uri uri) {
+        walkingModeBusy = true;
+        showWalkingModeScreen();
+        aiExecutor.execute(() -> {
+            try {
+                String mime = AiClient.detectMime(this, uri);
+                byte[] bytes = AiClient.readUriBytes(this, uri, 8 * 1024 * 1024);
+                String b64 = AiClient.encodeBase64(bytes);
+                String description = AiClient.ask(prefs,
+                        pendingTask, pendingPrompt,
+                        pendingInstruction, lang, b64, mime);
+                if (description == null) description = "";
+                final String d = description.trim();
+                lastWalkingDescription = d;
+                log("walking", d);
+                runOnUiThread(() -> {
+                    walkingModeBusy = false;
+                    showWalkingModeScreen();
+                    // Tag the utterance so we can auto-relaunch the camera
+                    // when TTS finishes (only if auto-loop is on).
+                    if (walkingModeAuto) speakWalkingThenRecapture(d);
+                    else speak(d);
+                });
+            } catch (Exception e) {
+                final String msg = errorMessage(e);
+                runOnUiThread(() -> {
+                    walkingModeBusy = false;
+                    showWalkingModeScreen();
+                    speak(t("تعذر وصف المشهد. حاول مرة أخرى.",
+                            "Could not describe the scene. Try again."));
+                });
+            }
+        });
+    }
+
+    private void speakWalkingThenRecapture(String text) {
+        if (!speechEnabled || tts == null || !ttsReady || text == null) {
+            if (walkingModeAuto) launchWalkingCapture();
+            return;
+        }
+        // Re-use the conversation utterance listener: when the "walk-..."
+        // utterance finishes, relaunch capture. The same listener also
+        // recognises "convo-..." for voice conversation mode.
+        String id = "walk-" + System.currentTimeMillis();
+        tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, id);
+    }
+
+    // ============================================================
+    // v2.0 — Continuous voice conversation
+    // ============================================================
+    //
+    // A blind user shouldn't have to touch the screen between asking a
+    // question and asking the next one. This mode loops automatically:
+    //
+    //   1. Screen opens → speak prompt "تحدث الآن".
+    //   2. Launch system speech recognizer (full-screen, accessible).
+    //   3. Result comes back → send to Gemini with the last few turns
+    //      of context so multi-turn questions ("tell me more about that",
+    //      "what's the second one?") work naturally.
+    //   4. Speak Gemini's answer.
+    //   5. UtteranceProgressListener.onDone wakes step 2 again.
+    //
+    // Loop continues until the user taps "إنهاء المحادثة" OR a recognizer
+    // error fires twice in a row (deafness guard).
+
+    private void showVoiceConversationScreen() {
+        if (!AiClient.isConfigured(prefs)) {
+            resetScreen(t("وضع المحادثة الصوتية",
+                          "Continuous voice conversation"),
+                    t("يجب إعداد Gemini أولًا لاستخدام هذا الوضع.",
+                      "Gemini must be set up first to use this mode."));
+            addOutlineButton(t("فتح إعداد Gemini الآن", "Open Gemini setup now"),
+                    v -> showAiSettingsDialog());
+            addBackButton();
+            return;
+        }
+        resetScreen(t("وضع المحادثة الصوتية",
+                      "Continuous voice conversation"),
+                t("اطرح سؤالاً، استمع للإجابة، ثم اسأل التالي تلقائيًا. اضغط إنهاء لإيقاف المحادثة.",
+                  "Ask a question, hear the answer, then ask the next one automatically. Tap End to stop the conversation."));
+
+        conversationStatusText = new TextView(this);
+        conversationStatusText.setTextColor(colorText());
+        conversationStatusText.setTextSize(textSize(17f));
+        conversationStatusText.setPadding(dp(4), dp(8), dp(4), dp(8));
+        conversationStatusText.setText(t("اضغط بدء للتحدث.", "Tap Start to speak."));
+        // LiveRegion makes TalkBack announce status changes without focus.
+        conversationStatusText.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+        root.addView(conversationStatusText, fullWidth());
+
+        if (!conversationHistory.isEmpty()) {
+            String[] last = conversationHistory.get(conversationHistory.size() - 1);
+            addPlainText(t("سؤالك السابق: ", "Your previous question: ") + last[0]);
+            addPlainText(t("الإجابة: ", "Answer: ") + last[1]);
+        }
+
+        addPrimaryButton(
+                inConversationMode
+                    ? t("إنهاء المحادثة", "End conversation")
+                    : t("بدء المحادثة الصوتية", "Start voice conversation"),
+                v -> {
+                    if (inConversationMode) endVoiceConversation();
+                    else beginVoiceConversation();
+                });
+
+        if (!conversationHistory.isEmpty()) {
+            addOutlineButton(t("مسح المحادثة", "Clear conversation"), v -> {
+                conversationHistory.clear();
+                showVoiceConversationScreen();
+            });
+        }
+        addBackButton();
+    }
+
+    private void beginVoiceConversation() {
+        inConversationMode = true;
+        setConversationStatus(t("جاري الاستماع...", "Listening..."));
+        speak(t("تحدث الآن.", "Speak now."));
+        // Give TTS a beat to finish before the recognizer grabs the mic.
+        new Handler(Looper.getMainLooper()).postDelayed(this::launchConversationListenStep, 900L);
+    }
+
+    private void endVoiceConversation() {
+        inConversationMode = false;
+        try { if (tts != null) tts.stop(); } catch (Throwable ignore) {}
+        setConversationStatus(t("تم إنهاء المحادثة.", "Conversation ended."));
+        speak(t("تم إنهاء المحادثة.", "Conversation ended."));
+        showVoiceConversationScreen();
+    }
+
+    private void launchConversationListenStep() {
+        if (!inConversationMode) return;
+        setConversationStatus(t("جاري الاستماع...", "Listening..."));
+        try {
+            Intent i = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+            i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                    RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+            i.putExtra(RecognizerIntent.EXTRA_LANGUAGE, isEnglish() ? "en-US" : "ar-SA");
+            i.putExtra(RecognizerIntent.EXTRA_PROMPT,
+                    t("تحدث الآن", "Speak now"));
+            startActivityForResult(i, REQ_VOICE);
+        } catch (Exception e) {
+            inConversationMode = false;
+            setConversationStatus(t("التعرف الصوتي غير متاح.",
+                                    "Speech recognition is not available."));
+            speak(t("التعرف الصوتي غير متاح على هذا الجهاز.",
+                    "Speech recognition is not available on this device."));
+        }
+    }
+
+    /** Handle a voice command coming back from the recognizer while in
+     *  conversation mode. Treated as a Gemini question with the recent
+     *  turns folded into the prompt as multi-turn context. */
+    private void handleConversationTurn(final String spoken) {
+        if (spoken == null || spoken.trim().isEmpty()) {
+            // Empty result; relaunch listening so the loop doesn't die silently.
+            if (inConversationMode) {
+                speakConversation(t("لم أسمع شيئًا، حاول مرة أخرى.",
+                                    "I didn't catch that, try again."));
+            }
+            return;
+        }
+        final String question = spoken.trim();
+        setConversationStatus(t("جاري التفكير...", "Thinking..."));
+
+        // Build a multi-turn prompt with up to the last 4 turns of context.
+        final StringBuilder fullPrompt = new StringBuilder();
+        int start = Math.max(0, conversationHistory.size() - 4);
+        for (int i = start; i < conversationHistory.size(); i++) {
+            String[] turn = conversationHistory.get(i);
+            fullPrompt.append("User: ").append(turn[0]).append("\n");
+            fullPrompt.append("Assistant: ").append(turn[1]).append("\n");
+        }
+        fullPrompt.append("User: ").append(question);
+
+        aiExecutor.execute(() -> {
+            try {
+                String instruction = isEnglish()
+                        ? "You are Basir, an assistant for blind and low-vision users having a "
+                          + "spoken conversation. Answer in 1-3 short sentences of plain English, "
+                          + "no markdown, no lists — this is read aloud by TTS."
+                        : "أنت بصير، مساعد للمستخدمين المكفوفين في محادثة صوتية مستمرة. "
+                          + "أجب في جملة أو ثلاث جمل قصيرة بالعربية الفصيحة، بدون قوائم أو رموز Markdown، "
+                          + "لأن الإجابة تُقرأ صوتيًا.";
+                String answer = AiClient.ask(prefs, "ask", fullPrompt.toString(),
+                        instruction, lang);
+                if (answer == null) answer = "";
+                final String a = answer.trim();
+                conversationHistory.add(new String[]{ question, a });
+                // Cap history to avoid unbounded growth.
+                while (conversationHistory.size() > 10) conversationHistory.remove(0);
+                log("voice_convo", question + "\n→ " + a);
+                runOnUiThread(() -> {
+                    setConversationStatus(t("الإجابة: ", "Answer: ") + a);
+                    speakConversation(a);
+                });
+            } catch (Exception e) {
+                final String msg = safeError(e.getMessage());
+                runOnUiThread(() -> {
+                    setConversationStatus(t("تعذرت الإجابة.",
+                                            "Could not answer."));
+                    speakConversation(t("تعذرت الإجابة. ", "Could not answer. ") + msg);
+                });
+            }
+        });
+    }
+
+    private void setConversationStatus(String text) {
+        if (conversationStatusText != null) conversationStatusText.setText(text);
+    }
+
+    /** speak() variant that tags utterances with a "convo-" id, so the TTS
+     *  done-listener wakes the next listen step. */
+    private void speakConversation(String text) {
+        if (!speechEnabled || tts == null || !ttsReady || text == null) return;
+        String id = "convo-" + System.currentTimeMillis();
+        tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, id);
     }
 
     // ============================================================
@@ -2185,6 +3060,13 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
     }
 
     private void handlePickedImage(Uri uri) {
+        // v2.0 — walking-mode short-circuit. The walking screen rebuilds
+        // itself with its own progress UI instead of falling into the
+        // generic "result screen" flow.
+        if ("walking_scene".equals(pendingTask)) {
+            onWalkingImageReady(uri);
+            return;
+        }
         resetScreen(pendingTitle, t("جاري تحليل الصورة عبر Gemini...",
                                     "Analyzing the image via Gemini..."));
         addPlainText(t("قد تستغرق العملية بضع ثوانٍ.", "This may take a few seconds."));
@@ -2369,6 +3251,14 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
     private void handleVoiceCommand(String cmd) {
         if (cmd == null) return;
         log("voice", cmd);
+        // v2.0: when continuous conversation mode is active, EVERY voice
+        // input is a question to Gemini — bypass the navigation keyword
+        // routing entirely, otherwise saying "اسأل عن العقد" would jump
+        // out of the conversation to the Ask screen.
+        if (inConversationMode) {
+            handleConversationTurn(cmd);
+            return;
+        }
         String c = cmd.toLowerCase(Locale.ROOT);
         if (contains(c, "اسأل", "ask", "سؤال", "question")) showAskScreen();
         else if (contains(c, "وصف", "describe", "صورة", "image", "مشهد", "scene")) showDescribeScreen();

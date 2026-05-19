@@ -1,3 +1,10 @@
 <resources>
     <string name="app_name">بصير</string>
+
+    <!-- v2.1 — OCR-on-touch accessibility service strings shown by Android's
+         Accessibility settings page. The user sees these when they're
+         deciding whether to enable Basir as an accessibility service. -->
+    <string name="ocr_service_label">قراءة النصوص من أي تطبيق</string>
+    <string name="ocr_service_summary">اضغط على زر إمكانية الوصول لقراءة كل نص يظهر على الشاشة، في أي تطبيق.</string>
+    <string name="ocr_service_description">عند تمكين هذه الخدمة، يظهر زر اختصار إمكانية الوصول في شريط التنقل. اضغطه في أي وقت وأنت داخل أي تطبيق ليلتقط بصير لقطة شاشة، ويستخرج النص منها — حتى لو كان النص بداخل صورة — ويقرأه بصوت عالٍ. مفيد جدًا لقراءة المحادثات، والإيصالات، والصور النصية، وصفحات الويب، والكابتشا.</string>
 </resources>
