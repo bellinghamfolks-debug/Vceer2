@@ -114,6 +114,49 @@ export async function testConnection() {
   return true;
 }
 
+// v2.0 — upload a file to the Gemini Files API via the proxy.
+// Returns { fileUri, mimeType, displayName } that can later be passed to qaAboutFile.
+export async function uploadForQa({ file, signal }) {
+  const fd = new FormData();
+  fd.append("file", file, file.name);
+  const res = await fetch(baseUrl() + "/api/upload", {
+    method: "POST",
+    headers: multipartHeaders(),
+    body: fd,
+    signal
+  });
+  if (!res.ok) {
+    let msg = `HTTP ${res.status}`;
+    try { const j = await res.json(); if (j && j.error) msg = j.error; } catch {}
+    throw new Error(msg);
+  }
+  return await res.json();
+}
+
+// v2.0 — ask a follow-up question about an uploaded file.
+export async function qaAboutFile({ fileUri, mimeType, question, language, signal }) {
+  const s = getSettings();
+  const res = await fetch(baseUrl() + "/api/qa", {
+    method: "POST",
+    headers: authHeaders(),
+    body: JSON.stringify({
+      fileUri,
+      mimeType: mimeType || "application/pdf",
+      question,
+      language: language || s.language || "ar",
+      quality: s.quality || "best"
+    }),
+    signal
+  });
+  if (!res.ok) {
+    let msg = `HTTP ${res.status}`;
+    try { const j = await res.json(); if (j && j.error) msg = j.error; } catch {}
+    throw new Error(msg);
+  }
+  const j = await res.json();
+  return j.answer || "";
+}
+
 // Read a File as base64 (without the data: prefix).
 export function fileToBase64(file) {
   return new Promise((resolve, reject) => {

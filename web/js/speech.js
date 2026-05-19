@@ -33,14 +33,9 @@ export function isSpeaking() {
   return ttsAvailable() && (window.speechSynthesis.speaking || !!currentUtter);
 }
 
-// ---------- Vibration ----------
-export function vibrate(pattern) {
-  const s = getSettings();
-  if (!s.vibrate) return false;
-  if (!navigator.vibrate) return false;
-  try { return navigator.vibrate(pattern || 60); }
-  catch { return false; }
-}
+// Vibration removed — iOS Safari does not support navigator.vibrate at all.
+// Keeping a no-op stub so existing call sites compile without changes.
+export function vibrate() { return false; }
 
 // ---------- Speech recognition (dictation) ----------
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
