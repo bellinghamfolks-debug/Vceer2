@@ -144,7 +144,93 @@ p { margin: 0.25rem 0 0.75rem; color: var(--muted); }
   letter-spacing: 0.02em;
 }
 
-/* Cards (nav cards) */
+/* Tabbar (v2.1.2 home) */
+.tabbar {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.25rem;
+  margin: 0.5rem 0 1rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+.tab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.125rem;
+  min-height: 56px;
+  padding: 0.5rem 0.25rem;
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  color: var(--brand);
+  font: inherit;
+  cursor: pointer;
+}
+.tab .tab-icon { font-size: 1.25rem; line-height: 1; }
+.tab .tab-label { font-size: 0.85rem; }
+.tab.selected {
+  background: var(--brand);
+  color: #fff;
+  font-weight: 700;
+}
+.tab:focus-visible { outline: 3px solid var(--ring); outline-offset: 1px; }
+
+/* Section headers */
+.section-header {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--muted);
+  margin: 1.25rem 0 0.5rem;
+  letter-spacing: 0.02em;
+}
+
+/* Rich cards (v2.1.2) */
+.rcard {
+  display: flex;
+  align-items: center;
+  gap: 0.875rem;
+  width: 100%;
+  padding: 0.875rem 1rem;
+  margin: 0.375rem 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  text-align: start;
+  font: inherit;
+  color: var(--text);
+  min-height: 68px;
+}
+.rcard:hover { border-color: var(--brand); }
+.rcard:focus-visible { outline: 3px solid var(--ring); outline-offset: 2px; }
+.rcard-icon {
+  flex: 0 0 auto;
+  width: 44px; height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.5rem;
+  background: var(--brand-soft);
+  border-radius: 50%;
+  line-height: 1;
+}
+.rcard-body { flex: 1; min-width: 0; }
+.rcard-title { display: block; font-weight: 700; font-size: 1.0625rem; }
+.rcard-desc { display: block; color: var(--muted); font-size: 0.95rem; margin-top: 0.125rem; }
+
+/* Walking mode big capture button */
+.walking-btn {
+  min-height: 96px;
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+
+/* Cards (legacy nav cards) */
 .card-list {
   display: grid;
   gap: 0.625rem;

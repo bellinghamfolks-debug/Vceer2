@@ -492,6 +492,112 @@ app.post('/api/convert', upload.single('file'), async (req, res) => {
   }
 });
 
+// ---------------- /api/upload + /api/qa (v2.0 Files API) ----------------
+//
+// /api/upload: accept a file, push it to Gemini's Files API, return the
+//              fileUri + mimeType + displayName + sourceName (for caching
+//              on the client side). Files auto-expire after ~48h.
+//
+// /api/qa:     accept { fileUri, mimeType, question, language } and
+//              return Gemini's plain-text answer (suitable for TTS).
+
+const UPLOAD_API_BASE = 'https://generativelanguage.googleapis.com/upload/v1beta/files';
+const FILES_API_BASE  = 'https://generativelanguage.googleapis.com/v1beta';
+
+async function geminiUploadBytes(bytes, mimeType, displayName) {
+  if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY is not set on the server');
+  const url = UPLOAD_API_BASE + '?key=' + encodeURIComponent(GEMINI_API_KEY);
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'X-Goog-Upload-Protocol': 'raw',
+      'X-Goog-Upload-Header-Content-Type': mimeType || 'application/octet-stream',
+      'Content-Type': mimeType || 'application/octet-stream',
+      ...(displayName ? { 'X-Goog-File-Display-Name': displayName } : {})
+    },
+    body: bytes
+  });
+  if (!res.ok) {
+    const txt = await res.text().catch(() => '');
+    throw new Error(`Files upload HTTP ${res.status}: ${txt.slice(0, 300)}`);
+  }
+  const j = await res.json();
+  const f = j.file || j;
+  return { name: f.name, uri: f.uri, mimeType: f.mimeType, displayName: f.displayName };
+}
+
+async function geminiWaitActive(fileName, maxMs = 30000) {
+  const start = Date.now();
+  let delay = 800;
+  while (Date.now() - start < maxMs) {
+    const url = `${FILES_API_BASE}/${fileName}?key=${encodeURIComponent(GEMINI_API_KEY)}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`File state HTTP ${res.status}`);
+    const j = await res.json();
+    const state = j.state || '';
+    if (state === 'ACTIVE') return;
+    if (state === 'FAILED') throw new Error('Gemini failed to process the uploaded file');
+    await sleep(delay);
+    delay = Math.min(delay * 2, 4000);
+  }
+}
+
+app.post('/api/upload', upload.single('file'), async (req, res) => {
+  if (!checkToken(req, res)) return;
+  if (!requireGemini(res)) { safeUnlink(req.file && req.file.path); return; }
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  try {
+    const bytes = fs.readFileSync(req.file.path);
+    const f = await geminiUploadBytes(bytes, req.file.mimetype, req.file.originalname || 'basir-doc');
+    await geminiWaitActive(f.name, 30000);
+    safeUnlink(req.file.path);
+    res.json({
+      ok: true,
+      fileUri: f.uri,
+      fileName: f.name,
+      mimeType: f.mimeType,
+      displayName: f.displayName || req.file.originalname || ''
+    });
+  } catch (e) {
+    safeUnlink(req.file && req.file.path);
+    res.status(500).json({ error: String((e && e.message) || e) });
+  }
+});
+
+app.post('/api/qa', async (req, res) => {
+  if (!checkToken(req, res)) return;
+  if (!requireGemini(res)) return;
+  try {
+    const {
+      fileUri, mimeType, question,
+      language = 'ar', quality = 'best'
+    } = req.body || {};
+    if (!fileUri) return res.status(400).json({ error: 'fileUri is required' });
+    if (!question) return res.status(400).json({ error: 'question is required' });
+
+    const langName = language === 'en' ? 'English' : 'Arabic';
+    const system = language === 'en'
+      ? 'You are Basir, an assistant for blind and low-vision users. Answer in clear, structured English and cite page numbers when possible.'
+      : 'أنت بصير، مساعد للمستخدمين المكفوفين. أجب باللغة العربية بلغة واضحة ومنظمة، واذكر رقم الصفحة عند الإمكان.';
+    const modelName = modelForQuality(quality);
+    const model = genAI.getGenerativeModel({ model: modelName, systemInstruction: system });
+
+    const result = await withRetry(() => model.generateContent({
+      contents: [{
+        role: 'user',
+        parts: [
+          { text: question },
+          { fileData: { fileUri, mimeType: mimeType || 'application/pdf' } }
+        ]
+      }]
+    }));
+    const answer = result.response.text() || '';
+    res.json({ answer, model: modelName });
+  } catch (e) {
+    res.status(500).json({ error: String((e && e.message) || e) });
+  }
+});
+
 // ---------------- PNG icon generator ----------------
 // Minimal solid-color PNG encoder used to materialize the iOS apple-touch-icon
 // at server start. Avoids needing any image-processing dependency.

@@ -3,7 +3,18 @@ name: Build Basir AI APK
 on:
   workflow_dispatch:
   push:
-    branches: [ main, master ]
+    branches:
+      - main
+      - master
+      # v2.1: also build the long-lived feature branches so any push to a
+      # claude/* or mokafeefah-* branch publishes a downloadable APK
+      # straight from Actions, without needing to merge to main first.
+      - 'claude/**'
+      - 'mokafeefah-**'
+  pull_request:
+    branches:
+      - main
+      - master
 
 permissions:
   contents: read

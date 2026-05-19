@@ -9,14 +9,15 @@ const K = {
   memory_people: "basir.memory.people.v1",
   memory_products: "basir.memory.products.v1",
   memory_places: "basir.memory.places.v1",
-  emergency: "basir.emergency.v1"
+  emergency: "basir.emergency.v1",
+  // v2.x — last uploaded file ref for Document Q&A (server auto-expires after ~48h)
+  qaDoc: "basir.qa.doc.v1"
 };
 
 const DEFAULT_SETTINGS = {
   language: navigator.language && navigator.language.startsWith("ar") ? "ar" : "ar",
   tts: true,
   ttsRate: 1.0,
-  vibrate: true,
   fontStep: 1,            // 1=normal, 1.15=large, 1.3=xlarge
   privacy: false,
   autoSave: true,
@@ -96,6 +97,20 @@ export function removeMemory(kind, id) {
 export function getEmergency() { return read(K.emergency, { phone: "", name: "" }); }
 export function setEmergency(v) { write(K.emergency, v || { phone: "", name: "" }); }
 
+// ---------- Q&A doc ref (v2.0) ----------
+export function getQaDoc() { return read(K.qaDoc, null); }
+export function setQaDoc(v) {
+  if (!v) { localStorage.removeItem(K.qaDoc); return; }
+  write(K.qaDoc, { ...v, at: Date.now() });
+}
+export function clearQaDoc() { localStorage.removeItem(K.qaDoc); }
+export function isQaDocFresh() {
+  const d = getQaDoc();
+  if (!d || !d.at) return false;
+  // Gemini Files API auto-expires after ~48h. Use 47h to be safe.
+  return Date.now() - d.at < 47 * 60 * 60 * 1000;
+}
+
 // ---------- Bulk reset ----------
 export function deleteAllUserData() {
   write(K.archive, []);
@@ -103,5 +118,6 @@ export function deleteAllUserData() {
   write(K.memory_people, []);
   write(K.memory_products, []);
   write(K.memory_places, []);
+  clearQaDoc();
   // keep settings + emergency contact unless explicitly wiped
 }

@@ -91,23 +91,124 @@ function ensureSetup(onMissing) {
   return true; // we let server respond; failure shows error toast
 }
 
-// ---------- Home ----------
+// ---------- Home (v2.1.2: 4 tabs with rich cards) ----------
+let currentHomeTab = 0; // 0=talk, 1=vision, 2=documents, 3=more
+
+function richCard(icon, title, desc, onClick) {
+  return el("button", {
+    class: "rcard", type: "button", onClick,
+    "aria-label": title
+  },
+    el("span", { class: "rcard-icon", "aria-hidden": "true" }, icon),
+    el("span", { class: "rcard-body" },
+      el("span", { class: "rcard-title" }, title),
+      desc ? el("span", { class: "rcard-desc" }, desc) : null
+    )
+  );
+}
+
+function sectionHeader(text) {
+  return el("h2", { class: "section-header" }, text);
+}
+
+function tabBar() {
+  const tabs = [
+    { id: 0, icon: "💬", label: t("tab_talk") },
+    { id: 1, icon: "👁",  label: t("tab_vision") },
+    { id: 2, icon: "📄", label: t("tab_documents") },
+    { id: 3, icon: "⋯",  label: t("tab_more") }
+  ];
+  const bar = el("div", { class: "tabbar", role: "tablist" });
+  for (const tab of tabs) {
+    const selected = tab.id === currentHomeTab;
+    const btn = el("button", {
+      class: "tab" + (selected ? " selected" : ""),
+      type: "button", role: "tab",
+      "aria-selected": selected ? "true" : "false",
+      "aria-label": `${tab.label}, ${t("tab_talk") === t("tab_talk") ? "" : ""}`
+    },
+      el("span", { class: "tab-icon", "aria-hidden": "true" }, tab.icon),
+      el("span", { class: "tab-label" }, tab.label)
+    );
+    btn.addEventListener("click", () => {
+      currentHomeTab = tab.id;
+      viewHome();
+    });
+    bar.append(btn);
+  }
+  return bar;
+}
+
+function renderTalkTab(m) {
+  m.append(
+    sectionHeader(t("section_talk")),
+    richCard("💬", t("nav_ask"), t("nav_ask_desc"), () => location.hash = "#/ask"),
+    richCard("🎙️", t("nav_voice_convo"), t("nav_voice_convo_desc"), () => location.hash = "#/voice-convo")
+  );
+}
+
+function renderVisionTab(m) {
+  m.append(
+    sectionHeader(t("section_vision")),
+    richCard("📷", t("nav_describe"), t("nav_describe_desc"), () => location.hash = "#/describe"),
+    richCard("🚶", t("nav_walking"), t("nav_walking_desc"), () => location.hash = "#/walking"),
+    richCard("💵", t("nav_currency"), t("nav_currency_desc"), () => imageTask(
+      "currency_or_receipt", t("currency_title"),
+      "You are Basir, an assistant for blind and low-vision users. The image contains either banknotes/coins OR a paid receipt/invoice. BANKNOTES/COINS: state the currency and denomination in the FIRST sentence, e.g. 'هذه ورقة من فئة 100 ريال سعودي' / 'This is a 100 Saudi Riyal banknote'. If multiple notes are visible, list each one. Mention the total at the end. RECEIPTS/INVOICES: state the grand total and the currency in the FIRST sentence. Then briefly list the merchant name, date, and 3-4 most expensive line items if they're legible. Keep the entire answer under 80 words, plain prose, no bullets or markdown — this is read aloud by TTS."
+    ))
+  );
+}
+
+function renderDocumentsTab(m) {
+  m.append(sectionHeader(t("section_docs_analysis")));
+  m.append(richCard("📄", t("nav_documents"), t("nav_documents_desc"), () => location.hash = "#/documents"));
+  if (store.isQaDocFresh()) {
+    const doc = store.getQaDoc();
+    const intro = doc && doc.displayName ? t("docqa_intro") + doc.displayName : t("nav_doc_qa_desc");
+    m.append(richCard("❓", t("nav_doc_qa"), intro, () => location.hash = "#/doc-qa"));
+  }
+  m.append(
+    sectionHeader(t("section_language")),
+    richCard("🌐", t("nav_translate"), t("nav_translate_desc"), () => location.hash = "#/translate")
+  );
+}
+
+function renderMoreTab(m) {
+  m.append(
+    sectionHeader(t("section_quick_help")),
+    richCard("🆘", t("nav_emergency"), t("nav_emergency_desc"), () => location.hash = "#/emergency"),
+    sectionHeader(t("section_tools")),
+    richCard("🛠", t("nav_advanced"), t("nav_advanced_desc"), () => location.hash = "#/advanced"),
+    richCard("🧠", t("nav_memory"), t("nav_memory_desc"), () => location.hash = "#/memory"),
+    richCard("📚", t("nav_archive"), t("nav_archive_desc"), () => location.hash = "#/archive"),
+    richCard("📜", t("nav_history"), t("nav_history_desc"), () => location.hash = "#/history"),
+    sectionHeader(t("section_app")),
+    richCard("⚙️", t("nav_settings"), t("nav_settings_desc"), () => location.hash = "#/settings"),
+    richCard("ℹ️", t("nav_about"), t("nav_about_desc"), () => location.hash = "#/about"),
+    el("div", { class: "btn-row" },
+      el("button", { class: "btn btn-ghost", type: "button", onClick: () => location.hash = "#/status" }, t("nav_status")),
+      sp.speechRecognitionAvailable()
+        ? el("button", { class: "btn btn-ghost", type: "button", onClick: () => location.hash = "#/voice-convo" }, t("nav_voice"))
+        : null
+    )
+  );
+}
+
 export function viewHome() {
   clear();
   setTitle(t("home_title"));
   const m = $main();
   m.append(
-    el("p", { class: "subtitle" }, t("home_welcome")),
-    el("nav", { class: "card-list" },
-      card(t("nav_ask"), t("nav_ask_desc"), () => location.hash = "#/ask"),
-      card(t("nav_describe"), t("nav_describe_desc"), () => location.hash = "#/describe"),
-      card(t("nav_documents"), t("nav_documents_desc"), () => location.hash = "#/documents"),
-      card(t("nav_translate"), t("nav_translate_desc"), () => location.hash = "#/translate"),
-      card(t("nav_emergency"), t("nav_emergency_desc"), () => location.hash = "#/emergency"),
-      card(t("nav_more"), null, () => location.hash = "#/more"),
-      card(t("nav_status"), null, () => location.hash = "#/status"),
-    )
+    el("p", { class: "subtitle" }, t("home_subtitle_tabs")),
+    tabBar()
   );
+  switch (currentHomeTab) {
+    case 1: renderVisionTab(m); break;
+    case 2: renderDocumentsTab(m); break;
+    case 3: renderMoreTab(m); break;
+    case 0:
+    default: renderTalkTab(m); break;
+  }
 }
 
 // ---------- More ----------
@@ -143,7 +244,6 @@ export function viewStatus() {
     info(t("s_privacy"), s.privacy ? t("on") : t("off")),
     info("Proxy: ", proxy),
     info(t("s_tts"), s.tts ? t("s_tts_on") : t("s_tts_off")),
-    info(t("s_vibrate"), s.vibrate ? t("on") : t("off")),
     info(t("s_autosave"), s.autoSave ? t("on") : t("off")),
     info(t("s_version"), t("about_version")),
     backButton()
@@ -517,6 +617,18 @@ export function viewConvert() {
   async function runConvert(file) {
     progress.replaceChildren(loading(t("convert_uploading")));
     result.replaceChildren();
+    // Kick off the Files API upload in parallel so Document Q&A is ready
+    // by the time the user wants it. Best-effort; failures are silent.
+    const qaUpload = (file.type === "application/pdf" || /\.pdf$/i.test(file.name))
+      ? api.uploadForQa({ file }).then(r => {
+          store.setQaDoc({
+            fileUri: r.fileUri,
+            fileName: r.fileName,
+            mimeType: r.mimeType,
+            displayName: r.displayName || file.name
+          });
+        }).catch(() => { /* ignore — Q&A simply won't be available */ })
+      : Promise.resolve();
     try {
       const blob = await api.convertFile({
         file,
@@ -535,9 +647,14 @@ export function viewConvert() {
             } catch {}
           }}, t("convert_share"))
         : null;
+      // Wait for upload (Q&A) to finish so we can show the "Ask about it" CTA.
+      await qaUpload;
+      const qaBtn = store.isQaDocFresh()
+        ? el("button", { class: "btn btn-outline", type: "button", onClick: () => location.hash = "#/doc-qa" }, t("nav_doc_qa"))
+        : null;
       result.append(
         el("div", { class: "callout" }, t("convert_done")),
-        el("div", { class: "btn-row" }, dlLink, shareBtn)
+        el("div", { class: "btn-row" }, dlLink, shareBtn, qaBtn)
       );
       store.pushHistory(t("log_conversion"), file.name);
       sp.vibrate([60, 60, 60]);
@@ -844,7 +961,6 @@ export function viewSettings() {
 
     el("h2", null, t("set_voice_section")),
     switchRow(t("set_tts"), s.tts, (v) => store.setSettings({ tts: v })),
-    switchRow(t("set_vibrate"), s.vibrate, (v) => store.setSettings({ vibrate: v })),
     el("label", { class: "field" }, el("span", { class: "field-label" }, t("set_tts_rate")), ttsRate),
 
     el("h2", null, t("set_appearance")),
@@ -1039,6 +1155,319 @@ function startVoiceCommand() {
   if (r) try { r.start(); } catch { toast(t("voice_not_supported")); }
 }
 
+// ============================================================
+// v2.0 — Walking mode
+//
+// iOS Safari does not allow programmatic file-input clicks outside a user
+// gesture, so the Android "auto-relaunch" toggle is removed for the web
+// build — the user re-taps the big capture button after each description.
+// ============================================================
+let walkingBusy = false;
+let walkingLast = "";
+
+export function viewWalking() {
+  clear();
+  setTitle(t("walking_title"));
+  const m = $main();
+
+  const fileInput = el("input", { type: "file", accept: "image/*", capture: "environment", class: "sr-only" });
+  fileInput.addEventListener("change", async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    await runWalkingFrame(f);
+    fileInput.value = "";
+  });
+
+  const captureBtn = el("button", {
+    class: "btn btn-block walking-btn", type: "button",
+    onClick: () => fileInput.click(),
+    disabled: walkingBusy
+  }, walkingBusy ? t("walking_processing") : t("walking_capture"));
+
+  const status = el("div", { "aria-live": "polite" });
+
+  async function runWalkingFrame(file) {
+    walkingBusy = true;
+    captureBtn.disabled = true;
+    captureBtn.textContent = t("walking_processing");
+    status.replaceChildren(loading(t("walking_processing")));
+    try {
+      const blob = await api.compressImage(file);
+      const base64 = await api.fileToBase64(blob);
+      const ans = await api.askBasir({
+        task: "walking_scene",
+        input: "Describe what's ahead of the blind user in this image.",
+        instruction: "You are Basir helping a blind user walk safely. Describe the scene in 1-2 short sentences. LEAD with anything immediately important (obstacle, person, vehicle, stairs, door, road crossing). Then mention general surroundings if space allows. No markdown, no lists — read aloud by TTS.",
+        imageBase64: base64,
+        mimeType: blob.type || "image/jpeg"
+      });
+      walkingLast = (ans || "").trim();
+      store.pushHistory(t("log_scene"), walkingLast.slice(0, 200));
+      status.replaceChildren(
+        el("div", { class: "result", tabindex: "0" }, walkingLast)
+      );
+      sp.speak(walkingLast);
+    } catch (e) {
+      status.replaceChildren(errorBox(e, t("walking_error")));
+    } finally {
+      walkingBusy = false;
+      captureBtn.disabled = false;
+      captureBtn.textContent = t("walking_capture");
+    }
+  }
+
+  m.append(
+    el("p", { class: "subtitle" }, t("walking_intro")),
+    walkingLast ? el("div", { class: "info" },
+      el("div", { class: "info-label" }, t("walking_last")),
+      el("div", { class: "info-body" }, walkingLast)
+    ) : null,
+    captureBtn,
+    fileInput,
+    status,
+    backButton("#/home")
+  );
+}
+
+// ============================================================
+// v2.0 — Continuous voice conversation
+// ============================================================
+let convoActive = false;
+let convoHistory = []; // [{ q, a }]
+let convoRecognizer = null;
+
+function setConvoStatus(node, text) {
+  if (node) node.textContent = text;
+}
+
+export function viewVoiceConvo() {
+  clear();
+  setTitle(t("convo_title"));
+  const m = $main();
+
+  if (!sp.speechRecognitionAvailable()) {
+    m.append(
+      el("p", { class: "subtitle" }, t("convo_intro")),
+      el("div", { class: "callout callout-danger" }, t("convo_no_recognition")),
+      backButton("#/home")
+    );
+    return;
+  }
+
+  const status = el("div", { class: "info-body", role: "status", "aria-live": "polite" }, t("convo_tap_start"));
+  const transcript = el("div", { "aria-live": "polite" });
+
+  function refreshTranscript() {
+    transcript.replaceChildren();
+    if (!convoHistory.length) return;
+    const last = convoHistory[convoHistory.length - 1];
+    transcript.append(
+      el("div", { class: "info" },
+        el("div", { class: "info-label" }, t("convo_prev_q")),
+        el("div", null, last.q)
+      ),
+      el("div", { class: "info" },
+        el("div", { class: "info-label" }, t("convo_prev_a")),
+        el("div", null, last.a)
+      )
+    );
+  }
+  refreshTranscript();
+
+  function stopRecognizer() {
+    if (convoRecognizer) {
+      try { convoRecognizer.stop(); } catch {}
+      convoRecognizer = null;
+    }
+  }
+
+  function startListenStep() {
+    if (!convoActive) return;
+    setConvoStatus(status, t("convo_listening"));
+    convoRecognizer = sp.createDictation({
+      onEnd: (text) => {
+        convoRecognizer = null;
+        if (!convoActive) return;
+        if (!text || !text.trim()) {
+          sp.speak(t("convo_no_speech"), { onend: () => startListenStep() });
+          return;
+        }
+        handleConvoTurn(text.trim());
+      },
+      onError: () => {
+        convoRecognizer = null;
+        if (convoActive) sp.speak(t("convo_no_speech"), { onend: () => startListenStep() });
+      }
+    });
+    if (!convoRecognizer) {
+      setConvoStatus(status, t("convo_no_recognition"));
+      convoActive = false;
+      return;
+    }
+    try { convoRecognizer.start(); }
+    catch {
+      convoRecognizer = null;
+      setConvoStatus(status, t("convo_no_recognition"));
+      convoActive = false;
+    }
+  }
+
+  async function handleConvoTurn(question) {
+    setConvoStatus(status, t("convo_thinking"));
+    try {
+      const recent = convoHistory.slice(-4)
+        .map(turn => `User: ${turn.q}\nAssistant: ${turn.a}`)
+        .join("\n");
+      const fullPrompt = (recent ? recent + "\n" : "") + "User: " + question;
+      const instruction = getLang() === "en"
+        ? "You are Basir, an assistant for blind and low-vision users having a spoken conversation. Answer in 1-3 short sentences of plain English, no markdown, no lists — this is read aloud by TTS."
+        : "أنت بصير، مساعد للمستخدمين المكفوفين في محادثة صوتية مستمرة. أجب في جملة أو ثلاث جمل قصيرة بالعربية الفصيحة، بدون قوائم أو رموز Markdown، لأن الإجابة تُقرأ صوتيًا.";
+      const answer = await api.askBasir({ task: "ask", input: fullPrompt, instruction });
+      const a = (answer || "").trim();
+      convoHistory.push({ q: question, a });
+      if (convoHistory.length > 10) convoHistory.shift();
+      store.pushHistory(t("log_question"), question.slice(0, 200));
+      refreshTranscript();
+      setConvoStatus(status, t("convo_prev_a") + a);
+      sp.speak(a, { onend: () => { if (convoActive) startListenStep(); } });
+    } catch (e) {
+      setConvoStatus(status, t("docqa_failed"));
+      const msg = (e && e.message) ? e.message : String(e);
+      sp.speak(msg, { onend: () => { if (convoActive) startListenStep(); } });
+    }
+  }
+
+  const toggleBtn = el("button", {
+    class: "btn btn-block",
+    type: "button"
+  }, convoActive ? t("convo_end") : t("convo_start"));
+  toggleBtn.addEventListener("click", () => {
+    if (convoActive) {
+      convoActive = false;
+      stopRecognizer();
+      sp.stopSpeak();
+      setConvoStatus(status, t("convo_ended"));
+      sp.speak(t("convo_ended"));
+      toggleBtn.textContent = t("convo_start");
+    } else {
+      convoActive = true;
+      toggleBtn.textContent = t("convo_end");
+      setConvoStatus(status, t("convo_listening"));
+      sp.speak(t("convo_speak_now"), { onend: () => setTimeout(startListenStep, 350) });
+    }
+  });
+
+  m.append(
+    el("p", { class: "subtitle" }, t("convo_intro")),
+    el("div", { class: "info" }, status),
+    transcript,
+    toggleBtn,
+    convoHistory.length
+      ? el("button", { class: "btn btn-ghost btn-block", type: "button", onClick: () => {
+          convoHistory = [];
+          refreshTranscript();
+          toast(t("history_cleared"));
+        }}, t("convo_clear"))
+      : null,
+    backButton("#/home")
+  );
+
+  // Stop everything when leaving via hashchange — viewHome will rebuild.
+  window.addEventListener("hashchange", function onLeave() {
+    convoActive = false;
+    stopRecognizer();
+    sp.stopSpeak();
+    window.removeEventListener("hashchange", onLeave);
+  }, { once: true });
+}
+
+// ============================================================
+// v2.0 — Document Q&A (after a PDF/PPTX was uploaded to Files API)
+// ============================================================
+let lastDocQa = { q: "", a: "" };
+
+export function viewDocQa() {
+  clear();
+  setTitle(t("docqa_title"));
+  const m = $main();
+  const doc = store.getQaDoc();
+
+  if (!doc || !store.isQaDocFresh()) {
+    m.append(
+      el("p", { class: "subtitle" }, t("docqa_no_doc")),
+      el("div", { class: "btn-row" },
+        el("button", { class: "btn", type: "button", onClick: () => location.hash = "#/convert" }, t("convert_title"))
+      ),
+      backButton("#/home")
+    );
+    return;
+  }
+
+  const input = el("textarea", {
+    placeholder: t("docqa_placeholder"),
+    "aria-label": t("docqa_placeholder")
+  });
+  const resultBox = el("div", { "aria-live": "polite" });
+  const mic = micButton((text) => { input.value = (input.value ? input.value + " " : "") + text; input.focus(); });
+
+  if (lastDocQa.q || lastDocQa.a) {
+    if (lastDocQa.q) m.append(el("div", { class: "info" },
+      el("div", { class: "info-label" }, t("convo_prev_q")),
+      el("div", null, lastDocQa.q)));
+    if (lastDocQa.a) m.append(el("div", { class: "info" },
+      el("div", { class: "info-label" }, t("convo_prev_a")),
+      el("div", null, lastDocQa.a)));
+  }
+
+  const onSend = async () => {
+    const q = (input.value || "").trim();
+    if (!q) return toast(t("ask_first"));
+    lastDocQa = { q, a: "" };
+    sp.vibrate(30);
+    resultBox.replaceChildren(loading(t("docqa_searching")));
+    try {
+      const ans = await api.qaAboutFile({
+        fileUri: doc.fileUri,
+        mimeType: doc.mimeType,
+        question: q,
+        language: getLang()
+      });
+      lastDocQa.a = (ans || "").trim();
+      store.pushHistory(t("log_document"), q.slice(0, 200));
+      showResult(resultBox, t("docqa_title"), lastDocQa.a, {
+        logType: t("log_document"),
+        logContent: q.slice(0, 200)
+      });
+    } catch (e) {
+      resultBox.replaceChildren(errorBox(e, t("docqa_failed")));
+    }
+  };
+
+  m.append(
+    el("p", { class: "subtitle" }, t("docqa_intro") + (doc.displayName || "")),
+    el("label", { class: "field" },
+      el("span", { class: "field-label" }, t("docqa_placeholder")),
+      input
+    ),
+    el("div", { class: "btn-row" },
+      el("button", { class: "btn btn-block", type: "button", onClick: onSend }, t("docqa_send")),
+      mic ? mic : null
+    ),
+    resultBox,
+    el("div", { class: "btn-row" },
+      el("button", { class: "btn btn-ghost", type: "button", onClick: () => {
+        lastDocQa = { q: "", a: "" };
+        viewDocQa();
+      }}, t("convo_clear")),
+      el("button", { class: "btn btn-ghost", type: "button", onClick: () => {
+        store.clearQaDoc();
+        location.hash = "#/home";
+      }}, t("delete"))
+    ),
+    backButton("#/home")
+  );
+}
+
 export const Views = {
   home: viewHome,
   more: viewMore,
@@ -1055,5 +1484,8 @@ export const Views = {
   archive: viewArchive,
   history: viewHistory,
   settings: viewSettings,
-  about: viewAbout
+  about: viewAbout,
+  walking: viewWalking,
+  "voice-convo": viewVoiceConvo,
+  "doc-qa": viewDocQa
 };
