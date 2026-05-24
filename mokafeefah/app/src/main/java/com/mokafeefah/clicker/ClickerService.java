@@ -70,9 +70,23 @@ public class ClickerService extends AccessibilityService {
     private static final int STATE_AFTER_LIKE    = 1;
     private static final int STATE_AFTER_YES     = 2;
     private static final int STATE_MUST_SCROLL   = 3;
+    // v10.0: every N likes the bot taps Mawada's own bottom-bar "members"
+    // tab to force a soft refresh of the search-results page. Mawada
+    // doesn't garbage-collect its WebView DOM as the user scrolls — by
+    // like #300 the accessibility tree has grown from ~1.3 K to ~6.5 K
+    // nodes and every popup takes 7-13 s to settle. Tapping the members
+    // tab makes Mawada re-render the page, the DOM drops back to its
+    // initial size, and per-cycle latency snaps back to early-session
+    // values. Filters are kept (Mawada's own state).
+    private static final int STATE_SOFT_REFRESH  = 5;
 
-    private static final long MAX_WAIT_AFTER_LIKE_MS = 2500L;
-    private static final long MAX_WAIT_AFTER_YES_MS  = 2000L;
+    // v10.0: latency budgets — relaxed because Mawada's late-session popup
+    // can take 6-7 s to even appear. The previous 2.5 s timeout was firing
+    // a stale AFTER_LIKE → LOOK transition before "نعم" had rendered, then
+    // LOOK had to redo the work. Pushed to 8 s — still bounded, but no
+    // longer racing Mawada's worst-case render.
+    private static final long MAX_WAIT_AFTER_LIKE_MS = 8000L;
+    private static final long MAX_WAIT_AFTER_YES_MS  = 8000L;
     private static final long POST_BACK_WAIT_MS      = 900L;
     private static final long POST_SCROLL_WAIT_MS    = 1800L;
 
@@ -91,6 +105,19 @@ public class ClickerService extends AccessibilityService {
     // 30 was ≈60s of trying, which expires before a slow paginated list can
     // actually respond. 3 minutes of unproductive scrolling is the new bar.
     private static final long NO_PROGRESS_BUDGET_MS = 180_000L;
+
+    // v10.0: soft-refresh tuning. Tap Mawada's "members" tab every N
+    // confirmed likes. 80 is a sweet spot from the dump data — by then the
+    // tree has roughly doubled, latency is starting to climb, but a refresh
+    // is still well below Mawada's apparent rate-limit thresholds.
+    private static final int  LIKES_PER_SOFT_REFRESH = 80;
+    // Visible text / desc of Mawada's bottom-bar entry that returns the
+    // user to the members search page. Confirmed in the v9.4 dump:
+    //   [C] [V] [412,2387][806,2712] android.view.View desc="الأعضاء"
+    private static final String[] MEMBERS_TAB_KEYWORDS = { "الأعضاء" };
+    // How long to wait after tapping the members tab before resuming.
+    // Mawada's first paint of the fresh list is ~1.5-2 s on average.
+    private static final long SOFT_REFRESH_WAIT_MS = 2500L;
 
     // v8: keywords that say "load more / show more" — we tap them before
     // swiping if visible, because some apps don't auto-paginate on scroll.
@@ -171,6 +198,10 @@ public class ClickerService extends AccessibilityService {
     private int    likesAtLastScroll       = 0;
     private int    rewindStepsDone         = 0;
     private int    scrollPatternIndex      = 0; // rotates 0,1,2 within a streak
+    // v10.0: confirmed likes since the most recent soft refresh. When this
+    // reaches LIKES_PER_SOFT_REFRESH we switch into STATE_SOFT_REFRESH to
+    // tap Mawada's own "members" tab and reset its WebView DOM.
+    private int    likesSinceRefresh        = 0;
 
     // Screen metrics — cached per tick
     private int    screenW = 0;
@@ -261,6 +292,7 @@ public class ClickerService extends AccessibilityService {
         likesAtLastScroll = 0;
         rewindStepsDone = 0;
         scrollPatternIndex = 0;
+        likesSinceRefresh = 0;
         long now = System.currentTimeMillis();
         lastButtonFoundMs = now;
         // v8: rewind the target list to its true top before searching. Mawadda's
@@ -309,6 +341,7 @@ public class ClickerService extends AccessibilityService {
     private static String stateName(int s) {
         switch (s) {
             case STATE_REWIND_TO_TOP: return "REWIND";
+            case STATE_SOFT_REFRESH:  return "REFRESH";
             case STATE_LOOK_LIKE:     return "LOOK";
             case STATE_AFTER_LIKE:    return "AFTER_LIKE";
             case STATE_AFTER_YES:     return "AFTER_YES";
@@ -445,6 +478,7 @@ public class ClickerService extends AccessibilityService {
             case STATE_AFTER_LIKE:    return handleAfterLike(roots, now);
             case STATE_AFTER_YES:     return handleAfterYes(roots, now);
             case STATE_MUST_SCROLL:   return handleMustScroll(roots, now);
+            case STATE_SOFT_REFRESH:  return handleSoftRefresh(roots, now);
             default:
                 transitionTo(STATE_LOOK_LIKE);
                 return config.scanIntervalMs;
@@ -456,6 +490,19 @@ public class ClickerService extends AccessibilityService {
     // ============================================================
 
     private long handleLookLike(List<AccessibilityNodeInfo> roots, long now) {
+        // v10.0: periodic soft refresh of Mawada's search page. Triggered
+        // here (top of LOOK_LIKE, when we're about to scan for a new like
+        // button) so it never fires mid-popup. After ~80 likes Mawada's
+        // WebView DOM has bloated to 2-3x its initial size and per-cycle
+        // latency starts climbing — tapping the members tab forces a
+        // re-render, the tree drops back to ~1.3 K nodes, and the next
+        // 80 likes run at early-session speed.
+        if (likesSinceRefresh >= LIKES_PER_SOFT_REFRESH) {
+            diagEvent("LOOK: triggering soft refresh after "
+                    + likesSinceRefresh + " likes since last refresh");
+            transitionTo(STATE_SOFT_REFRESH);
+            return 100L;
+        }
         AccessibilityNodeInfo yes = findClickableInAll(roots, config.yesText);
         if (yes != null && performClick(yes)) {
             setAction(getString(R.string.action_yes));
@@ -487,6 +534,7 @@ public class ClickerService extends AccessibilityService {
             if (performClick(likeBtn)) {
                 processedBounds.add(key);
                 likesCount.incrementAndGet();
+                likesSinceRefresh++;
                 if (fp != null && db != null) db.markLiked(fp);
                 diagEvent("LOOK: clicked like-btn at " + key + " (likes now " + likesCount.get() + ")");
                 setAction(getString(R.string.action_like));
@@ -494,7 +542,13 @@ public class ClickerService extends AccessibilityService {
                 firstNoProgressScrollMs = 0L;
                 scrollPatternIndex = 0;
                 transitionTo(STATE_AFTER_LIKE);
-                return config.popupWaitMs;
+                // v10.0: shorter post-click delay. The previous popupWaitMs
+                // (1500 ms) was a blind sleep before we'd even start looking
+                // for "نعم"; the popup typically appears in 200-400 ms so
+                // we were wasting ~1 s on every successful like. Now we
+                // wait just long enough for the tap to register, then start
+                // polling at the (now-tighter) scanIntervalMs.
+                return 300L;
             }
             diagEvent("LOOK: like-btn at " + key + " click FAILED");
             return config.scanIntervalMs;
@@ -552,6 +606,65 @@ public class ClickerService extends AccessibilityService {
         }
         setAction(getString(R.string.action_wait));
         return config.scanIntervalMs;
+    }
+
+    /**
+     * v10.0 — periodic soft refresh of Mawada's search-results page.
+     *
+     * Once every {@link #LIKES_PER_SOFT_REFRESH} confirmed likes we tap
+     * Mawada's own bottom-bar "الأعضاء" tab. That makes Mawada re-render
+     * the search page; the WebView accessibility DOM drops from ~6.5 K
+     * back to ~1.3 K nodes and per-cycle latency snaps back to early-
+     * session values. The user's filters are preserved because we're
+     * navigating WITHIN Mawada, not restarting it.
+     *
+     * Two-phase implementation:
+     *   1. Find a clickable matching MEMBERS_TAB_KEYWORDS via the native
+     *      text-search API (fast even on a bloated tree). Tap it.
+     *      Wait SOFT_REFRESH_WAIT_MS for the new page to paint.
+     *   2. Walk straight into STATE_REWIND_TO_TOP so the new page is
+     *      definitely positioned at row #1, then resume LOOK_LIKE.
+     *
+     * If the members tab isn't visible (e.g. Mawada is showing a popup
+     * we left behind), fall back to GLOBAL_ACTION_BACK once, then retry.
+     * If even that doesn't surface the tab, give up and resume LOOK_LIKE
+     * without a refresh — better to keep liking slowly than to halt.
+     */
+    private long handleSoftRefresh(List<AccessibilityNodeInfo> roots, long now) {
+        AccessibilityNodeInfo tab = null;
+        for (String kw : MEMBERS_TAB_KEYWORDS) {
+            tab = findClickableInAll(roots, kw);
+            if (tab != null) break;
+        }
+        if (tab != null && performClick(tab)) {
+            diagEvent("REFRESH: tapped members tab, resetting refresh counter");
+            setAction(getString(R.string.action_soft_refresh));
+            likesSinceRefresh = 0;
+            // Clear our per-viewport processed-bounds cache since after the
+            // refresh Mawada will re-render different rows at the same
+            // screen coordinates as the freshly-loaded list.
+            processedBounds.clear();
+            // Re-rewind on the fresh page so we start at row #1.
+            rewindStepsDone = 0;
+            transitionTo(STATE_REWIND_TO_TOP);
+            return SOFT_REFRESH_WAIT_MS;
+        }
+        // Tab not visible — probably a popup is in the way. One BACK press
+        // usually clears stray dialogs without harming the search list.
+        long sinceState = now - stateChangedAt;
+        if (sinceState < 4000L) {
+            diagEvent("REFRESH: members tab not visible, sending BACK");
+            performGlobalAction(GLOBAL_ACTION_BACK);
+            lastBackTime = now;
+            setAction(getString(R.string.action_back));
+            return POST_BACK_WAIT_MS;
+        }
+        // Tab still not findable after a back press — skip the refresh
+        // this round so we don't get stuck. Try again in another 80 likes.
+        diagEvent("REFRESH: tab still not found, skipping refresh this round");
+        likesSinceRefresh = 0;
+        transitionTo(STATE_LOOK_LIKE);
+        return 300L;
     }
 
     /**

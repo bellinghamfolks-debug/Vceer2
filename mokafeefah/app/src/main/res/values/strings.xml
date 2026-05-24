@@ -84,6 +84,7 @@
     <string name="action_yes">تم نقر زر نعم</string>
     <string name="action_rewind_to_top">جارٍ إرجاع القائمة إلى أعلى</string>
     <string name="action_rewind_done">تم إرجاع القائمة إلى أعلى — يبدأ البحث</string>
+    <string name="action_soft_refresh">تحديث صفحة البحث للحفاظ على السرعة</string>
     <string name="action_load_more">تم نقر زر تحميل المزيد</string>
 
     <string name="stop_reason_manual">توقفت — أوقفت يدويًا</string>
