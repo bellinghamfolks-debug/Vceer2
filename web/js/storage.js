@@ -10,20 +10,26 @@ const K = {
   memory_products: "basir.memory.products.v1",
   memory_places: "basir.memory.places.v1",
   emergency: "basir.emergency.v1",
-  // v2.x — last uploaded file ref for Document Q&A (server auto-expires after ~48h)
-  qaDoc: "basir.qa.doc.v1"
+  qaDoc: "basir.qa.doc.v1",
+  botState: "basir.bot.state.v1",
+  botCoords: "basir.bot.coords.v1"
 };
 
 const DEFAULT_SETTINGS = {
   language: navigator.language && navigator.language.startsWith("ar") ? "ar" : "ar",
   tts: true,
   ttsRate: 1.0,
-  fontStep: 1,            // 1=normal, 1.15=large, 1.3=xlarge
+  fontStep: 1,
   privacy: false,
   autoSave: true,
-  proxyUrl: "",           // empty -> same-origin
+  proxyUrl: "",
   appToken: "",
-  quality: "balanced"     // fast | balanced | best
+  quality: "balanced",
+  likeMode: "normal",        // normal | divorced_widowed
+  afterRefresh: "continue",  // continue | restart
+  botNavMode: "online",      // online | search (navigation path in the app)
+  screenWidth: 1080,         // device screen width in pixels (for preset scaling)
+  screenHeight: 2340         // device screen height in pixels
 };
 
 function read(key, fallback) {
@@ -110,6 +116,29 @@ export function isQaDocFresh() {
   // Gemini Files API auto-expires after ~48h. Use 47h to be safe.
   return Date.now() - d.at < 47 * 60 * 60 * 1000;
 }
+
+// ---------- Bot state (position tracking) ----------
+export function getBotState() {
+  return read(K.botState, { lastMemberName: "", processedCount: 0, at: null });
+}
+export function setBotState(patch) {
+  write(K.botState, { ...getBotState(), ...patch, at: Date.now() });
+}
+export function clearBotState() {
+  localStorage.removeItem(K.botState);
+}
+
+// ---------- Bot coordinates ----------
+export function getBotCoords() { return read(K.botCoords, []); }
+export function addBotCoord(coord) {
+  const list = getBotCoords();
+  list.push({ id: Date.now(), ...coord });
+  write(K.botCoords, list);
+}
+export function removeBotCoord(id) {
+  write(K.botCoords, getBotCoords().filter(c => c.id !== id));
+}
+export function clearBotCoords() { localStorage.removeItem(K.botCoords); }
 
 // ---------- Bulk reset ----------
 export function deleteAllUserData() {

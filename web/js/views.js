@@ -178,6 +178,7 @@ function renderMoreTab(m) {
     sectionHeader(t("section_quick_help")),
     richCard("🆘", t("nav_emergency"), t("nav_emergency_desc"), () => location.hash = "#/emergency"),
     sectionHeader(t("section_tools")),
+    richCard("🤖", t("nav_bot"), t("nav_bot_desc"), () => location.hash = "#/bot"),
     richCard("🛠", t("nav_advanced"), t("nav_advanced_desc"), () => location.hash = "#/advanced"),
     richCard("🧠", t("nav_memory"), t("nav_memory_desc"), () => location.hash = "#/memory"),
     richCard("📚", t("nav_archive"), t("nav_archive_desc"), () => location.hash = "#/archive"),
@@ -987,6 +988,35 @@ export function viewSettings() {
       el("button", { class: "btn btn-ghost", type: "button", onClick: () => location.hash = "#/emergency/contact" }, t("emergency_add_change"))
     ),
 
+    el("h2", null, t("set_bot_section")),
+    el("h3", null, t("set_like_mode")),
+    segmented(
+      ["normal", "divorced_widowed"],
+      [t("bot_mode_normal"), t("bot_mode_divorced_widowed")],
+      [t("bot_mode_normal_sub"), t("bot_mode_divorced_widowed_sub")],
+      s.likeMode,
+      (v) => store.setSettings({ likeMode: v })
+    ),
+    el("h3", null, t("set_after_refresh")),
+    segmented(
+      ["continue", "restart"],
+      [t("bot_refresh_continue"), t("bot_refresh_restart")],
+      [t("bot_refresh_continue_sub"), t("bot_refresh_restart_sub")],
+      s.afterRefresh,
+      (v) => store.setSettings({ afterRefresh: v })
+    ),
+    el("h3", null, t("set_bot_nav")),
+    segmented(
+      ["online", "search"],
+      [t("bot_nav_online"), t("bot_nav_search")],
+      [t("bot_nav_online_sub"), t("bot_nav_search_sub")],
+      s.botNavMode,
+      (v) => store.setSettings({ botNavMode: v })
+    ),
+    el("div", { class: "btn-row" },
+      el("button", { class: "btn btn-ghost", type: "button", onClick: () => location.hash = "#/bot" }, t("nav_bot"))
+    ),
+
     el("h2", null, t("set_data_section")),
     el("div", { class: "btn-row" },
       el("button", { class: "btn btn-danger", type: "button", onClick: () => {
@@ -1468,6 +1498,417 @@ export function viewDocQa() {
   );
 }
 
+// ============================================================
+// Bot — Smart automation assistant
+// ============================================================
+
+// Default Mawada coordinates expressed at the 1080×2340 base resolution.
+// At load time these are rescaled to the user's actual screen size from
+// settings (screenWidth × screenHeight), so they remain accurate on any
+// device — e.g. a 1220×2712 panel gets x multiplied by ~1.13, y by ~1.16.
+const MAWADA_BASE_WIDTH  = 1080;
+const MAWADA_BASE_HEIGHT = 2340;
+const MAWADA_PRESETS = [
+  { name: "ثلاث نقاط (قائمة علوية)", x: 1004, y: 211 },
+  { name: "بحث (أعلى يسار)",       x:   54, y: 211 },
+  { name: "جرس الإشعارات",          x:  864, y: 211 },
+  { name: "الأعضاء (تنقّل سفلي)",   x:  540, y: 2223 },
+  { name: "بريدي الداخلي",          x:  184, y: 2223 },
+  { name: "باقة التميز",            x:  896, y: 2223 },
+  { name: "تقييم التطبيق",          x:  540, y:  760 },
+  { name: "أيقونة الوصول (يسار)",   x:   72, y:  370 }
+];
+
+function scaleToScreen(presets) {
+  const s = store.getSettings();
+  const sx = (s.screenWidth  || MAWADA_BASE_WIDTH)  / MAWADA_BASE_WIDTH;
+  const sy = (s.screenHeight || MAWADA_BASE_HEIGHT) / MAWADA_BASE_HEIGHT;
+  return presets.map(p => ({
+    name: p.name,
+    x: Math.round(p.x * sx),
+    y: Math.round(p.y * sy)
+  }));
+}
+
+function checkMaritalStatusLocally(text) {
+  const clean = (text || "").replace(/\s+/g, " ");
+  if (/مطلق[ةه]/.test(clean)) return "yes";
+  if (/أرمل[ةه]/.test(clean)) return "yes";
+  if (/divorced|widowed/i.test(clean)) return "yes";
+  if (/متزوج[ةه]?|عزباء?|أعزب/.test(clean)) return "no";
+  return "unknown";
+}
+
+// ---- Coordinate recording: tap inside Basir ----
+function startCoordRecording(onCapture) {
+  const overlay = document.createElement("div");
+  overlay.style.cssText = [
+    "position:fixed", "inset:0", "background:rgba(0,0,0,0.55)",
+    "z-index:9999", "display:flex", "flex-direction:column",
+    "align-items:center", "justify-content:center",
+    "cursor:crosshair", "touch-action:none"
+  ].join(";");
+  overlay.setAttribute("role", "button");
+  overlay.setAttribute("tabindex", "0");
+
+  const hint = document.createElement("div");
+  hint.style.cssText = "color:#fff;font-size:1.3em;text-align:center;padding:24px;pointer-events:none;";
+  hint.textContent = t("bot_coord_recording");
+  overlay.appendChild(hint);
+
+  const capture = (x, y) => {
+    document.body.removeChild(overlay);
+    sp.vibrate(40);
+    onCapture({ x: Math.round(x), y: Math.round(y) });
+  };
+
+  overlay.addEventListener("click", (e) => capture(e.clientX, e.clientY));
+  overlay.addEventListener("touchend", (e) => {
+    e.preventDefault();
+    const touch = e.changedTouches[0];
+    capture(touch.clientX, touch.clientY);
+  }, { passive: false });
+
+  document.body.appendChild(overlay);
+  overlay.focus();
+  sp.vibrate(20);
+}
+
+// ---- Coordinate recording: pick screenshot → tap on element ----
+function startCoordFromScreenshot(onCapture) {
+  const fileInput = document.createElement("input");
+  fileInput.type = "file";
+  fileInput.accept = "image/*";
+
+  fileInput.addEventListener("change", () => {
+    const file = fileInput.files[0];
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+
+    // Full-screen overlay showing the screenshot
+    const overlay = document.createElement("div");
+    overlay.style.cssText = [
+      "position:fixed", "inset:0", "background:#000",
+      "z-index:9999", "display:flex", "align-items:center",
+      "justify-content:center", "touch-action:none", "cursor:crosshair"
+    ].join(";");
+
+    // Close (cancel) button
+    const closeBtn = document.createElement("button");
+    closeBtn.textContent = t("cancel");
+    closeBtn.style.cssText = [
+      "position:absolute", "top:12px", "inset-inline-end:12px",
+      "z-index:10000", "background:rgba(0,0,0,0.7)", "color:#fff",
+      "border:none", "padding:8px 18px", "border-radius:8px", "font-size:1em"
+    ].join(";");
+    closeBtn.addEventListener("click", () => {
+      URL.revokeObjectURL(url);
+      document.body.removeChild(overlay);
+    });
+
+    const hint = document.createElement("div");
+    hint.textContent = t("bot_coord_tap_screenshot");
+    hint.style.cssText = [
+      "position:absolute", "top:12px", "inset-inline-start:12px",
+      "background:rgba(0,0,0,0.7)", "color:#fff",
+      "padding:8px 14px", "border-radius:8px", "font-size:0.9em",
+      "max-width:60%", "pointer-events:none"
+    ].join(";");
+
+    const img = document.createElement("img");
+    img.src = url;
+    img.style.cssText = "max-width:100%;max-height:100%;object-fit:contain;cursor:crosshair;display:block;";
+
+    const capture = (clientX, clientY) => {
+      const rect = img.getBoundingClientRect();
+      // Scale back to the screenshot's original pixel dimensions
+      const scaleX = img.naturalWidth  / rect.width;
+      const scaleY = img.naturalHeight / rect.height;
+      const x = Math.round((clientX - rect.left)  * scaleX);
+      const y = Math.round((clientY - rect.top)   * scaleY);
+      URL.revokeObjectURL(url);
+      document.body.removeChild(overlay);
+      sp.vibrate(40);
+      onCapture({ x, y });
+    };
+
+    img.addEventListener("click", (e) => capture(e.clientX, e.clientY));
+    img.addEventListener("touchend", (e) => {
+      e.preventDefault();
+      const touch = e.changedTouches[0];
+      capture(touch.clientX, touch.clientY);
+    }, { passive: false });
+
+    overlay.append(hint, closeBtn, img);
+    document.body.appendChild(overlay);
+    sp.vibrate(20);
+  });
+
+  fileInput.click();
+}
+
+export function viewBot() {
+  clear();
+  setTitle(t("bot_title"));
+  const m = $main();
+  const s = store.getSettings();
+  const state = store.getBotState();
+
+  // ---- session status ----
+  const lastMemberDisplay = state.lastMemberName || t("bot_none");
+  const processedDisplay = state.processedCount ? String(state.processedCount) : "0";
+  const afterRefresh = s.afterRefresh || "continue";
+  const afterRefreshNote = afterRefresh === "continue"
+    ? `${t("bot_refresh_continue")}: ${lastMemberDisplay}`
+    : t("bot_refresh_restart");
+
+  // ---- save position ----
+  const posInput = el("input", {
+    type: "text",
+    placeholder: t("bot_pos_label"),
+    "aria-label": t("bot_pos_label"),
+    value: state.lastMemberName || ""
+  });
+  const micPos = micButton((text) => { posInput.value = text; posInput.focus(); });
+  const savePosbtn = el("button", { class: "btn", type: "button",
+    onClick: () => {
+      const name = (posInput.value || "").trim();
+      if (!name) return;
+      const cur = store.getBotState();
+      store.setBotState({ lastMemberName: name, processedCount: (cur.processedCount || 0) + 1 });
+      toast(t("bot_pos_saved"));
+      sp.vibrate(30);
+    }
+  }, t("bot_save_pos"));
+
+  const clearBtn = el("button", { class: "btn btn-ghost", type: "button",
+    onClick: () => {
+      store.clearBotState();
+      posInput.value = "";
+      toast(t("bot_cleared"));
+      viewBot();
+    }
+  }, t("bot_clear"));
+
+  // ---- marital status check ----
+  const checkResultBox = el("div", { "aria-live": "polite" });
+  const checkInput = el("textarea", {
+    placeholder: t("bot_profile_check_sub"),
+    "aria-label": t("bot_profile_check_sub")
+  });
+  const micCheck = micButton((text) => { checkInput.value = (checkInput.value ? checkInput.value + " " : "") + text; checkInput.focus(); });
+
+  const onCheck = async () => {
+    const text = (checkInput.value || "").trim();
+    if (!text) return toast(t("ask_first"));
+    sp.vibrate(20);
+    const local = checkMaritalStatusLocally(text);
+    if (local === "yes") {
+      checkResultBox.replaceChildren(el("div", { class: "callout" }, t("bot_profile_check_yes")));
+      sp.speak(t("bot_profile_check_yes"));
+      return;
+    }
+    if (local === "no") {
+      checkResultBox.replaceChildren(el("div", { class: "callout callout-danger" }, t("bot_profile_check_no")));
+      sp.speak(t("bot_profile_check_no"));
+      return;
+    }
+    checkResultBox.replaceChildren(loading(t("loading")));
+    try {
+      const ans = await api.askBasir({
+        task: "ask", input: text,
+        instruction: "Quick marital-status classifier. Does the text indicate 'مطلقة' (divorced) or 'أرملة' (widowed)? Reply exactly: YES or NO."
+      });
+      const isYes = /^yes/i.test((ans || "").trim()) || /نعم/.test(ans);
+      checkResultBox.replaceChildren(el("div", { class: isYes ? "callout" : "callout callout-danger" },
+        isYes ? t("bot_profile_check_yes") : t("bot_profile_check_no")));
+      sp.speak(isYes ? t("bot_profile_check_yes") : t("bot_profile_check_no"));
+    } catch (e) {
+      checkResultBox.replaceChildren(errorBox(e, t("bot_profile_check")));
+    }
+  };
+
+  // ---- coordinate recording ----
+  const coordsListEl = el("div", { "aria-live": "polite" });
+
+  function renderCoordsList() {
+    coordsListEl.replaceChildren();
+    const coords = store.getBotCoords();
+    if (!coords.length) {
+      coordsListEl.append(el("p", { class: "info-label" }, t("bot_coord_empty")));
+      return;
+    }
+    for (const c of coords) {
+      coordsListEl.append(
+        el("div", { class: "list-item" },
+          el("div", { class: "meta" }, c.name || "—"),
+          el("div", null,
+            el("span", { class: "info-label" }, `${t("bot_coord_x")}: ${c.x}  ${t("bot_coord_y")}: ${c.y}`)
+          ),
+          el("button", { class: "btn btn-ghost", type: "button",
+            onClick: () => { store.removeBotCoord(c.id); renderCoordsList(); }
+          }, t("delete"))
+        )
+      );
+    }
+  }
+  renderCoordsList();
+
+  // Pending-capture state (name input shown after tap)
+  const pendingBox = el("div");
+
+  function showNameDialog(x, y) {
+    pendingBox.replaceChildren();
+    const nameInput = el("input", {
+      type: "text",
+      placeholder: t("bot_coord_name_hint"),
+      "aria-label": t("bot_coord_name_label")
+    });
+    const micName = micButton((text) => { nameInput.value = text; nameInput.focus(); });
+    const confirmBtn = el("button", { class: "btn", type: "button",
+      onClick: () => {
+        const name = (nameInput.value || "").trim() || `${x},${y}`;
+        store.addBotCoord({ name, x, y });
+        toast(t("bot_coord_saved"));
+        sp.vibrate(30);
+        pendingBox.replaceChildren();
+        renderCoordsList();
+      }
+    }, t("save"));
+    const cancelBtn = el("button", { class: "btn btn-ghost", type: "button",
+      onClick: () => pendingBox.replaceChildren()
+    }, t("cancel"));
+
+    pendingBox.append(
+      el("div", { class: "callout" },
+        el("p", null, `${t("bot_coord_x")}: ${x}   ${t("bot_coord_y")}: ${y}`)
+      ),
+      el("label", { class: "field" },
+        el("span", { class: "field-label" }, t("bot_coord_name_label")),
+        nameInput
+      ),
+      el("div", { class: "btn-row" },
+        confirmBtn,
+        micName ? micName : null,
+        cancelBtn
+      )
+    );
+    nameInput.focus();
+  }
+
+  const recordBtn = el("button", { class: "btn", type: "button",
+    onClick: () => startCoordRecording(({ x, y }) => showNameDialog(x, y))
+  }, "📍 " + t("bot_coord_record"));
+
+  const recordFromScreenBtn = el("button", { class: "btn btn-outline", type: "button",
+    onClick: () => startCoordFromScreenshot(({ x, y }) => showNameDialog(x, y))
+  }, "🖼 " + t("bot_coord_from_screenshot"));
+
+  const loadMawadaBtn = el("button", { class: "btn btn-outline", type: "button",
+    onClick: () => {
+      const existing = new Set(store.getBotCoords().map(c => c.name));
+      let added = 0;
+      for (const p of scaleToScreen(MAWADA_PRESETS)) {
+        if (existing.has(p.name)) continue;
+        store.addBotCoord(p);
+        added++;
+      }
+      toast(added ? `${t("bot_coord_mawada_added")} (${added})` : t("bot_coord_mawada_exists"));
+      sp.vibrate(30);
+      renderCoordsList();
+    }
+  }, "📋 " + t("bot_coord_load_mawada"));
+
+  // ---- navigation guide ----
+  const navMode = s.botNavMode || "online";
+  const likeMode = s.likeMode || "normal";
+  const guideNav = navMode === "search" ? t("bot_guide_search") : t("bot_guide_online");
+  const guideLike = likeMode === "divorced_widowed" ? t("bot_guide_like_dw") : t("bot_guide_like_normal");
+
+  m.append(
+    el("p", { class: "subtitle" }, t("bot_subtitle")),
+
+    sectionHeader(t("bot_status_title")),
+    info(t("bot_last_member"), lastMemberDisplay),
+    info(t("bot_processed"), processedDisplay),
+    info(t("set_after_refresh"), afterRefreshNote),
+
+    sectionHeader(t("bot_save_pos")),
+    el("label", { class: "field" },
+      el("span", { class: "field-label" }, t("bot_pos_label")),
+      posInput
+    ),
+    el("div", { class: "btn-row" },
+      savePosbtn,
+      micPos ? micPos : null,
+      clearBtn
+    ),
+
+    s.likeMode === "divorced_widowed"
+      ? el("div", null,
+          sectionHeader(t("bot_profile_check")),
+          el("p", { class: "subtitle" }, t("bot_profile_already")),
+          el("label", { class: "field" },
+            el("span", { class: "field-label" }, t("bot_profile_check")),
+            checkInput
+          ),
+          el("div", { class: "btn-row" },
+            el("button", { class: "btn btn-block", type: "button", onClick: onCheck }, t("bot_profile_check_run")),
+            micCheck ? micCheck : null
+          ),
+          checkResultBox
+        )
+      : null,
+
+    sectionHeader(t("bot_screen_size")),
+    el("p", { class: "subtitle" }, t("bot_screen_size_hint")),
+    (() => {
+      const wIn = el("input", { type: "number", min: "200", step: "1", value: String(s.screenWidth || 1080), "aria-label": t("bot_screen_w") });
+      const hIn = el("input", { type: "number", min: "200", step: "1", value: String(s.screenHeight || 2340), "aria-label": t("bot_screen_h") });
+      const saveBtn = el("button", { class: "btn", type: "button",
+        onClick: () => {
+          const w = parseInt(wIn.value, 10);
+          const h = parseInt(hIn.value, 10);
+          if (!w || !h || w < 200 || h < 200) return toast(t("bot_screen_invalid"));
+          store.setSettings({ screenWidth: w, screenHeight: h });
+          toast(t("saved"));
+          sp.vibrate(20);
+        }
+      }, t("save"));
+      return el("div", null,
+        el("label", { class: "field" }, el("span", { class: "field-label" }, t("bot_screen_w")), wIn),
+        el("label", { class: "field" }, el("span", { class: "field-label" }, t("bot_screen_h")), hIn),
+        el("div", { class: "btn-row" }, saveBtn)
+      );
+    })(),
+
+    sectionHeader(t("bot_coords_section")),
+    el("p", { class: "subtitle" }, t("bot_coord_screenshot_hint")),
+    el("div", { class: "btn-row" },
+      recordBtn,
+      recordFromScreenBtn,
+      loadMawadaBtn
+    ),
+    pendingBox,
+    coordsListEl,
+    store.getBotCoords().length
+      ? el("div", { class: "btn-row" },
+          el("button", { class: "btn btn-ghost", type: "button",
+            onClick: () => { store.clearBotCoords(); renderCoordsList(); toast(t("bot_cleared")); }
+          }, t("bot_coords_clear_all"))
+        )
+      : null,
+
+    sectionHeader(t("bot_guide_title")),
+    el("div", { class: "callout" },
+      el("div", null, "🗺 " + guideNav),
+      el("div", null, "❤️ " + guideLike)
+    ),
+
+    backButton()
+  );
+}
+
 export const Views = {
   home: viewHome,
   more: viewMore,
@@ -1487,5 +1928,6 @@ export const Views = {
   about: viewAbout,
   walking: viewWalking,
   "voice-convo": viewVoiceConvo,
-  "doc-qa": viewDocQa
+  "doc-qa": viewDocQa,
+  bot: viewBot
 };
