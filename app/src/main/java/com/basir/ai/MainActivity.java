@@ -316,12 +316,24 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
         heading.setTextColor(colorText());
         heading.setContentDescription(title);
         if (Build.VERSION.SDK_INT >= 28) heading.setAccessibilityHeading(true);
-        heading.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_ASSERTIVE);
+        // v2.2.4 — was ASSERTIVE, which interrupted any ongoing TalkBack
+        // announcement (annoying mid-conversation). POLITE waits for the
+        // current utterance to finish first.
+        heading.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
         LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(
                 0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
         topRow.addView(heading, titleLp);
 
         root.addView(topRow, fullWidth());
+
+        // v2.2.4 — after the screen mounts, move accessibility focus to the
+        // title so TalkBack lands on the new screen's heading instead of
+        // staying on whatever was focused before. Posted so the new view
+        // hierarchy is attached before requestFocus runs.
+        heading.post(() -> {
+            heading.sendAccessibilityEvent(
+                    android.view.accessibility.AccessibilityEvent.TYPE_VIEW_FOCUSED);
+        });
 
         if (subtitle != null && !subtitle.isEmpty()) {
             TextView sub = new TextView(this);
@@ -374,6 +386,12 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
         card.setClickable(true);
         card.setFocusable(true);
         card.setMinimumHeight(dp(96));
+        // v2.2.4 — the card itself is now the accessibility heading, not its
+        // inner title TextView. This lets TalkBack users jump card-by-card
+        // via heading navigation (single swipe up/down), and avoids the
+        // double-announce that resulted from the title being both a heading
+        // and inside the card's combined contentDescription.
+        if (Build.VERSION.SDK_INT >= 28) card.setAccessibilityHeading(true);
 
         GradientDrawable bg = new GradientDrawable();
         bg.setShape(GradientDrawable.RECTANGLE);
@@ -417,7 +435,9 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
         t.setTextSize(textSize(20));
         t.setTypeface(null, Typeface.BOLD);
         t.setTextColor(colorText());
-        if (Build.VERSION.SDK_INT >= 28) t.setAccessibilityHeading(true);
+        // v2.2.4 — heading lives on the card now (see card.setAccessibilityHeading
+        // above). The inner title is hidden from TalkBack to avoid duplicate
+        // announcements: the card's contentDescription already includes it.
         if (Build.VERSION.SDK_INT >= 16) {
             t.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         }
@@ -547,6 +567,7 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(dp(14), dp(10), dp(14), dp(10));
+        row.setMinimumHeight(dp(56));
         GradientDrawable bg = new GradientDrawable();
         bg.setColor(colorSurface());
         bg.setCornerRadius(dp(14));
@@ -557,16 +578,35 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
         tv.setText(label);
         tv.setTextSize(textSize(16));
         tv.setTextColor(colorText());
+        // v2.2.4 — the inner label and switch are hidden from TalkBack; the
+        // outer row is the single focusable, checkable element. This avoids
+        // three separate focus stops (row, label, switch) and lets us
+        // announce "label, switch, on/off" in one breath.
+        if (Build.VERSION.SDK_INT >= 16) {
+            tv.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        }
         LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
         row.addView(tv, tp);
 
         Switch sw = new Switch(this);
         sw.setChecked(checked);
-        sw.setContentDescription(label);
-        sw.setOnCheckedChangeListener((b, isChecked) -> action.run(isChecked));
+        if (Build.VERSION.SDK_INT >= 16) {
+            sw.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        }
+        sw.setOnCheckedChangeListener((b, isChecked) -> {
+            action.run(isChecked);
+            // Keep the row description in sync so the next TalkBack focus pass
+            // reads the new state.
+            row.setContentDescription(label + ", "
+                    + (isChecked ? t("مفعّل", "on") : t("معطّل", "off")));
+        });
         row.addView(sw);
 
-        // Make the whole row clickable to toggle
+        // v2.2.4 — the row IS a checkable control, not just a clickable box.
+        row.setClickable(true);
+        row.setFocusable(true);
+        row.setContentDescription(label + ", "
+                + (checked ? t("مفعّل", "on") : t("معطّل", "off")));
         row.setOnClickListener(v -> sw.toggle());
 
         LinearLayout.LayoutParams p = fullWidth();
@@ -664,7 +704,13 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
                 row.addView(sub, sp);
             }
 
-            row.setContentDescription(labels[i] + ". " + (subtitles == null ? "" : subtitles[i]));
+            // v2.2.4 — stash the base description on the row itself so
+            // styleSegmentRow() can rebuild "label. subtitle, selected"
+            // whenever the selection changes. Without this, TalkBack reads
+            // the same description forever even after the user picks a
+            // different row.
+            String baseDesc = labels[i] + ". " + (subtitles == null ? "" : subtitles[i]);
+            row.setTag(baseDesc);
             LinearLayout.LayoutParams rp = fullWidth();
             rp.setMargins(0, dp(4), 0, dp(4));
             container.addView(row, rp);
@@ -694,6 +740,18 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
             bg.setStroke(dp(1), colorStroke());
         }
         row.setBackground(bg);
+        // v2.2.4 — announce selection state to TalkBack two ways: an explicit
+        // ", selected" suffix on the contentDescription (so it's read out),
+        // and setSelected() so the AccessibilityNodeInfo also carries the
+        // state for users who rely on state-only announcements.
+        Object tag = row.getTag();
+        if (tag instanceof String) {
+            String base = (String) tag;
+            row.setContentDescription(selected
+                    ? base + ", " + t("محدّد", "selected")
+                    : base);
+        }
+        row.setSelected(selected);
         // Color the first child (title TextView) to reflect selection.
         if (row instanceof LinearLayout) {
             LinearLayout ll = (LinearLayout) row;
@@ -929,6 +987,11 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
         // content above it.
         View divider = new View(this);
         divider.setBackgroundColor(colorStroke());
+        // v2.2.4 — pure-decorative line, must not produce a TalkBack focus
+        // stop between the scroll content and the nav tabs.
+        if (Build.VERSION.SDK_INT >= 16) {
+            divider.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        }
 
         // We can't add the divider on the same nav row, so wrap nav + divider
         // in a vertical outer.
@@ -987,6 +1050,10 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
             tab.setContentDescription(label
                     + ", " + t("تبويب ", "tab ") + (i + 1) + " " + t("من", "of") + " 4"
                     + (selected ? ", " + t("محدّد", "selected") : ""));
+            // v2.2.4 — AccessibilityNodeInfo.isSelected() also carries the
+            // state, so users who rely on TalkBack's "selected" beep (not the
+            // text suffix) still get the cue.
+            tab.setSelected(selected);
             tab.setOnClickListener(v -> {
                 if (currentHomeTab != idx) {
                     currentHomeTab = idx;
@@ -1748,6 +1815,12 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
             }
             convertStageText.setText(t("اكتمل التحويل", "Conversion complete"));
             convertProgressText.setText(t("جاري حفظ الملف...", "Saving file..."));
+            // v2.2.4 — vibrate + announce immediately. A long conversion may
+            // outlast the user's attention on the screen; haptic + TalkBack
+            // event are how they learn it finished.
+            if (vibrationEnabled) vibrate(120);
+            convertProgressText.announceForAccessibility(
+                    t("اكتمل تحويل الملف.", "File conversion is complete."));
             File temp = state.result();
             state.clear();
             if (temp != null && temp.exists()) {
@@ -1772,6 +1845,9 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
             final String msg = safeError(state.error());
             state.clear();
             log("convert_error", msg);
+            // v2.2.4 — double-pulse haptic so the user can tell failure apart
+            // from success (which uses a single short pulse) without looking.
+            if (vibrationEnabled) { vibrate(120); }
             resetScreen(t("تعذر إكمال التحويل", "Conversion could not be completed"), msg);
             addPlainText(t("جرّب جودة \"سريع\" أو وضع \"النص فقط\"، أو قسّم الملف إلى أجزاء أصغر.",
                            "Try the \"Fast\" quality, the \"Text only\" output mode, or split the file into smaller parts."));
@@ -2396,8 +2472,14 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
                 v -> shareLocation());
         addOutlineButton(t("تشغيل صوت لتحديد مكاني", "Play a locator sound"), v -> {
             log("locator", "play");
-            for (int i = 0; i < 3; i++) speak(t("أنا هنا وأحتاج إلى مساعدة.", "I am here and I need help."));
+            // v2.2.4 — immediate haptic + TalkBack announcement BEFORE the
+            // speech loop, so a blind user gets instant confirmation that the
+            // button worked (instead of a silent gap until the TTS engine
+            // starts talking).
             if (vibrationEnabled) vibrate(1000);
+            v.announceForAccessibility(
+                    t("جارٍ تشغيل صوت تحديد المكان.", "Locator sound is now playing."));
+            for (int i = 0; i < 3; i++) speak(t("أنا هنا وأحتاج إلى مساعدة.", "I am here and I need help."));
         });
         addOutlineButton(t("إضافة أو تغيير جهة الطوارئ", "Add or change emergency contact"),
                 v -> showEmergencyContactDialog());
@@ -2774,7 +2856,8 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
         box.addView(qLabel, qlp);
 
         final Spinner quickSpinner = makeQualitySpinner(
-                prefs.getString("quick_quality", AiClient.QUALITY_BALANCED));
+                prefs.getString("quick_quality", AiClient.QUALITY_BALANCED),
+                t("جودة المهام السريعة", "Quick-tasks quality"));
         box.addView(quickSpinner, fullWidth());
 
         TextView dLabel = boldLabel(t("تحويل المستندات إلى Word",
@@ -2783,7 +2866,8 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
         box.addView(dLabel, dlp);
 
         final Spinner docSpinner = makeQualitySpinner(
-                prefs.getString("doc_quality", AiClient.QUALITY_BEST));
+                prefs.getString("doc_quality", AiClient.QUALITY_BEST),
+                t("جودة تحويل المستندات", "Document-conversion quality"));
         box.addView(docSpinner, fullWidth());
 
         directGroup.setVisibility(directMode[0] ? View.VISIBLE : View.GONE);
@@ -2834,7 +2918,7 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
     }
 
     /** Pre-populated dropdown for the Quality preset. */
-    private Spinner makeQualitySpinner(String selectedId) {
+    private Spinner makeQualitySpinner(String selectedId, String accessibilityLabel) {
         Spinner sp = new Spinner(this);
         String[] labels = {
                 t("سريع · Flash Lite", "Fast · Flash Lite"),
@@ -2848,6 +2932,10 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
         if (AiClient.QUALITY_FAST.equals(selectedId)) pos = 0;
         else if (AiClient.QUALITY_BEST.equals(selectedId)) pos = 2;
         sp.setSelection(pos);
+        // v2.2.4 — without a contentDescription TalkBack only reads "Spinner"
+        // with no hint about which preset this controls. Always pass a
+        // localised label from the caller.
+        if (accessibilityLabel != null) sp.setContentDescription(accessibilityLabel);
         return sp;
     }
 
@@ -3574,6 +3662,10 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
             onWalkingImageReady(uri);
             return;
         }
+        // v2.2.4 — short haptic pulse the moment we have the image. A blind
+        // user can't see the camera-app flash, so this is the only confirmation
+        // that "your photo was captured and we're working on it now."
+        if (vibrationEnabled) vibrate(60);
         resetScreen(pendingTitle, t("جاري تحليل الصورة عبر Gemini...",
                                     "Analyzing the image via Gemini..."));
         addPlainText(t("قد تستغرق العملية بضع ثوانٍ.", "This may take a few seconds."));
