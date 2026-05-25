@@ -120,4 +120,29 @@
     <string name="msg_no_diagnostic">لا يوجد ملف تشخيص بعد. شغّل البوت حتى يتوقف تلقائيًا أولاً.</string>
     <string name="msg_share_failed">تعذّر فتح نافذة المشاركة</string>
     <string name="share_diagnostic_title">مشاركة ملف التشخيص</string>
+
+    <!-- v1.12 — saved coordinates -->
+    <string name="section_coords">إحداثيات الأزرار غير المقروءة</string>
+    <string name="section_coords_hint">بعض الأزرار في مودة لا يقرأها قارئ الشاشة (مثل ثلاث نقاط). سجّل موقعها بالضغط مرة واحدة، ثم يستطيع البوت نقرها مستقبلًا. الإحداثيات تُحفظ على الجهاز فقط.</string>
+    <string name="btn_record_coord">تسجيل إحداثية جديدة</string>
+    <string name="btn_clear_coords">حذف كل الإحداثيات</string>
+    <string name="record_coord_hint">انقر على المكان الذي تريد تسجيله</string>
+    <string name="dialog_name_coord_title">اسم الإحداثية</string>
+    <string name="dialog_name_coord_hint">مثال: ثلاث نقاط</string>
+    <string name="dialog_name_coord_position">الموضع: س = %1$d، ص = %2$d</string>
+    <string name="cancel">إلغاء</string>
+    <string name="msg_coord_saved">تم حفظ الإحداثية: %1$s</string>
+    <string name="msg_coord_canceled">تم إلغاء التسجيل</string>
+    <string name="msg_coord_name_required">يجب إدخال اسم للإحداثية</string>
+    <string name="msg_no_coords">لا توجد إحداثيات محفوظة بعد</string>
+    <string name="msg_coords_cleared">تم حذف جميع الإحداثيات</string>
+    <string name="msg_tap_done">تم النقر على %1$s</string>
+    <string name="msg_tap_failed">تعذّر النقر — هل خدمة إمكانية الوصول مفعلة؟</string>
+    <string name="confirm_clear_coords_title">حذف الإحداثيات</string>
+    <string name="confirm_clear_coords_msg">سيتم حذف كل الإحداثيات المحفوظة. لا يمكن التراجع. هل تريد المتابعة؟</string>
+    <string name="confirm_delete_coord">حذف هذه الإحداثية؟</string>
+    <string name="btn_test_coord">اختبار النقر</string>
+    <string name="btn_delete_coord">حذف</string>
+    <string name="coord_xy_format">س = %1$d  ·  ص = %2$d</string>
+    <string name="save_coord">حفظ</string>
 </resources>

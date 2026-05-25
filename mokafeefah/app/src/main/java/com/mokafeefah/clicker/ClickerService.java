@@ -1185,6 +1185,32 @@ public class ClickerService extends AccessibilityService {
         }
     }
 
+    /**
+     * Public helper — dispatch a synthetic tap at absolute screen coordinates.
+     * Used by MainActivity to test recorded coordinates and by the bot when
+     * a target button is unlabeled (empty contentDescription) and therefore
+     * unreachable via accessibility-text lookup.
+     *
+     * The path must contain at least one segment, so we move and then draw
+     * a 1-px line — a no-op visually but required by GestureDescription.
+     * Duration is intentionally short (~80 ms) so the tap is registered as
+     * a click rather than a long press.
+     */
+    public boolean tapAt(int x, int y) {
+        try {
+            Path path = new Path();
+            path.moveTo(x, y);
+            path.lineTo(x + 1, y + 1);
+            GestureDescription.StrokeDescription stroke =
+                    new GestureDescription.StrokeDescription(path, 0L, 80L);
+            GestureDescription gesture =
+                    new GestureDescription.Builder().addStroke(stroke).build();
+            return dispatchGesture(gesture, null, null);
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
     /** v8: gesture used by STATE_REWIND_TO_TOP. Pulls content downward. */
     private boolean performGestureSwipeDown() {
         try {

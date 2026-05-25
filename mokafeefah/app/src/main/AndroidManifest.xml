@@ -21,6 +21,12 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".RecordCoordinateActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:configChanges="screenSize|orientation|keyboardHidden"/>
+
         <service
             android:name=".ClickerService"
             android:label="@string/service_label"

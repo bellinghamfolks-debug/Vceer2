@@ -509,6 +509,58 @@
                 android:contentDescription="@string/label_idle_timeout"/>
         </LinearLayout>
 
+        <!-- v1.12 — saved coordinates (fallback for unlabeled buttons) -->
+        <TextView
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:textColor="@color/accent"
+            android:paddingTop="24dp"
+            android:paddingBottom="6dp"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/section_coords"
+            android:accessibilityHeading="true"/>
+        <TextView
+            android:textSize="13sp"
+            android:textColor="@color/text_secondary"
+            android:paddingBottom="10dp"
+            android:lineSpacingExtra="2dp"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/section_coords_hint"/>
+
+        <Button
+            android:id="@+id/btnRecordCoord"
+            android:textSize="17sp"
+            android:textColor="@color/on_primary"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            android:minHeight="56dp"
+            android:text="@string/btn_record_coord"
+            android:contentDescription="@string/btn_record_coord"
+            android:backgroundTint="@color/primary"/>
+
+        <LinearLayout
+            android:id="@+id/coordsList"
+            android:orientation="vertical"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"/>
+
+        <Button
+            android:id="@+id/btnClearCoords"
+            android:textSize="15sp"
+            android:textColor="@color/text_primary"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="16dp"
+            android:minHeight="48dp"
+            android:text="@string/btn_clear_coords"
+            android:contentDescription="@string/btn_clear_coords"
+            android:visibility="gone"
+            android:backgroundTint="@color/surface_elevated"/>
+
         <!-- Actions section -->
         <TextView
             android:textSize="18sp"

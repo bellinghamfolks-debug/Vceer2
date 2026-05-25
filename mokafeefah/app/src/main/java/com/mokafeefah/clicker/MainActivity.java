@@ -5,7 +5,9 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.os.Bundle;
 import android.text.TextUtils;
+import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
@@ -76,15 +78,26 @@ public class MainActivity extends AppCompatActivity {
     private TextView skippedText;
     private TextView lastActionText;
 
+    // v1.12 — saved coordinates UI
+    private LinearLayout coordsList;
+    private Button       btnClearCoords;
+    private SavedCoordinatesDb coordsDb;
+
+    private static final int REQ_RECORD_COORD = 4711;
+    private int    pendingCoordX = 0;
+    private int    pendingCoordY = 0;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+        coordsDb = new SavedCoordinatesDb(getApplicationContext());
         bindViews();
         loadSavedValues();
         wireButtons();
+        refreshCoordsList();
     }
 
     private void bindViews() {
@@ -110,6 +123,8 @@ public class MainActivity extends AppCompatActivity {
         counterText          = findViewById(R.id.counterText);
         skippedText          = findViewById(R.id.skippedText);
         lastActionText       = findViewById(R.id.lastActionText);
+        coordsList           = findViewById(R.id.coordsList);
+        btnClearCoords       = findViewById(R.id.btnClearCoords);
     }
 
     private void wireButtons() {
@@ -120,6 +135,8 @@ public class MainActivity extends AppCompatActivity {
         Button btnClearHistory = findViewById(R.id.btnClearHistory);
         Button btnShareDiag    = findViewById(R.id.btnShareDiagnostic);
 
+        Button btnRecordCoord  = findViewById(R.id.btnRecordCoord);
+
         btnStart.setOnClickListener(v -> onStartClicked());
         btnStop.setOnClickListener(v -> onStopClicked());
         btnOpenAcc.setOnClickListener(v -> openAccessibilitySettings());
@@ -127,6 +144,8 @@ public class MainActivity extends AppCompatActivity {
         btnClearHistory.setOnClickListener(v -> confirmClearHistory());
         btnShareDiag.setOnClickListener(v -> shareLatestDiagnostic());
         btnToggleAdvanced.setOnClickListener(v -> toggleAdvancedSettings());
+        btnRecordCoord.setOnClickListener(v -> startCoordRecording());
+        btnClearCoords.setOnClickListener(v -> confirmClearAllCoords());
         checkDedup.setOnCheckedChangeListener((v, checked) ->
                 prefs.edit().putBoolean(K_DEDUP_ENABLED, checked).apply());
         groupLikeMode.setOnCheckedChangeListener((g, id) ->
@@ -381,6 +400,174 @@ public class MainActivity extends AppCompatActivity {
             e.putBoolean(K_REFRESH_CONTINUE, radioRefreshModeContinue.isChecked());
         }
         e.apply();
+    }
+
+    // ----- Saved coordinates (v1.12) -----
+
+    private void startCoordRecording() {
+        Intent i = new Intent(this, RecordCoordinateActivity.class);
+        startActivityForResult(i, REQ_RECORD_COORD);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQ_RECORD_COORD) return;
+        if (resultCode != RESULT_OK || data == null) {
+            toast(getString(R.string.msg_coord_canceled));
+            return;
+        }
+        pendingCoordX = data.getIntExtra(RecordCoordinateActivity.EXTRA_X, 0);
+        pendingCoordY = data.getIntExtra(RecordCoordinateActivity.EXTRA_Y, 0);
+        promptNameAndSave();
+    }
+
+    private void promptNameAndSave() {
+        EditText nameInput = new EditText(this);
+        nameInput.setHint(R.string.dialog_name_coord_hint);
+        nameInput.setMinHeight(dp(56));
+        int pad = dp(8);
+        nameInput.setPadding(pad, pad, pad, pad);
+
+        LinearLayout container = new LinearLayout(this);
+        container.setOrientation(LinearLayout.VERTICAL);
+        int sidePad = dp(20);
+        container.setPadding(sidePad, dp(8), sidePad, 0);
+        TextView pos = new TextView(this);
+        pos.setText(getString(R.string.dialog_name_coord_position, pendingCoordX, pendingCoordY));
+        pos.setTextSize(15);
+        pos.setPadding(0, 0, 0, dp(12));
+        container.addView(pos);
+        container.addView(nameInput);
+
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.dialog_name_coord_title)
+                .setView(container)
+                .setPositiveButton(R.string.save_coord, (d, w) -> {
+                    String name = nameInput.getText().toString().trim();
+                    if (TextUtils.isEmpty(name)) {
+                        toast(getString(R.string.msg_coord_name_required));
+                        return;
+                    }
+                    coordsDb.upsert(name, pendingCoordX, pendingCoordY);
+                    toast(getString(R.string.msg_coord_saved, name));
+                    refreshCoordsList();
+                })
+                .setNegativeButton(R.string.cancel, null)
+                .show();
+    }
+
+    private void refreshCoordsList() {
+        if (coordsList == null) return;
+        coordsList.removeAllViews();
+        List<SavedCoordinatesDb.Coord> all = coordsDb.listAll();
+        if (all.isEmpty()) {
+            TextView empty = new TextView(this);
+            empty.setText(R.string.msg_no_coords);
+            empty.setTextSize(14);
+            empty.setPadding(dp(12), dp(8), dp(12), dp(8));
+            empty.setContentDescription(getString(R.string.msg_no_coords));
+            coordsList.addView(empty);
+            if (btnClearCoords != null) btnClearCoords.setVisibility(View.GONE);
+            return;
+        }
+        for (SavedCoordinatesDb.Coord c : all) coordsList.addView(buildCoordRow(c));
+        if (btnClearCoords != null) btnClearCoords.setVisibility(View.VISIBLE);
+    }
+
+    private View buildCoordRow(SavedCoordinatesDb.Coord c) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.VERTICAL);
+        int pad = dp(12);
+        row.setPadding(pad, pad, pad, pad);
+        row.setBackgroundResource(R.color.surface_elevated);
+        ViewGroup.MarginLayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.bottomMargin = dp(8);
+        row.setLayoutParams(lp);
+
+        TextView name = new TextView(this);
+        name.setText(c.name);
+        name.setTextSize(16);
+        name.setTypeface(name.getTypeface(), android.graphics.Typeface.BOLD);
+
+        TextView xy = new TextView(this);
+        xy.setText(getString(R.string.coord_xy_format, c.x, c.y));
+        xy.setTextSize(14);
+        xy.setPadding(0, dp(2), 0, dp(8));
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        actions.setGravity(Gravity.START);
+
+        Button testBtn = new Button(this);
+        testBtn.setText(R.string.btn_test_coord);
+        testBtn.setContentDescription(getString(R.string.btn_test_coord) + " " + c.name);
+        testBtn.setMinHeight(dp(48));
+        LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        tlp.setMarginEnd(dp(6));
+        testBtn.setLayoutParams(tlp);
+        testBtn.setOnClickListener(v -> performTestTap(c));
+
+        Button delBtn = new Button(this);
+        delBtn.setText(R.string.btn_delete_coord);
+        delBtn.setContentDescription(getString(R.string.btn_delete_coord) + " " + c.name);
+        delBtn.setMinHeight(dp(48));
+        LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        delBtn.setLayoutParams(dlp);
+        delBtn.setOnClickListener(v -> confirmDeleteCoord(c));
+
+        actions.addView(testBtn);
+        actions.addView(delBtn);
+
+        row.addView(name);
+        row.addView(xy);
+        row.addView(actions);
+        return row;
+    }
+
+    private void performTestTap(SavedCoordinatesDb.Coord c) {
+        ClickerService svc = ClickerService.getInstance();
+        if (svc == null) {
+            toast(getString(R.string.msg_tap_failed));
+            return;
+        }
+        boolean ok = svc.tapAt(c.x, c.y);
+        toast(ok ? getString(R.string.msg_tap_done, c.name)
+                 : getString(R.string.msg_tap_failed));
+    }
+
+    private void confirmDeleteCoord(SavedCoordinatesDb.Coord c) {
+        new AlertDialog.Builder(this)
+                .setTitle(c.name)
+                .setMessage(R.string.confirm_delete_coord)
+                .setPositiveButton(android.R.string.ok, (d, w) -> {
+                    coordsDb.deleteById(c.id);
+                    refreshCoordsList();
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
+    private void confirmClearAllCoords() {
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.confirm_clear_coords_title)
+                .setMessage(R.string.confirm_clear_coords_msg)
+                .setPositiveButton(android.R.string.ok, (d, w) -> {
+                    coordsDb.clearAll();
+                    toast(getString(R.string.msg_coords_cleared));
+                    refreshCoordsList();
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
+    private int dp(int v) {
+        float density = getResources().getDisplayMetrics().density;
+        return (int) (v * density + 0.5f);
     }
 
     // ----- Tiny utilities -----
