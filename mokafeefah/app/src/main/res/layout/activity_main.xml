@@ -535,11 +535,23 @@
             android:textColor="@color/on_primary"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="12dp"
+            android:layout_marginBottom="8dp"
             android:minHeight="56dp"
             android:text="@string/btn_record_coord"
             android:contentDescription="@string/btn_record_coord"
             android:backgroundTint="@color/primary"/>
+
+        <Button
+            android:id="@+id/btnSeedDefaults"
+            android:textSize="15sp"
+            android:textColor="@color/text_primary"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            android:minHeight="48dp"
+            android:text="@string/btn_seed_defaults"
+            android:contentDescription="@string/btn_seed_defaults"
+            android:backgroundTint="@color/surface_elevated"/>
 
         <LinearLayout
             android:id="@+id/coordsList"

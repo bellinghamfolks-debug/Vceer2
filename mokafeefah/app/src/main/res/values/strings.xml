@@ -145,4 +145,7 @@
     <string name="btn_delete_coord">حذف</string>
     <string name="coord_xy_format">س = %1$d  ·  ص = %2$d</string>
     <string name="save_coord">حفظ</string>
+    <string name="btn_seed_defaults">استعادة إحداثيات مودة الافتراضية</string>
+    <string name="msg_seed_added">تم إضافة %1$d إحداثية افتراضية لمودة</string>
+    <string name="msg_seed_already">إحداثيات مودة الافتراضية موجودة بالفعل</string>
 </resources>

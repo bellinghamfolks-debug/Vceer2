@@ -106,6 +106,45 @@ public class SavedCoordinatesDb extends SQLiteOpenHelper {
         getWritableDatabase().delete(TABLE, null, null);
     }
 
+    /**
+     * Mawada home-screen coordinates pre-scaled to the user's 1220×2712 panel
+     * (extracted from the home-screen screenshot). The 'ثلاث نقاط' button is
+     * the unlabeled menu the user reported as 'the first unreadable button'.
+     *
+     * Two seeding modes:
+     *   - seedIfEmpty(): only inserts when the table is empty (called on
+     *     first launch so the user sees defaults without doing anything).
+     *   - seedMissing(): inserts entries that don't exist by name, leaves
+     *     existing rows alone (called by the 'restore defaults' button so
+     *     it never overwrites coordinates the user fine-tuned).
+     */
+    private static final String[][] MAWADA_DEFAULTS = {
+            // name,                                 x,    y
+            { "ثلاث نقاط (قائمة علوية)", "1134", "244"  },
+            { "بحث (أعلى يسار)",        "61",   "244"  },
+            { "جرس الإشعارات",          "976",  "244"  },
+            { "الأعضاء (تنقّل سفلي)",   "610",  "2576" },
+            { "بريدي الداخلي",          "208",  "2576" },
+            { "باقة التميز",            "1012", "2576" },
+            { "تقييم التطبيق",          "610",  "881"  },
+            { "أيقونة الوصول (يسار)",   "81",   "429"  }
+    };
+
+    public synchronized int seedIfEmpty() {
+        if (!listAll().isEmpty()) return 0;
+        return seedMissing();
+    }
+
+    public synchronized int seedMissing() {
+        int added = 0;
+        for (String[] row : MAWADA_DEFAULTS) {
+            if (findByName(row[0]) != null) continue;
+            upsert(row[0], Integer.parseInt(row[1]), Integer.parseInt(row[2]));
+            added++;
+        }
+        return added;
+    }
+
     private static Coord cursorToCoord(Cursor c) {
         return new Coord(
                 c.getLong(c.getColumnIndexOrThrow("id")),

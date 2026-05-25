@@ -94,6 +94,7 @@ public class MainActivity extends AppCompatActivity {
 
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         coordsDb = new SavedCoordinatesDb(getApplicationContext());
+        coordsDb.seedIfEmpty();
         bindViews();
         loadSavedValues();
         wireButtons();
@@ -144,7 +145,17 @@ public class MainActivity extends AppCompatActivity {
         btnClearHistory.setOnClickListener(v -> confirmClearHistory());
         btnShareDiag.setOnClickListener(v -> shareLatestDiagnostic());
         btnToggleAdvanced.setOnClickListener(v -> toggleAdvancedSettings());
+        Button btnSeedDefaults = findViewById(R.id.btnSeedDefaults);
         btnRecordCoord.setOnClickListener(v -> startCoordRecording());
+        btnSeedDefaults.setOnClickListener(v -> {
+            int added = coordsDb.seedMissing();
+            if (added > 0) {
+                toast(getString(R.string.msg_seed_added, added));
+                refreshCoordsList();
+            } else {
+                toast(getString(R.string.msg_seed_already));
+            }
+        });
         btnClearCoords.setOnClickListener(v -> confirmClearAllCoords());
         checkDedup.setOnCheckedChangeListener((v, checked) ->
                 prefs.edit().putBoolean(K_DEDUP_ENABLED, checked).apply());
