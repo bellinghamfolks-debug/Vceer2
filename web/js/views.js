@@ -1511,7 +1511,7 @@ function checkMaritalStatusLocally(text) {
   return "unknown";
 }
 
-// ---- Coordinate recording overlay ----
+// ---- Coordinate recording: tap inside Basir ----
 function startCoordRecording(onCapture) {
   const overlay = document.createElement("div");
   overlay.style.cssText = [
@@ -1544,6 +1544,79 @@ function startCoordRecording(onCapture) {
   document.body.appendChild(overlay);
   overlay.focus();
   sp.vibrate(20);
+}
+
+// ---- Coordinate recording: pick screenshot → tap on element ----
+function startCoordFromScreenshot(onCapture) {
+  const fileInput = document.createElement("input");
+  fileInput.type = "file";
+  fileInput.accept = "image/*";
+
+  fileInput.addEventListener("change", () => {
+    const file = fileInput.files[0];
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+
+    // Full-screen overlay showing the screenshot
+    const overlay = document.createElement("div");
+    overlay.style.cssText = [
+      "position:fixed", "inset:0", "background:#000",
+      "z-index:9999", "display:flex", "align-items:center",
+      "justify-content:center", "touch-action:none", "cursor:crosshair"
+    ].join(";");
+
+    // Close (cancel) button
+    const closeBtn = document.createElement("button");
+    closeBtn.textContent = t("cancel");
+    closeBtn.style.cssText = [
+      "position:absolute", "top:12px", "inset-inline-end:12px",
+      "z-index:10000", "background:rgba(0,0,0,0.7)", "color:#fff",
+      "border:none", "padding:8px 18px", "border-radius:8px", "font-size:1em"
+    ].join(";");
+    closeBtn.addEventListener("click", () => {
+      URL.revokeObjectURL(url);
+      document.body.removeChild(overlay);
+    });
+
+    const hint = document.createElement("div");
+    hint.textContent = t("bot_coord_tap_screenshot");
+    hint.style.cssText = [
+      "position:absolute", "top:12px", "inset-inline-start:12px",
+      "background:rgba(0,0,0,0.7)", "color:#fff",
+      "padding:8px 14px", "border-radius:8px", "font-size:0.9em",
+      "max-width:60%", "pointer-events:none"
+    ].join(";");
+
+    const img = document.createElement("img");
+    img.src = url;
+    img.style.cssText = "max-width:100%;max-height:100%;object-fit:contain;cursor:crosshair;display:block;";
+
+    const capture = (clientX, clientY) => {
+      const rect = img.getBoundingClientRect();
+      // Scale back to the screenshot's original pixel dimensions
+      const scaleX = img.naturalWidth  / rect.width;
+      const scaleY = img.naturalHeight / rect.height;
+      const x = Math.round((clientX - rect.left)  * scaleX);
+      const y = Math.round((clientY - rect.top)   * scaleY);
+      URL.revokeObjectURL(url);
+      document.body.removeChild(overlay);
+      sp.vibrate(40);
+      onCapture({ x, y });
+    };
+
+    img.addEventListener("click", (e) => capture(e.clientX, e.clientY));
+    img.addEventListener("touchend", (e) => {
+      e.preventDefault();
+      const touch = e.changedTouches[0];
+      capture(touch.clientX, touch.clientY);
+    }, { passive: false });
+
+    overlay.append(hint, closeBtn, img);
+    document.body.appendChild(overlay);
+    sp.vibrate(20);
+  });
+
+  fileInput.click();
 }
 
 export function viewBot() {
@@ -1695,11 +1768,13 @@ export function viewBot() {
     nameInput.focus();
   }
 
-  const recordBtn = el("button", { class: "btn btn-block", type: "button",
-    onClick: () => {
-      startCoordRecording(({ x, y }) => showNameDialog(x, y));
-    }
+  const recordBtn = el("button", { class: "btn", type: "button",
+    onClick: () => startCoordRecording(({ x, y }) => showNameDialog(x, y))
   }, "📍 " + t("bot_coord_record"));
+
+  const recordFromScreenBtn = el("button", { class: "btn btn-outline", type: "button",
+    onClick: () => startCoordFromScreenshot(({ x, y }) => showNameDialog(x, y))
+  }, "🖼 " + t("bot_coord_from_screenshot"));
 
   // ---- navigation guide ----
   const navMode = s.botNavMode || "online";
@@ -1743,7 +1818,11 @@ export function viewBot() {
       : null,
 
     sectionHeader(t("bot_coords_section")),
-    recordBtn,
+    el("p", { class: "subtitle" }, t("bot_coord_screenshot_hint")),
+    el("div", { class: "btn-row" },
+      recordBtn,
+      recordFromScreenBtn
+    ),
     pendingBox,
     coordsListEl,
     store.getBotCoords().length

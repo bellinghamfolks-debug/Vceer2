@@ -409,6 +409,9 @@ export const STRINGS = {
     bot_coord_x: "X",
     bot_coord_y: "Y",
     bot_coords_clear_all: "حذف كل الإحداثيات",
+    bot_coord_from_screenshot: "تسجيل من لقطة شاشة",
+    bot_coord_tap_screenshot: "انقر على الزر المطلوب في الصورة",
+    bot_coord_screenshot_hint: "التقط صورة شاشة للتطبيق الخارجي، ثم اختر 'تسجيل من لقطة شاشة' لتحديد الزر بدقة.",
   },
 
   en: {
@@ -795,6 +798,9 @@ export const STRINGS = {
     bot_coord_x: "X",
     bot_coord_y: "Y",
     bot_coords_clear_all: "Delete all coordinates",
+    bot_coord_from_screenshot: "Record from screenshot",
+    bot_coord_tap_screenshot: "Tap the target button in the image",
+    bot_coord_screenshot_hint: "Take a screenshot of the external app, then choose 'Record from screenshot' to pinpoint the button.",
   }
 };
 
