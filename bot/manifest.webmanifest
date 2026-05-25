@@ -1,0 +1,17 @@
+{
+  "name": "مكفوف بوت",
+  "short_name": "البوت",
+  "description": "بوت مساعد للمكفوفين — يدير وضع الإعجاب، تتبع الموضع، وإحداثيات التطبيقات الخارجية مثل مودة.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0f1424",
+  "theme_color": "#0f1424",
+  "lang": "ar",
+  "dir": "rtl",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
