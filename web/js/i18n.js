@@ -412,6 +412,9 @@ export const STRINGS = {
     bot_coord_from_screenshot: "تسجيل من لقطة شاشة",
     bot_coord_tap_screenshot: "انقر على الزر المطلوب في الصورة",
     bot_coord_screenshot_hint: "التقط صورة شاشة للتطبيق الخارجي، ثم اختر 'تسجيل من لقطة شاشة' لتحديد الزر بدقة.",
+    bot_coord_load_mawada: "تحميل إحداثيات مودة",
+    bot_coord_mawada_added: "تم حفظ إحداثيات مودة",
+    bot_coord_mawada_exists: "إحداثيات مودة محفوظة مسبقًا.",
   },
 
   en: {
@@ -801,6 +804,9 @@ export const STRINGS = {
     bot_coord_from_screenshot: "Record from screenshot",
     bot_coord_tap_screenshot: "Tap the target button in the image",
     bot_coord_screenshot_hint: "Take a screenshot of the external app, then choose 'Record from screenshot' to pinpoint the button.",
+    bot_coord_load_mawada: "Load Mawada coordinates",
+    bot_coord_mawada_added: "Mawada coordinates saved",
+    bot_coord_mawada_exists: "Mawada coordinates already saved.",
   }
 };
 

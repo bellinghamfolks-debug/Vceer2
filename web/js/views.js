@@ -1502,6 +1502,22 @@ export function viewDocQa() {
 // Bot — Smart automation assistant
 // ============================================================
 
+// Default Mawada coordinates (extracted from a 1080×2340 screenshot
+// of the home screen). Names match the workflow: three-dots → search,
+// plus the bottom navigation. Resolution should match most modern
+// Android phones; the user can retake any coordinate via the
+// "tap on screenshot" tool if their device differs.
+const MAWADA_PRESETS = [
+  { name: "ثلاث نقاط (قائمة علوية)", x: 1004, y: 211 },
+  { name: "بحث (أعلى يسار)",       x:   54, y: 211 },
+  { name: "جرس الإشعارات",          x:  864, y: 211 },
+  { name: "الأعضاء (تنقّل سفلي)",   x:  540, y: 2223 },
+  { name: "بريدي الداخلي",          x:  184, y: 2223 },
+  { name: "باقة التميز",            x:  896, y: 2223 },
+  { name: "تقييم التطبيق",          x:  540, y:  760 },
+  { name: "أيقونة الوصول (يسار)",   x:   72, y:  370 }
+];
+
 function checkMaritalStatusLocally(text) {
   const clean = (text || "").replace(/\s+/g, " ");
   if (/مطلق[ةه]/.test(clean)) return "yes";
@@ -1776,6 +1792,21 @@ export function viewBot() {
     onClick: () => startCoordFromScreenshot(({ x, y }) => showNameDialog(x, y))
   }, "🖼 " + t("bot_coord_from_screenshot"));
 
+  const loadMawadaBtn = el("button", { class: "btn btn-outline", type: "button",
+    onClick: () => {
+      const existing = new Set(store.getBotCoords().map(c => c.name));
+      let added = 0;
+      for (const p of MAWADA_PRESETS) {
+        if (existing.has(p.name)) continue;
+        store.addBotCoord(p);
+        added++;
+      }
+      toast(added ? `${t("bot_coord_mawada_added")} (${added})` : t("bot_coord_mawada_exists"));
+      sp.vibrate(30);
+      renderCoordsList();
+    }
+  }, "📋 " + t("bot_coord_load_mawada"));
+
   // ---- navigation guide ----
   const navMode = s.botNavMode || "online";
   const likeMode = s.likeMode || "normal";
@@ -1821,7 +1852,8 @@ export function viewBot() {
     el("p", { class: "subtitle" }, t("bot_coord_screenshot_hint")),
     el("div", { class: "btn-row" },
       recordBtn,
-      recordFromScreenBtn
+      recordFromScreenBtn,
+      loadMawadaBtn
     ),
     pendingBox,
     coordsListEl,
