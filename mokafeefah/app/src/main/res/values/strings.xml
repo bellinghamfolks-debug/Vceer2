@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">مكفوف بوت</string>
+    <string name="service_label">بوت ذكي للمكفوفين</string>
+    <string name="service_description">يقرأ التطبيق شجرة عناصر الشاشة عبر إذن إمكانية الوصول للبحث عن أزرار يحددها المستخدم بنفسه ونقرها برمجيًا. يعمل بدقة كاملة بدون إحداثيات ولا روت ولا تجاوز حماية أي تطبيق.</string>
+
+    <string name="header_title">مكفوف بوت - بوت ذكي بدون إحداثيات</string>
+    <string name="header_subtitle">يقرأ الشاشة ويبحث عن الأزرار وينقرها تلقائيًا. يتذكّر الأعضاء الذين سبق التفاعل معهم ولا يكررهم.</string>
+
+    <string name="section_status">حالة التطبيق</string>
+    <string name="section_config">إعدادات البحث عن الأزرار</string>
+    <string name="section_actions">الأزرار الرئيسية</string>
+
+    <string name="service_status_label">حالة خدمة إمكانية الوصول</string>
+    <string name="service_status_enabled">مفعلة</string>
+    <string name="service_status_disabled">غير مفعلة - اضغط زر فتح إعدادات إمكانية الوصول</string>
+
+    <string name="exec_status_label">حالة التنفيذ</string>
+    <string name="exec_status_idle">خامل</string>
+    <string name="exec_status_running">يعمل</string>
+    <string name="exec_status_stopped">متوقف</string>
+
+    <string name="counter_label">عدد الإعجابات المنفذة</string>
+    <string name="skipped_label">عدد الأعضاء الذين تم تخطيهم (مكررين)</string>
+
+    <string name="last_action_label">آخر إجراء قام به البوت</string>
+    <string name="last_action_none">لا يوجد بعد</string>
+
+    <string name="config_hint">يبحث البوت عن هذه النصوص داخل أي تطبيق على الشاشة. عدّل النصوص لتطابق ما يظهر في تطبيقك الهدف.</string>
+
+    <string name="label_like_text">نص زر الإعجاب أو الاهتمام</string>
+    <string name="hint_like_text">مثال: إهتمام أو اهتمام أو إعجاب</string>
+
+    <string name="label_yes_text">نص زر التأكيد - نعم</string>
+    <string name="hint_yes_text">مثال: نعم أو موافق أو تأكيد</string>
+
+    <string name="label_close_text">نص زر الإغلاق - لرسائل النجاح والقيود</string>
+    <string name="hint_close_text">مثال: إغلاق أو حسناً أو موافق</string>
+
+    <string name="label_target_package">اسم حزمة التطبيق الهدف - اختياري</string>
+    <string name="hint_target_package">اتركه فارغًا للعمل في أي تطبيق</string>
+
+    <string name="label_profile_keywords">كلمات تدل على دخول الملف الشخصي بالخطأ - مفصولة بفاصلة</string>
+    <string name="hint_profile_keywords">المؤهل التعليمي، الوزن، الطول</string>
+
+    <string name="label_scan_interval">سرعة فحص الشاشة بالميلي ثانية</string>
+    <string name="hint_scan_interval">مثال: 250 - الأقل أسرع لكن يستهلك بطارية أكثر</string>
+
+    <string name="label_popup_wait">مدة انتظار ظهور النافذة المنبثقة بعد نقرة الإعجاب بالميلي ثانية</string>
+    <string name="hint_popup_wait">مثال: 1500 ميلي ثانية - زدها إذا الإنترنت بطيء</string>
+
+    <string name="label_idle_timeout">إيقاف تلقائي إذا لم يجد البوت أي زر إعجاب أو نعم لمدة (ثانية)</string>
+    <string name="hint_idle_timeout">مثال: 30 - يتوقف بعد 30 ثانية من عدم وجود أزرار</string>
+
+    <string name="label_dedup">تذكُّر الأعضاء بين الجلسات (يمنع التكرار)</string>
+    <string name="label_dedup_desc">يستخدم قاعدة بيانات محلية لتسجيل الأعضاء الذين تمّ التفاعل معهم. لن يُكرّر البوت أبدًا.</string>
+
+    <string name="btn_show_advanced">إظهار الإعدادات المتقدمة</string>
+    <string name="btn_hide_advanced">إخفاء الإعدادات المتقدمة</string>
+    <string name="advanced_section_hint">هذه إعدادات للحالات الخاصة. الافتراضيات تعمل في 95٪ من الحالات — لا تغيّرها إلا إذا كنت تعرف ما تفعل.</string>
+
+    <string name="btn_start">بدء التشغيل</string>
+    <string name="btn_stop">إيقاف التشغيل</string>
+    <string name="btn_open_accessibility">فتح إعدادات إمكانية الوصول</string>
+    <string name="btn_reset">استعادة الإعدادات الافتراضية</string>
+    <string name="btn_clear_history">مسح سجل الأعضاء المحفوظ</string>
+
+    <string name="msg_started">بدأ البوت العمل - افتح التطبيق الهدف الآن</string>
+    <string name="msg_stopped">تم إيقاف البوت</string>
+    <string name="msg_already_running">البوت يعمل حاليًا. اضغط إيقاف قبل التشغيل من جديد.</string>
+    <string name="msg_invalid_input">أحد الحقول فارغ أو غير صالح. يرجى مراجعة الإعدادات.</string>
+    <string name="msg_service_off">يجب تفعيل خدمة إمكانية الوصول أولًا. اضغط زر فتح إعدادات إمكانية الوصول.</string>
+    <string name="msg_reset_done">تمت استعادة الإعدادات الافتراضية</string>
+    <string name="msg_auto_stopped">إيقاف تلقائي - لم يجد البوت أي أزرار لفترة طويلة</string>
+    <string name="msg_history_cleared">تم مسح سجل الأعضاء. سيُعاد التفاعل مع أي عضو سبق التفاعل معه.</string>
+
+    <string name="action_back">رجوع تلقائي من ملف شخصي</string>
+    <string name="action_close">تم نقر زر الإغلاق</string>
+    <string name="action_like">تم نقر زر الإعجاب</string>
+    <string name="action_skip">تخطّى عضو مكرر</string>
+    <string name="action_scroll">تمرير القائمة لأسفل</string>
+    <string name="action_wait">في انتظار ظهور أزرار قابلة للنقر</string>
+    <string name="action_wait_loading">في انتظار تحميل المزيد من الأعضاء</string>
+    <string name="action_yes">تم نقر زر نعم</string>
+    <string name="action_rewind_to_top">جارٍ إرجاع القائمة إلى أعلى</string>
+    <string name="action_rewind_done">تم إرجاع القائمة إلى أعلى — يبدأ البحث</string>
+    <string name="action_soft_refresh">تحديث صفحة البحث للحفاظ على السرعة</string>
+    <string name="action_load_more">تم نقر زر تحميل المزيد</string>
+
+    <string name="stop_reason_manual">توقفت — أوقفت يدويًا</string>
+    <string name="stop_reason_idle">توقفت — لم يُعثر على أي زر طوال مدة الإيقاف التلقائي</string>
+    <string name="stop_reason_no_progress">توقفت — لم تظهر أعضاء جدد لمدة 3 دقائق</string>
+    <string name="stop_reason_end_of_list">توقفت — التطبيق المستهدف يقول لا يوجد المزيد من الأعضاء</string>
+
+    <string name="btn_share_diagnostic">مشاركة آخر ملف تشخيص</string>
+    <string name="msg_no_diagnostic">لا يوجد ملف تشخيص بعد. شغّل البوت حتى يتوقف تلقائيًا أولاً.</string>
+    <string name="msg_share_failed">تعذّر فتح نافذة المشاركة</string>
+    <string name="share_diagnostic_title">مشاركة ملف التشخيص</string>
+</resources>
