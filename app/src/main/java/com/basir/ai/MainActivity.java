@@ -760,30 +760,67 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
     }
 
     // ============================================================
-    // Home: tabbed navigation (v2.1.1)
+    // Home: hero + content + bottom navigation (v2.2)
     // ============================================================
     //
-    // v2.0 used a single long scroll of cards on the home screen. The user
-    // asked for "real tabs" — easier to navigate, less to scroll, less
-    // intimidating for a blind user encountering 9 unfamiliar cards at
-    // once. v2.1.1 splits the cards into four tabs:
+    // v2.2 redesign inspired by Envision: the home screen is now a true
+    // app shell, not a regular sub-page. Layout:
     //
-    //   0  محادثة  / Talk     — Ask Basir + voice conversation
-    //   1  رؤية    / Vision   — Describe + walking mode
+    //   ┌──────────────────────────────┐
+    //   │  HERO   "بصير"                │  (gradient panel, branding)
+    //   │         tagline + tab name    │
+    //   ├──────────────────────────────┤
+    //   │  ScrollView                   │
+    //   │     [section header]          │
+    //   │     [card with icon + chev]   │  (the tab's content)
+    //   │     [card]                    │
+    //   │     ...                       │
+    //   ├──────────────────────────────┤
+    //   │  ⬇  ⬇  ⬇  ⬇                  │  (bottom nav, fixed)
+    //   │  💬 👁 📄 ⋯                   │
+    //   │  محادثة رؤية مستندات المزيد   │
+    //   └──────────────────────────────┘
+    //
+    // Sub-screens (showAskScreen, showDocumentScreen, etc.) keep using
+    // resetScreen → back button — only the home screen gets the shell
+    // layout.
+    //
+    // Tabs:
+    //   0  محادثة / Talk      — Ask Basir + voice conversation
+    //   1  رؤية   / Vision    — Describe + walking mode
     //   2  مستندات / Documents — Convert + Q&A + translate
     //   3  المزيد  / More     — Emergency + memory + archive + settings
     //
-    // The selected tab persists across navigation, so when the user comes
-    // back from a sub-screen they land on the tab they left from.
+    // The selected tab persists across navigation, so when the user
+    // returns from a sub-screen they land on the tab they left from.
 
     private int currentHomeTab = 0;
 
     private void showHome() {
-        resetScreen(t("بصير", "Basir"),
-                t("اختر تبويبًا للوصول إلى الخدمات.",
-                  "Choose a tab to access the services."));
+        convertProgressText = null;
+        convertStageText = null;
+        convertProgressBar = null;
 
-        addTabBar();
+        // Outer shell: vertical, fills the screen.
+        LinearLayout shell = new LinearLayout(this);
+        shell.setOrientation(LinearLayout.VERTICAL);
+        shell.setBackgroundColor(colorBg());
+
+        // ---------- 1) Hero panel ----------
+        shell.addView(buildHero(), new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        // ---------- 2) Scrollable content (weight = 1, fills middle) ----------
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(dp(20), dp(8), dp(20), dp(24));
+        scroll.addView(root);
+        LinearLayout.LayoutParams scrollLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f);
+        shell.addView(scroll, scrollLp);
 
         switch (currentHomeTab) {
             case 1: renderVisionTab();    break;
@@ -792,22 +829,79 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
             case 0:
             default: renderTalkTab();     break;
         }
+
+        // ---------- 3) Bottom navigation (fixed) ----------
+        shell.addView(buildBottomNav(), new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        setContentView(shell);
+
+        // Announce the current tab so a TalkBack user knows where they are
+        // the moment the home re-renders (e.g. after returning from a sub).
+        String[] tabNames = isEnglish()
+                ? new String[]{ "Talk", "Vision", "Documents", "More" }
+                : new String[]{ "محادثة", "رؤية", "مستندات", "المزيد" };
+        shell.announceForAccessibility(tabNames[currentHomeTab]);
     }
 
-    /** Horizontal row of 4 tab buttons with icon + label, both stacked
-     *  vertically. The selected tab gets a filled primary background; the
-     *  rest stay on the surface color with a primary-tinted icon. */
-    private void addTabBar() {
-        // Outer container with a subtle "card" feel — frames the tab row.
-        LinearLayout shell = new LinearLayout(this);
-        shell.setOrientation(LinearLayout.HORIZONTAL);
-        shell.setPadding(dp(4), dp(4), dp(4), dp(4));
-        GradientDrawable shellBg = new GradientDrawable();
-        shellBg.setShape(GradientDrawable.RECTANGLE);
-        shellBg.setColor(getColor(R.color.basir_surface_alt));
-        shellBg.setCornerRadius(dp(28));
-        shellBg.setStroke(dp(1), colorStroke());
-        shell.setBackground(shellBg);
+    /** Branded hero panel at the top of the home shell. Replaces the v2.1
+     *  text-only screen title with something that reads as the "app face":
+     *  gradient background, large bold app name, tagline, and the current
+     *  tab name as a chip on the trailing edge. */
+    private LinearLayout buildHero() {
+        LinearLayout hero = new LinearLayout(this);
+        hero.setOrientation(LinearLayout.VERTICAL);
+        hero.setPadding(dp(22), dp(28), dp(22), dp(24));
+
+        // Two-stop linear gradient using primary + primary_dark. Looks like
+        // a soft hero card on both light and dark themes.
+        GradientDrawable bg = new GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{ getColor(R.color.basir_primary_dark),
+                           getColor(R.color.basir_primary) });
+        bg.setShape(GradientDrawable.RECTANGLE);
+        hero.setBackground(bg);
+
+        TextView appName = new TextView(this);
+        appName.setText(t("بصير", "Basir"));
+        appName.setTextSize(textSize(34));
+        appName.setTypeface(null, Typeface.BOLD);
+        appName.setTextColor(android.graphics.Color.WHITE);
+        if (Build.VERSION.SDK_INT >= 28) appName.setAccessibilityHeading(true);
+        hero.addView(appName);
+
+        TextView tagline = new TextView(this);
+        tagline.setText(t("مساعدك الذكي للقراءة والوصف والترجمة",
+                          "Your smart assistant for reading, description, and translation"));
+        tagline.setTextSize(textSize(14));
+        tagline.setTextColor(0xCCFFFFFF);
+        tagline.setPadding(0, dp(4), 0, 0);
+        hero.addView(tagline);
+
+        return hero;
+    }
+
+    /** Bottom navigation bar — fixed at the bottom of the home shell.
+     *  Replaces the v2.1 top tab pill with a proper Android-style nav. */
+    private LinearLayout buildBottomNav() {
+        LinearLayout nav = new LinearLayout(this);
+        nav.setOrientation(LinearLayout.HORIZONTAL);
+        nav.setPadding(dp(4), dp(6), dp(4), dp(8));
+        nav.setBackgroundColor(colorSurface());
+
+        // Top divider so the nav reads as a distinct surface from the scroll
+        // content above it.
+        View divider = new View(this);
+        divider.setBackgroundColor(colorStroke());
+
+        // We can't add the divider on the same nav row, so wrap nav + divider
+        // in a vertical outer.
+        LinearLayout wrap = new LinearLayout(this);
+        wrap.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams divLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(1));
+        wrap.addView(divider, divLp);
 
         String[] arLabels = { "محادثة", "رؤية",   "مستندات",  "المزيد" };
         String[] enLabels = { "Talk",   "Vision", "Documents","More"   };
@@ -820,20 +914,23 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
             LinearLayout tab = new LinearLayout(this);
             tab.setOrientation(LinearLayout.VERTICAL);
             tab.setGravity(Gravity.CENTER);
-            tab.setPadding(dp(6), dp(10), dp(6), dp(10));
+            tab.setPadding(dp(6), dp(8), dp(6), dp(8));
             tab.setClickable(true);
             tab.setFocusable(true);
             tab.setMinimumHeight(dp(64));
 
-            GradientDrawable bg = new GradientDrawable();
-            bg.setShape(GradientDrawable.RECTANGLE);
-            bg.setColor(selected ? colorPrimary() : android.graphics.Color.TRANSPARENT);
-            bg.setCornerRadius(dp(24));
-            tab.setBackground(bg);
+            // Selected tab: subtle filled pill behind the icon+label.
+            if (selected) {
+                GradientDrawable bg = new GradientDrawable();
+                bg.setShape(GradientDrawable.RECTANGLE);
+                bg.setColor(getColor(R.color.basir_primary_soft));
+                bg.setCornerRadius(dp(16));
+                tab.setBackground(bg);
+            }
 
             TextView iconTv = new TextView(this);
             iconTv.setText(icons[i]);
-            iconTv.setTextSize(textSize(18));
+            iconTv.setTextSize(textSize(22));
             iconTv.setGravity(Gravity.CENTER);
             if (Build.VERSION.SDK_INT >= 16) {
                 iconTv.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
@@ -842,9 +939,9 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
 
             TextView labelTv = new TextView(this);
             labelTv.setText(label);
-            labelTv.setTextSize(textSize(12));
+            labelTv.setTextSize(textSize(11));
             labelTv.setGravity(Gravity.CENTER);
-            labelTv.setTextColor(selected ? android.graphics.Color.WHITE : colorPrimary());
+            labelTv.setTextColor(selected ? colorPrimary() : colorTextSec());
             labelTv.setTypeface(null, selected ? Typeface.BOLD : Typeface.NORMAL);
             labelTv.setPadding(0, dp(2), 0, 0);
             if (Build.VERSION.SDK_INT >= 16) {
@@ -852,7 +949,6 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
             }
             tab.addView(labelTv);
 
-            // TalkBack: position + selected state on the whole tab unit.
             tab.setContentDescription(label
                     + ", " + t("تبويب ", "tab ") + (i + 1) + " " + t("من", "of") + " 4"
                     + (selected ? ", " + t("محدّد", "selected") : ""));
@@ -860,18 +956,18 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
                 if (currentHomeTab != idx) {
                     currentHomeTab = idx;
                     showHome();
-                    speak(label);
                 }
             });
 
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                    0, LinearLayout.LayoutParams.MATCH_PARENT, 1f);
-            shell.addView(tab, lp);
+                    0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+            lp.setMargins(dp(4), 0, dp(4), 0);
+            nav.addView(tab, lp);
         }
-
-        LinearLayout.LayoutParams outer = fullWidth();
-        outer.setMargins(0, 0, 0, dp(14));
-        root.addView(shell, outer);
+        wrap.addView(nav, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT));
+        return wrap;
     }
 
     private void renderTalkTab() {
