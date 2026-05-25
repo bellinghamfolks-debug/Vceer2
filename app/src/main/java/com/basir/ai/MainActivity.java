@@ -769,7 +769,7 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
     // once. v2.1.1 splits the cards into four tabs:
     //
     //   0  محادثة  / Talk     — Ask Basir + voice conversation
-    //   1  رؤية    / Vision   — Describe + walking + OCR-on-touch
+    //   1  رؤية    / Vision   — Describe + walking mode
     //   2  مستندات / Documents — Convert + Q&A + translate
     //   3  المزيد  / More     — Emergency + memory + archive + settings
     //
@@ -904,14 +904,6 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
                 t("صوّر ما أمامك بضغطة واحدة، استمع للوصف، ثم كرر للمشهد التالي.",
                   "Capture what's ahead in one tap, hear a description, repeat."),
                 v -> showWalkingModeScreen());
-
-        addSectionHeader(t("قراءة النصوص", "Text reading"));
-
-        addRichCard("👁️", null,
-                t("قراءة نص أي تطبيق", "OCR-on-touch"),
-                t("اضغط زر إمكانية الوصول في أي تطبيق ليُقرأ كل نص ظاهر — حتى ما داخل الصور.",
-                  "Tap the accessibility shortcut in any app to read every visible text — even text inside images."),
-                v -> showOcrSetupScreen());
     }
 
     private void renderDocumentsTab() {
@@ -986,6 +978,20 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
                 t("معلومات عن بصير وبيانات التواصل مع المطور.",
                   "About Basir and developer contact details."),
                 v -> showAboutScreen());
+
+        addSectionHeader(t("سياسات قانونية", "Legal"));
+
+        addRichCard("📜", null,
+                t("الشروط والأحكام", "Terms and Conditions"),
+                t("شروط استخدام تطبيق بصير ومسؤوليات المستخدم.",
+                  "Terms of use for Basir and user responsibilities."),
+                v -> showTermsScreen());
+
+        addRichCard("🔒", null,
+                t("سياسة الخصوصية", "Privacy Policy"),
+                t("كيف نتعامل مع بياناتك وما الذي يُحفَظ على جهازك فقط.",
+                  "How we handle your data and what stays only on your device."),
+                v -> showPrivacyScreen());
 
         addOutlineButton(t("حالة التطبيق", "App status"), v -> showStatusScreen());
     }
@@ -1937,74 +1943,9 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
         });
     }
 
-    // ============================================================
-    // v2.1 — OCR-on-touch setup screen
-    // ============================================================
-    //
-    // The actual capture-and-read logic lives in BasirOcrService (an
-    // AccessibilityService). This screen is just the on-boarding: it tells
-    // the user what the feature does, opens Android's Accessibility
-    // settings page so they can enable Basir, and reports whether the
-    // service is currently running. After enabling, the user just taps
-    // the system accessibility shortcut button from any app.
-
-    private void showOcrSetupScreen() {
-        boolean enabled = com.basir.ai.accessibility.BasirOcrService.isEnabled();
-        resetScreen(t("قراءة نص أي تطبيق", "OCR-on-touch"),
-                enabled
-                    ? t("الخدمة مفعّلة. اضغط زر إمكانية الوصول في أي تطبيق لقراءة كل نص ظاهر.",
-                        "The service is enabled. Tap the accessibility shortcut in any app to read every visible text aloud.")
-                    : t("لم يتم تفعيل الخدمة بعد. افتح إعدادات إمكانية الوصول لتفعيل بصير.",
-                        "The service isn't enabled yet. Open Accessibility settings to enable Basir."));
-
-        addPlainText(t(
-            "كيف يعمل:\n" +
-            "1) فعّل الخدمة من إعدادات إمكانية الوصول.\n" +
-            "2) افتح أي تطبيق (واتساب، متصفح، إيصال، صورة...).\n" +
-            "3) اضغط زر إمكانية الوصول في شريط التنقل.\n" +
-            "4) سيلتقط بصير الشاشة، يستخرج النص (حتى لو داخل صورة)، ويقرأه صوتيًا.",
-            "How it works:\n" +
-            "1) Enable the service from Accessibility settings.\n" +
-            "2) Open any app (WhatsApp, browser, receipt, image...).\n" +
-            "3) Tap the accessibility shortcut button in the navigation bar.\n" +
-            "4) Basir captures the screen, extracts text (even from images), and reads it aloud."));
-
-        addPrimaryButton(
-                enabled
-                    ? t("إعدادات إمكانية الوصول", "Accessibility settings")
-                    : t("فتح إعدادات إمكانية الوصول لتفعيل بصير",
-                        "Open Accessibility settings to enable Basir"),
-                v -> {
-                    try {
-                        startActivity(new Intent(
-                            android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS));
-                    } catch (Exception e) {
-                        speak(t("تعذر فتح الإعدادات.", "Could not open settings."));
-                    }
-                });
-
-        if (enabled) {
-            addOutlineButton(
-                    t("تجربة قراءة الشاشة الحالية الآن",
-                      "Try reading the current screen now"),
-                    v -> {
-                        com.basir.ai.accessibility.BasirOcrService svc =
-                                com.basir.ai.accessibility.BasirOcrService.getInstance();
-                        if (svc != null) {
-                            speak(t("جاري التجربة...", "Trying..."));
-                            svc.runOcrTrigger();
-                        }
-                    });
-        }
-        if (!AiClient.isConfigured(prefs)) {
-            addPlainText(t(
-                "ملاحظة: قراءة النص تستخدم Gemini. يجب إعداد المفتاح أولًا.",
-                "Note: text extraction uses Gemini. The API key must be set first."));
-            addOutlineButton(t("فتح إعداد Gemini الآن", "Open Gemini setup now"),
-                    v -> showAiSettingsDialog());
-        }
-        addBackButton();
-    }
+    // v2.2 — OCR-on-touch screen removed (BasirOcrService deleted).
+    // The original takeScreenshot path was unreliable on enough devices
+    // that the user asked to take it out entirely.
 
     // ============================================================
     // v2.0 — Walking mode (rapid-fire camera scene description)
@@ -2790,6 +2731,127 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
     // ============================================================
     // About
     // ============================================================
+
+    // ============================================================
+    // v2.2 — Terms of Service + Privacy Policy
+    // ============================================================
+    //
+    // Plain-text legal pages. Kept inline so the app remains a single-APK
+    // install with no remote-fetch dependency: a blind user who's offline
+    // can still read the terms before granting permissions. Both Arabic
+    // and English copies live in the same screen via t().
+
+    private void showTermsScreen() {
+        resetScreen(t("الشروط والأحكام", "Terms and Conditions"),
+                t("الإصدار 1 — " + appVersion(),
+                  "Version 1 — " + appVersion()));
+
+        addPlainText(t(
+            "باستخدامك تطبيق بصير، فإنك توافق على الشروط التالية:\n\n" +
+            "1) طبيعة الخدمة\n" +
+            "بصير هو أداة مساعدة تعتمد على الذكاء الاصطناعي لمساعدة المكفوفين وضعاف البصر في قراءة المستندات، وصف الصور والمشاهد، والترجمة، وغيرها من المهام اليومية. التطبيق أداة مكمّلة، ولا يحلّ محلّ العصا البيضاء، أو الكلب المرشد، أو الطبيب، أو المحامي، أو خدمات الطوارئ الرسمية.\n\n" +
+            "2) دقّة المخرجات\n" +
+            "نتائج الذكاء الاصطناعي قد تحتوي على أخطاء أو معلومات غير دقيقة. يجب التحقق من أي معلومة حسّاسة (طبية، قانونية، مالية) من مصدر موثوق قبل التصرّف عليها. المطوّر غير مسؤول عن أي قرار أو ضرر ناتج عن الاعتماد على مخرجات التطبيق فقط.\n\n" +
+            "3) سلامة المستخدم\n" +
+            "وضع المشي مساعدة بصرية فقط — لا تعتمد عليه وحده عند العبور أو الحركة في بيئات خطرة. لا تستخدم التطبيق أثناء قيادة السيارة. مسؤوليتك الشخصية عن سلامتك تبقى أولوية.\n\n" +
+            "4) خدمات Gemini الخارجية\n" +
+            "التطبيق يستخدم Google Gemini API لمعالجة المحتوى. باستخدامك للتطبيق، أنت توافق ضمنياً على شروط استخدام Gemini الخاصة بـGoogle. مفتاح API يُخزَّن محلياً على جهازك فقط.\n\n" +
+            "5) المحتوى المُرفَق\n" +
+            "أنت مسؤول قانونياً عن أي ملف أو صورة تُرفقها للمعالجة. لا تُرفق محتوى مُسيئاً، أو غير قانوني، أو ينتهك حقوق الغير.\n\n" +
+            "6) إنهاء الخدمة\n" +
+            "للمطوّر الحق في تحديث أو إنهاء أي ميزة في إصدارات لاحقة. التحديثات قد تُغيّر أو تُزيل سلوك ميزات حالية.\n\n" +
+            "7) القانون الحاكم\n" +
+            "في حال نشوب أي نزاع، تخضع هذه الشروط لقوانين المملكة العربية السعودية.\n\n" +
+            "استمرار استخدامك للتطبيق بعد أي تحديث للشروط يُعدّ موافقة ضمنية على الشروط الجديدة.",
+
+            "By using Basir, you agree to the following terms:\n\n" +
+            "1) Service nature\n" +
+            "Basir is an AI-powered assistive tool for blind and low-vision users for reading documents, describing images and scenes, translation, and other daily tasks. It is a complementary aid — NOT a replacement for the white cane, guide dog, doctor, lawyer, or official emergency services.\n\n" +
+            "2) Accuracy of output\n" +
+            "AI outputs may contain errors or inaccurate information. Any sensitive information (medical, legal, financial) MUST be verified against a trusted source before acting on it. The developer is not liable for any decision or harm resulting solely from reliance on the app's output.\n\n" +
+            "3) User safety\n" +
+            "Walking mode is a visual aid only — do not rely on it alone when crossing roads or moving in hazardous environments. Do not use the app while driving. Your personal responsibility for your safety remains paramount.\n\n" +
+            "4) External Gemini services\n" +
+            "The app uses Google Gemini API to process content. By using the app, you implicitly agree to Google's Gemini terms of use. Your API key is stored locally on your device only.\n\n" +
+            "5) Attached content\n" +
+            "You are legally responsible for any file or image you attach for processing. Do not attach abusive, illegal, or rights-infringing content.\n\n" +
+            "6) Service termination\n" +
+            "The developer reserves the right to update or terminate any feature in later versions. Updates may change or remove the behavior of existing features.\n\n" +
+            "7) Governing law\n" +
+            "Any dispute is subject to the laws of the Kingdom of Saudi Arabia.\n\n" +
+            "Continued use of the app after any terms update constitutes implicit agreement to the new terms."));
+
+        addBackButton();
+    }
+
+    private void showPrivacyScreen() {
+        resetScreen(t("سياسة الخصوصية", "Privacy Policy"),
+                t("الإصدار 1 — " + appVersion(),
+                  "Version 1 — " + appVersion()));
+
+        addPlainText(t(
+            "نأخذ خصوصيتك جدياً. هذه السياسة تشرح بدقّة ما يحدث لبياناتك.\n\n" +
+            "1) ما الذي يُحفَظ محلياً على جهازك\n" +
+            "• مفتاح Gemini API (إذا أدخلتَه يدوياً).\n" +
+            "• تفضيلاتك (اللغة، حجم الخط، سرعة الصوت، نمط الاتصال).\n" +
+            "• محفوظاتك الخاصة (أشخاص، منتجات، أدوية، أماكن) — إذا أضفتها يدوياً.\n" +
+            "• محفوظات المستندات المُحوَّلة (في مجلد التنزيلات على جهازك).\n" +
+            "• سجل آخر العمليات داخل التطبيق (نصوص فقط، يمكن حذفه من الإعدادات).\n\n" +
+            "كل هذه البيانات تبقى على جهازك فقط. لا تُرسَل لخوادمنا.\n\n" +
+            "2) ما الذي يُرسَل لـGoogle Gemini\n" +
+            "عند كل طلب تحليل: النص أو الصورة أو الملف الذي اخترته يُرسَل لـGoogle Gemini API لمعالجته، ثم تعود الإجابة. تخضع هذه البيانات لسياسة خصوصية Google. تطبيقنا لا يحتفظ بنسخة من المحتوى المُرسَل.\n\n" +
+            "ميزة \"اسأل عن المستند\" (v2.0+) ترفع ملف PDF لمدّة 48 ساعة على خوادم Google. الملف يُحذَف تلقائياً بعدها.\n\n" +
+            "3) ما الذي لا نُجمعه أبداً\n" +
+            "• لا حسابات، لا تسجيل دخول.\n" +
+            "• لا تتبّع تحليلي (analytics).\n" +
+            "• لا إعلانات، لا معرّفات إعلانية.\n" +
+            "• لا موقع GPS — إلا في وضع الطوارئ، عند الضغط الصريح على \"أرسِل موقعي\"، يتم إرفاق إحداثيات تقريبية للرسالة فقط.\n" +
+            "• لا قائمة جهات الاتصال — إلا الجهة الواحدة التي تُضيفها يدوياً للطوارئ.\n\n" +
+            "4) الأذونات وسبب طلبها\n" +
+            "• الكاميرا: لالتقاط الصور التي تختار وصفها.\n" +
+            "• الميكروفون: لإدخال الأسئلة صوتياً (التعرّف الصوتي يستخدم خدمة Google المدمجة في Android).\n" +
+            "• الموقع: في وضع الطوارئ فقط، باختيارك.\n" +
+            "• تخزين: لحفظ الملفات المُحوَّلة في مجلد التنزيلات.\n" +
+            "• الإنترنت: للاتصال بـGemini API.\n\n" +
+            "5) حقوقك\n" +
+            "• حذف كل البيانات المحلية: الإعدادات → \"مسح محفوظاتي\".\n" +
+            "• إلغاء التطبيق: إلغاء التثبيت يحذف كل شيء فوراً.\n" +
+            "• الاتصال بالمطوّر لأي استفسار حول البيانات.\n\n" +
+            "6) تحديثات السياسة\n" +
+            "إذا تغيّرت ممارساتنا، نُحدّث هذه الصفحة. تاريخ آخر تحديث محفوظ في رقم إصدار التطبيق أعلاه.",
+
+            "We take your privacy seriously. This policy explains precisely what happens to your data.\n\n" +
+            "1) What is stored locally on your device\n" +
+            "• Your Gemini API key (if entered manually).\n" +
+            "• Your preferences (language, font size, speech rate, connection mode).\n" +
+            "• Your saved items (people, products, medications, places) — if you add them manually.\n" +
+            "• Converted-document history (in your Downloads folder on the device).\n" +
+            "• Recent activity log inside the app (text only, deletable from settings).\n\n" +
+            "All of this stays on your device only. None is sent to our servers.\n\n" +
+            "2) What is sent to Google Gemini\n" +
+            "On each analysis request, the text/image/file you chose is sent to Google Gemini API for processing, and the response comes back. This data is subject to Google's privacy policy. Our app keeps no copy of sent content.\n\n" +
+            "The \"Ask about document\" feature (v2.0+) uploads your PDF to Google's servers for 48 hours. The file is auto-deleted afterward.\n\n" +
+            "3) What we never collect\n" +
+            "• No accounts, no login.\n" +
+            "• No analytics tracking.\n" +
+            "• No ads, no advertising identifiers.\n" +
+            "• No GPS — except in Emergency mode, when you explicitly press \"Send my location\", an approximate coordinate is attached to the message only.\n" +
+            "• No contact list — except the one contact you manually add for emergencies.\n\n" +
+            "4) Permissions and why we ask for them\n" +
+            "• Camera: to capture photos you choose to describe.\n" +
+            "• Microphone: for voice input (speech recognition uses Google's built-in Android service).\n" +
+            "• Location: in Emergency mode only, by your choice.\n" +
+            "• Storage: to save converted files to Downloads.\n" +
+            "• Internet: to talk to Gemini API.\n\n" +
+            "5) Your rights\n" +
+            "• Delete all local data: Settings → \"Clear my saved items\".\n" +
+            "• Uninstall the app: instantly removes everything.\n" +
+            "• Contact the developer for any data-related question.\n\n" +
+            "6) Policy updates\n" +
+            "If our practices change, we update this page. The last update date is reflected in the app version number above."));
+
+        addBackButton();
+    }
 
     private void showAboutScreen() {
         resetScreen(t("حول التطبيق", "About"),

@@ -575,12 +575,19 @@ public final class AiClient {
               + "    { \"type\": \"heading\", \"level\": 1, \"text\": \"...\" },\n"
               + "    { \"type\": \"paragraph\", \"text\": \"...\" },\n"
               + "    { \"type\": \"image_description\", \"context\": \"Page 1\", \"description\": \"...\" },\n"
-              + "    { \"type\": \"table_description\", \"rows\": 6, \"cols\": 4, \"context\": \"Page 2\", \"summary\": \"...\" }\n"
+              + "    { \"type\": \"table\", \"context\": \"Page 2\", \"caption\": \"optional title\",\n"
+              + "      \"cells\": [ [\"Header1\", \"Header2\", \"Header3\"],\n"
+              + "                  [\"row1col1\", \"row1col2\", \"row1col3\"],\n"
+              + "                  [\"row2col1\", \"row2col2\", \"row2col3\"] ] }\n"
               + "  ]\n"
               + "}\n\n"
               + "Rules:\n"
               + "- Describe every image thoroughly (type, main elements, layout, visible text, purpose).\n"
-              + "- For tables, give dimensions and a screen-reader friendly summary.\n"
+              + "- v2.2 — for EVERY table you see, output a 'table' section with the ACTUAL cell\n"
+              + "  values in a 2-D array. The first row MUST be the header row. Preserve column order\n"
+              + "  exactly as it appears in the source. If a cell is empty in the source, leave it as\n"
+              + "  an empty string. NEVER output a 'table_description' or a 'summary'-only entry — we\n"
+              + "  need the real cell data so the converted Word file is itself a navigable table.\n"
               + "- Insert page_marker for each PDF page.\n"
               + "- Never identify real people by face.\n"
               + "- Output valid JSON only, no other prose.";
@@ -644,14 +651,66 @@ public final class AiClient {
                     doc.paragraph(sec.optString("description", ""));
                     break;
                 }
+                case "table": {
+                    // v2.2 — real table with cell data. Render an optional
+                    // caption as a small heading, then the table itself.
+                    String ctx = sec.optString("context", "");
+                    String caption = sec.optString("caption", "");
+                    String prefix = labelTbl
+                            + (caption.isEmpty() ? "" : ": " + caption)
+                            + (ctx.isEmpty()    ? "" : " (" + ctx + ")");
+                    doc.heading(3, prefix);
+                    JSONArray cellRows = sec.optJSONArray("cells");
+                    java.util.List<java.util.List<String>> tableCells = new java.util.ArrayList<>();
+                    if (cellRows != null) {
+                        for (int rIdx = 0; rIdx < cellRows.length(); rIdx++) {
+                            JSONArray rowArr = cellRows.optJSONArray(rIdx);
+                            if (rowArr == null) continue;
+                            java.util.List<String> row = new java.util.ArrayList<>(rowArr.length());
+                            for (int cIdx = 0; cIdx < rowArr.length(); cIdx++) {
+                                row.add(rowArr.optString(cIdx, ""));
+                            }
+                            tableCells.add(row);
+                        }
+                    }
+                    if (!tableCells.isEmpty()) {
+                        doc.table(tableCells);
+                    } else {
+                        // Model returned a 'table' entry without cells — fall
+                        // back to whatever summary text it included, so we at
+                        // least don't drop the section silently.
+                        String fb = sec.optString("summary", sec.optString("text", ""));
+                        if (!fb.isEmpty()) doc.paragraph(fb);
+                    }
+                    break;
+                }
                 case "table_description": {
+                    // v2.2 — legacy handler for older Gemini responses that
+                    // still emit table_description. Now we render the summary
+                    // AND ALSO try to surface any cells field the model might
+                    // have included anyway.
                     int rows = sec.optInt("rows", 0);
                     int cols = sec.optInt("cols", 0);
                     String dims = (rows > 0 && cols > 0) ? " (" + rows + " × " + cols + ")" : "";
                     String ctx = sec.optString("context", "");
                     String prefix = labelTbl + dims + (ctx.isEmpty() ? "" : " (" + ctx + ")") + ":";
                     doc.heading(3, prefix);
-                    doc.paragraph(sec.optString("summary", ""));
+                    String summary = sec.optString("summary", "");
+                    if (!summary.isEmpty()) doc.paragraph(summary);
+                    JSONArray cellRows = sec.optJSONArray("cells");
+                    if (cellRows != null && cellRows.length() > 0) {
+                        java.util.List<java.util.List<String>> tableCells = new java.util.ArrayList<>();
+                        for (int rIdx = 0; rIdx < cellRows.length(); rIdx++) {
+                            JSONArray rowArr = cellRows.optJSONArray(rIdx);
+                            if (rowArr == null) continue;
+                            java.util.List<String> row = new java.util.ArrayList<>(rowArr.length());
+                            for (int cIdx = 0; cIdx < rowArr.length(); cIdx++) {
+                                row.add(rowArr.optString(cIdx, ""));
+                            }
+                            tableCells.add(row);
+                        }
+                        if (!tableCells.isEmpty()) doc.table(tableCells);
+                    }
                     break;
                 }
                 default:
@@ -696,12 +755,18 @@ public final class AiClient {
         p.append("    { \"type\": \"heading\", \"level\": 1, \"text\": \"...\" },\n");
         p.append("    { \"type\": \"paragraph\", \"text\": \"...\" },\n");
         p.append("    { \"type\": \"image_description\", \"context\": \"Page X\", \"description\": \"...\" },\n");
-        p.append("    { \"type\": \"table_description\", \"rows\": 6, \"cols\": 4, \"context\": \"Page X\", \"summary\": \"...\" }\n");
+        p.append("    { \"type\": \"table\", \"context\": \"Page X\", \"caption\": \"optional title\",\n");
+        p.append("      \"cells\": [ [\"Header1\", \"Header2\", \"Header3\"],\n");
+        p.append("                  [\"row1col1\", \"row1col2\", \"row1col3\"],\n");
+        p.append("                  [\"row2col1\", \"row2col2\", \"row2col3\"] ] }\n");
         p.append("  ]\n");
         p.append("}\n\n");
         p.append("Quality rules:\n");
         p.append("- Describe every image thoroughly (type, main elements, layout, visible text, purpose).\n");
-        p.append("- For tables, give dimensions and a screen-reader friendly summary.\n");
+        p.append("- v2.2 — for EVERY table you see, output a 'table' section with the ACTUAL cell\n");
+        p.append("  values in a 2-D array. The first row MUST be the header row. Preserve column order\n");
+        p.append("  exactly. Empty cells become empty strings. NEVER output a 'table_description' or\n");
+        p.append("  a summary-only entry — emit the real cells so the Word file becomes a navigable table.\n");
         p.append("- Never identify real people by face.\n");
         p.append("- Output valid JSON only, no other prose.");
         return p.toString();
