@@ -271,33 +271,64 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
 
         root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(20), dp(20), dp(20), dp(32));
+        root.setPadding(dp(20), dp(12), dp(20), dp(32));
         scroll.addView(root);
         setContentView(scroll);
 
-        // v2.1: larger, more prominent screen titles. For someone with low
-        // vision, a 32 sp bold heading is far easier to spot than the old
-        // 28 sp — and the auto-announce on screen change means TalkBack
-        // says the heading the moment the screen rebuilds.
+        // v2.2.2 — top back row. The user asked to move "رجوع" from the
+        // bottom of every screen to the top, where Android conventions put
+        // it. A 48 dp arrow on the start side, vertically centred with the
+        // screen title. TalkBack reads it as a single "back" button thanks
+        // to the content description on the whole row.
+        LinearLayout topRow = new LinearLayout(this);
+        topRow.setOrientation(LinearLayout.HORIZONTAL);
+        topRow.setGravity(Gravity.CENTER_VERTICAL);
+        topRow.setPadding(0, 0, 0, dp(10));
+
+        TextView backArrow = new TextView(this);
+        backArrow.setText(isEnglish() ? "←" : "→");
+        backArrow.setTextSize(textSize(28));
+        backArrow.setTextColor(colorPrimary());
+        backArrow.setTypeface(null, Typeface.BOLD);
+        backArrow.setGravity(Gravity.CENTER);
+        backArrow.setMinWidth(dp(48));
+        backArrow.setMinHeight(dp(48));
+        backArrow.setClickable(true);
+        backArrow.setFocusable(true);
+        backArrow.setContentDescription(t("رجوع", "Back"));
+        GradientDrawable backBg = new GradientDrawable();
+        backBg.setShape(GradientDrawable.OVAL);
+        backBg.setColor(getColor(R.color.basir_surface_alt));
+        backArrow.setBackground(backBg);
+        backArrow.setOnClickListener(v -> showHome());
+        LinearLayout.LayoutParams backLp =
+                new LinearLayout.LayoutParams(dp(48), dp(48));
+        backLp.setMarginEnd(dp(12));
+        topRow.addView(backArrow, backLp);
+
+        // v2.2.2 — title now lives inside the top row, beside the back arrow.
+        // Pure text — the back button is its own focusable node so TalkBack
+        // reads them as two separate items in correct order.
         TextView heading = new TextView(this);
         heading.setText(title);
-        heading.setTextSize(textSize(32));     // v2.1: was 28
+        heading.setTextSize(textSize(26));
         heading.setTypeface(null, Typeface.BOLD);
         heading.setTextColor(colorText());
-        heading.setPadding(0, dp(6), 0, dp(8));
         heading.setContentDescription(title);
         if (Build.VERSION.SDK_INT >= 28) heading.setAccessibilityHeading(true);
-        // LiveRegion ASSERTIVE so screen readers announce the new screen
-        // title immediately when navigation happens.
         heading.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_ASSERTIVE);
-        root.addView(heading, fullWidth());
+        LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        topRow.addView(heading, titleLp);
+
+        root.addView(topRow, fullWidth());
 
         if (subtitle != null && !subtitle.isEmpty()) {
             TextView sub = new TextView(this);
             sub.setText(subtitle);
-            sub.setTextSize(textSize(17));     // v2.1: was 16
+            sub.setTextSize(textSize(15));
             sub.setTextColor(colorTextSec());
-            sub.setPadding(0, 0, 0, dp(20));   // v2.1: was 16
+            sub.setPadding(0, 0, 0, dp(18));
             sub.setLineSpacing(dp(2), 1.25f);
             root.addView(sub, fullWidth());
         }
@@ -713,7 +744,11 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
     }
 
     private void addBackButton() {
-        addOutlineButton(t("رجوع", "Back"), v -> showHome());
+        // v2.2.2 — no-op. Back is now an arrow in the top row of every
+        // screen (see resetScreen). The old bottom "رجوع" button was
+        // redundant — Android conventions, and the user explicitly, put
+        // back in the top corner. Existing callers stay valid; they
+        // simply contribute nothing visible at the bottom.
     }
 
     private EditText makeInput(String hint, boolean multiline) {
