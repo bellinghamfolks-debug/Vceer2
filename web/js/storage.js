@@ -11,7 +11,8 @@ const K = {
   memory_places: "basir.memory.places.v1",
   emergency: "basir.emergency.v1",
   qaDoc: "basir.qa.doc.v1",
-  botState: "basir.bot.state.v1"
+  botState: "basir.bot.state.v1",
+  botCoords: "basir.bot.coords.v1"
 };
 
 const DEFAULT_SETTINGS = {
@@ -124,6 +125,18 @@ export function setBotState(patch) {
 export function clearBotState() {
   localStorage.removeItem(K.botState);
 }
+
+// ---------- Bot coordinates ----------
+export function getBotCoords() { return read(K.botCoords, []); }
+export function addBotCoord(coord) {
+  const list = getBotCoords();
+  list.push({ id: Date.now(), ...coord });
+  write(K.botCoords, list);
+}
+export function removeBotCoord(id) {
+  write(K.botCoords, getBotCoords().filter(c => c.id !== id));
+}
+export function clearBotCoords() { localStorage.removeItem(K.botCoords); }
 
 // ---------- Bulk reset ----------
 export function deleteAllUserData() {

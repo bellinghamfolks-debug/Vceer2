@@ -398,6 +398,17 @@ export const STRINGS = {
     bot_guide_search: "ثلاث نقاط (أول زر) → بحث → بحث ← اكمل من الموضع المحفوظ",
     bot_guide_like_normal: "وضع عادي: ضع الإعجاب مباشرة دون فحص.",
     bot_guide_like_dw: "وضع مطلقات/أرامل: افتح الملف ← تحقق من الحالة الاجتماعية ← إذا مطلقة أو أرملة ضع الإعجاب.",
+    bot_coords_section: "الإحداثيات المحفوظة",
+    bot_coord_record: "تسجيل إحداثيات",
+    bot_coord_recording: "انقر الآن على الهدف...",
+    bot_coord_cancel: "إلغاء التسجيل",
+    bot_coord_name_label: "اسم هذه الإحداثية",
+    bot_coord_name_hint: "مثلاً: ثلاث نقاط، زر البحث...",
+    bot_coord_saved: "تم حفظ الإحداثية.",
+    bot_coord_empty: "لا توجد إحداثيات محفوظة بعد.",
+    bot_coord_x: "X",
+    bot_coord_y: "Y",
+    bot_coords_clear_all: "حذف كل الإحداثيات",
   },
 
   en: {
@@ -773,6 +784,17 @@ export const STRINGS = {
     bot_guide_search: "Three dots (first button) → Search → Search ← resume from saved position",
     bot_guide_like_normal: "Normal mode: like directly without checking.",
     bot_guide_like_dw: "Divorced/Widowed mode: open profile → check marital status → like if divorced or widowed.",
+    bot_coords_section: "Saved Coordinates",
+    bot_coord_record: "Record Coordinates",
+    bot_coord_recording: "Tap the target now...",
+    bot_coord_cancel: "Cancel recording",
+    bot_coord_name_label: "Name this coordinate",
+    bot_coord_name_hint: "e.g. Three dots, Search button...",
+    bot_coord_saved: "Coordinate saved.",
+    bot_coord_empty: "No saved coordinates yet.",
+    bot_coord_x: "X",
+    bot_coord_y: "Y",
+    bot_coords_clear_all: "Delete all coordinates",
   }
 };
 

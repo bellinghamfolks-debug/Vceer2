@@ -1511,6 +1511,41 @@ function checkMaritalStatusLocally(text) {
   return "unknown";
 }
 
+// ---- Coordinate recording overlay ----
+function startCoordRecording(onCapture) {
+  const overlay = document.createElement("div");
+  overlay.style.cssText = [
+    "position:fixed", "inset:0", "background:rgba(0,0,0,0.55)",
+    "z-index:9999", "display:flex", "flex-direction:column",
+    "align-items:center", "justify-content:center",
+    "cursor:crosshair", "touch-action:none"
+  ].join(";");
+  overlay.setAttribute("role", "button");
+  overlay.setAttribute("tabindex", "0");
+
+  const hint = document.createElement("div");
+  hint.style.cssText = "color:#fff;font-size:1.3em;text-align:center;padding:24px;pointer-events:none;";
+  hint.textContent = t("bot_coord_recording");
+  overlay.appendChild(hint);
+
+  const capture = (x, y) => {
+    document.body.removeChild(overlay);
+    sp.vibrate(40);
+    onCapture({ x: Math.round(x), y: Math.round(y) });
+  };
+
+  overlay.addEventListener("click", (e) => capture(e.clientX, e.clientY));
+  overlay.addEventListener("touchend", (e) => {
+    e.preventDefault();
+    const touch = e.changedTouches[0];
+    capture(touch.clientX, touch.clientY);
+  }, { passive: false });
+
+  document.body.appendChild(overlay);
+  overlay.focus();
+  sp.vibrate(20);
+}
+
 export function viewBot() {
   clear();
   setTitle(t("bot_title"));
@@ -1521,6 +1556,10 @@ export function viewBot() {
   // ---- session status ----
   const lastMemberDisplay = state.lastMemberName || t("bot_none");
   const processedDisplay = state.processedCount ? String(state.processedCount) : "0";
+  const afterRefresh = s.afterRefresh || "continue";
+  const afterRefreshNote = afterRefresh === "continue"
+    ? `${t("bot_refresh_continue")}: ${lastMemberDisplay}`
+    : t("bot_refresh_restart");
 
   // ---- save position ----
   const posInput = el("input", {
@@ -1550,7 +1589,7 @@ export function viewBot() {
     }
   }, t("bot_clear"));
 
-  // ---- marital status check (fast local + optional AI) ----
+  // ---- marital status check ----
   const checkResultBox = el("div", { "aria-live": "polite" });
   const checkInput = el("textarea", {
     placeholder: t("bot_profile_check_sub"),
@@ -1562,58 +1601,111 @@ export function viewBot() {
     const text = (checkInput.value || "").trim();
     if (!text) return toast(t("ask_first"));
     sp.vibrate(20);
-
     const local = checkMaritalStatusLocally(text);
     if (local === "yes") {
-      checkResultBox.replaceChildren(
-        el("div", { class: "callout" }, t("bot_profile_check_yes"))
-      );
+      checkResultBox.replaceChildren(el("div", { class: "callout" }, t("bot_profile_check_yes")));
       sp.speak(t("bot_profile_check_yes"));
       return;
     }
     if (local === "no") {
-      checkResultBox.replaceChildren(
-        el("div", { class: "callout callout-danger" }, t("bot_profile_check_no"))
-      );
+      checkResultBox.replaceChildren(el("div", { class: "callout callout-danger" }, t("bot_profile_check_no")));
       sp.speak(t("bot_profile_check_no"));
       return;
     }
-    // fallback: ask AI for unclear cases
     checkResultBox.replaceChildren(loading(t("loading")));
     try {
       const ans = await api.askBasir({
-        task: "ask",
-        input: text,
-        instruction: "You are a quick marital-status classifier. The user pasted text from a profile page. Determine only if the marital status is 'مطلقة' (divorced) or 'أرملة' (widowed). Reply with EXACTLY one word: YES if it matches either, NO otherwise. No explanations."
+        task: "ask", input: text,
+        instruction: "Quick marital-status classifier. Does the text indicate 'مطلقة' (divorced) or 'أرملة' (widowed)? Reply exactly: YES or NO."
       });
-      const reply = (ans || "").trim().toUpperCase();
-      if (reply.startsWith("YES") || /نعم/.test(reply)) {
-        checkResultBox.replaceChildren(
-          el("div", { class: "callout" }, t("bot_profile_check_yes"))
-        );
-        sp.speak(t("bot_profile_check_yes"));
-      } else {
-        checkResultBox.replaceChildren(
-          el("div", { class: "callout callout-danger" }, t("bot_profile_check_no"))
-        );
-        sp.speak(t("bot_profile_check_no"));
-      }
+      const isYes = /^yes/i.test((ans || "").trim()) || /نعم/.test(ans);
+      checkResultBox.replaceChildren(el("div", { class: isYes ? "callout" : "callout callout-danger" },
+        isYes ? t("bot_profile_check_yes") : t("bot_profile_check_no")));
+      sp.speak(isYes ? t("bot_profile_check_yes") : t("bot_profile_check_no"));
     } catch (e) {
       checkResultBox.replaceChildren(errorBox(e, t("bot_profile_check")));
     }
   };
 
-  // ---- navigation guide based on current settings ----
+  // ---- coordinate recording ----
+  const coordsListEl = el("div", { "aria-live": "polite" });
+
+  function renderCoordsList() {
+    coordsListEl.replaceChildren();
+    const coords = store.getBotCoords();
+    if (!coords.length) {
+      coordsListEl.append(el("p", { class: "info-label" }, t("bot_coord_empty")));
+      return;
+    }
+    for (const c of coords) {
+      coordsListEl.append(
+        el("div", { class: "list-item" },
+          el("div", { class: "meta" }, c.name || "—"),
+          el("div", null,
+            el("span", { class: "info-label" }, `${t("bot_coord_x")}: ${c.x}  ${t("bot_coord_y")}: ${c.y}`)
+          ),
+          el("button", { class: "btn btn-ghost", type: "button",
+            onClick: () => { store.removeBotCoord(c.id); renderCoordsList(); }
+          }, t("delete"))
+        )
+      );
+    }
+  }
+  renderCoordsList();
+
+  // Pending-capture state (name input shown after tap)
+  const pendingBox = el("div");
+
+  function showNameDialog(x, y) {
+    pendingBox.replaceChildren();
+    const nameInput = el("input", {
+      type: "text",
+      placeholder: t("bot_coord_name_hint"),
+      "aria-label": t("bot_coord_name_label")
+    });
+    const micName = micButton((text) => { nameInput.value = text; nameInput.focus(); });
+    const confirmBtn = el("button", { class: "btn", type: "button",
+      onClick: () => {
+        const name = (nameInput.value || "").trim() || `${x},${y}`;
+        store.addBotCoord({ name, x, y });
+        toast(t("bot_coord_saved"));
+        sp.vibrate(30);
+        pendingBox.replaceChildren();
+        renderCoordsList();
+      }
+    }, t("save"));
+    const cancelBtn = el("button", { class: "btn btn-ghost", type: "button",
+      onClick: () => pendingBox.replaceChildren()
+    }, t("cancel"));
+
+    pendingBox.append(
+      el("div", { class: "callout" },
+        el("p", null, `${t("bot_coord_x")}: ${x}   ${t("bot_coord_y")}: ${y}`)
+      ),
+      el("label", { class: "field" },
+        el("span", { class: "field-label" }, t("bot_coord_name_label")),
+        nameInput
+      ),
+      el("div", { class: "btn-row" },
+        confirmBtn,
+        micName ? micName : null,
+        cancelBtn
+      )
+    );
+    nameInput.focus();
+  }
+
+  const recordBtn = el("button", { class: "btn btn-block", type: "button",
+    onClick: () => {
+      startCoordRecording(({ x, y }) => showNameDialog(x, y));
+    }
+  }, "📍 " + t("bot_coord_record"));
+
+  // ---- navigation guide ----
   const navMode = s.botNavMode || "online";
   const likeMode = s.likeMode || "normal";
-  const afterRefresh = s.afterRefresh || "continue";
-
   const guideNav = navMode === "search" ? t("bot_guide_search") : t("bot_guide_online");
   const guideLike = likeMode === "divorced_widowed" ? t("bot_guide_like_dw") : t("bot_guide_like_normal");
-
-  const afterRefreshNote = afterRefresh === "continue"
-    ? `${t("bot_refresh_continue")}: ${lastMemberDisplay}`
-    : t("bot_refresh_restart");
 
   m.append(
     el("p", { class: "subtitle" }, t("bot_subtitle")),
@@ -1647,6 +1739,18 @@ export function viewBot() {
             micCheck ? micCheck : null
           ),
           checkResultBox
+        )
+      : null,
+
+    sectionHeader(t("bot_coords_section")),
+    recordBtn,
+    pendingBox,
+    coordsListEl,
+    store.getBotCoords().length
+      ? el("div", { class: "btn-row" },
+          el("button", { class: "btn btn-ghost", type: "button",
+            onClick: () => { store.clearBotCoords(); renderCoordsList(); toast(t("bot_cleared")); }
+          }, t("bot_coords_clear_all"))
         )
       : null,
 
