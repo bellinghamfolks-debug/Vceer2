@@ -178,6 +178,7 @@ function renderMoreTab(m) {
     sectionHeader(t("section_quick_help")),
     richCard("🆘", t("nav_emergency"), t("nav_emergency_desc"), () => location.hash = "#/emergency"),
     sectionHeader(t("section_tools")),
+    richCard("🤖", t("nav_bot"), t("nav_bot_desc"), () => location.hash = "#/bot"),
     richCard("🛠", t("nav_advanced"), t("nav_advanced_desc"), () => location.hash = "#/advanced"),
     richCard("🧠", t("nav_memory"), t("nav_memory_desc"), () => location.hash = "#/memory"),
     richCard("📚", t("nav_archive"), t("nav_archive_desc"), () => location.hash = "#/archive"),
@@ -987,6 +988,35 @@ export function viewSettings() {
       el("button", { class: "btn btn-ghost", type: "button", onClick: () => location.hash = "#/emergency/contact" }, t("emergency_add_change"))
     ),
 
+    el("h2", null, t("set_bot_section")),
+    el("h3", null, t("set_like_mode")),
+    segmented(
+      ["normal", "divorced_widowed"],
+      [t("bot_mode_normal"), t("bot_mode_divorced_widowed")],
+      [t("bot_mode_normal_sub"), t("bot_mode_divorced_widowed_sub")],
+      s.likeMode,
+      (v) => store.setSettings({ likeMode: v })
+    ),
+    el("h3", null, t("set_after_refresh")),
+    segmented(
+      ["continue", "restart"],
+      [t("bot_refresh_continue"), t("bot_refresh_restart")],
+      [t("bot_refresh_continue_sub"), t("bot_refresh_restart_sub")],
+      s.afterRefresh,
+      (v) => store.setSettings({ afterRefresh: v })
+    ),
+    el("h3", null, t("set_bot_nav")),
+    segmented(
+      ["online", "search"],
+      [t("bot_nav_online"), t("bot_nav_search")],
+      [t("bot_nav_online_sub"), t("bot_nav_search_sub")],
+      s.botNavMode,
+      (v) => store.setSettings({ botNavMode: v })
+    ),
+    el("div", { class: "btn-row" },
+      el("button", { class: "btn btn-ghost", type: "button", onClick: () => location.hash = "#/bot" }, t("nav_bot"))
+    ),
+
     el("h2", null, t("set_data_section")),
     el("div", { class: "btn-row" },
       el("button", { class: "btn btn-danger", type: "button", onClick: () => {
@@ -1468,6 +1498,168 @@ export function viewDocQa() {
   );
 }
 
+// ============================================================
+// Bot — Smart automation assistant
+// ============================================================
+
+function checkMaritalStatusLocally(text) {
+  const clean = (text || "").replace(/\s+/g, " ");
+  if (/مطلق[ةه]/.test(clean)) return "yes";
+  if (/أرمل[ةه]/.test(clean)) return "yes";
+  if (/divorced|widowed/i.test(clean)) return "yes";
+  if (/متزوج[ةه]?|عزباء?|أعزب/.test(clean)) return "no";
+  return "unknown";
+}
+
+export function viewBot() {
+  clear();
+  setTitle(t("bot_title"));
+  const m = $main();
+  const s = store.getSettings();
+  const state = store.getBotState();
+
+  // ---- session status ----
+  const lastMemberDisplay = state.lastMemberName || t("bot_none");
+  const processedDisplay = state.processedCount ? String(state.processedCount) : "0";
+
+  // ---- save position ----
+  const posInput = el("input", {
+    type: "text",
+    placeholder: t("bot_pos_label"),
+    "aria-label": t("bot_pos_label"),
+    value: state.lastMemberName || ""
+  });
+  const micPos = micButton((text) => { posInput.value = text; posInput.focus(); });
+  const savePosbtn = el("button", { class: "btn", type: "button",
+    onClick: () => {
+      const name = (posInput.value || "").trim();
+      if (!name) return;
+      const cur = store.getBotState();
+      store.setBotState({ lastMemberName: name, processedCount: (cur.processedCount || 0) + 1 });
+      toast(t("bot_pos_saved"));
+      sp.vibrate(30);
+    }
+  }, t("bot_save_pos"));
+
+  const clearBtn = el("button", { class: "btn btn-ghost", type: "button",
+    onClick: () => {
+      store.clearBotState();
+      posInput.value = "";
+      toast(t("bot_cleared"));
+      viewBot();
+    }
+  }, t("bot_clear"));
+
+  // ---- marital status check (fast local + optional AI) ----
+  const checkResultBox = el("div", { "aria-live": "polite" });
+  const checkInput = el("textarea", {
+    placeholder: t("bot_profile_check_sub"),
+    "aria-label": t("bot_profile_check_sub")
+  });
+  const micCheck = micButton((text) => { checkInput.value = (checkInput.value ? checkInput.value + " " : "") + text; checkInput.focus(); });
+
+  const onCheck = async () => {
+    const text = (checkInput.value || "").trim();
+    if (!text) return toast(t("ask_first"));
+    sp.vibrate(20);
+
+    const local = checkMaritalStatusLocally(text);
+    if (local === "yes") {
+      checkResultBox.replaceChildren(
+        el("div", { class: "callout" }, t("bot_profile_check_yes"))
+      );
+      sp.speak(t("bot_profile_check_yes"));
+      return;
+    }
+    if (local === "no") {
+      checkResultBox.replaceChildren(
+        el("div", { class: "callout callout-danger" }, t("bot_profile_check_no"))
+      );
+      sp.speak(t("bot_profile_check_no"));
+      return;
+    }
+    // fallback: ask AI for unclear cases
+    checkResultBox.replaceChildren(loading(t("loading")));
+    try {
+      const ans = await api.askBasir({
+        task: "ask",
+        input: text,
+        instruction: "You are a quick marital-status classifier. The user pasted text from a profile page. Determine only if the marital status is 'مطلقة' (divorced) or 'أرملة' (widowed). Reply with EXACTLY one word: YES if it matches either, NO otherwise. No explanations."
+      });
+      const reply = (ans || "").trim().toUpperCase();
+      if (reply.startsWith("YES") || /نعم/.test(reply)) {
+        checkResultBox.replaceChildren(
+          el("div", { class: "callout" }, t("bot_profile_check_yes"))
+        );
+        sp.speak(t("bot_profile_check_yes"));
+      } else {
+        checkResultBox.replaceChildren(
+          el("div", { class: "callout callout-danger" }, t("bot_profile_check_no"))
+        );
+        sp.speak(t("bot_profile_check_no"));
+      }
+    } catch (e) {
+      checkResultBox.replaceChildren(errorBox(e, t("bot_profile_check")));
+    }
+  };
+
+  // ---- navigation guide based on current settings ----
+  const navMode = s.botNavMode || "online";
+  const likeMode = s.likeMode || "normal";
+  const afterRefresh = s.afterRefresh || "continue";
+
+  const guideNav = navMode === "search" ? t("bot_guide_search") : t("bot_guide_online");
+  const guideLike = likeMode === "divorced_widowed" ? t("bot_guide_like_dw") : t("bot_guide_like_normal");
+
+  const afterRefreshNote = afterRefresh === "continue"
+    ? `${t("bot_refresh_continue")}: ${lastMemberDisplay}`
+    : t("bot_refresh_restart");
+
+  m.append(
+    el("p", { class: "subtitle" }, t("bot_subtitle")),
+
+    sectionHeader(t("bot_status_title")),
+    info(t("bot_last_member"), lastMemberDisplay),
+    info(t("bot_processed"), processedDisplay),
+    info(t("set_after_refresh"), afterRefreshNote),
+
+    sectionHeader(t("bot_save_pos")),
+    el("label", { class: "field" },
+      el("span", { class: "field-label" }, t("bot_pos_label")),
+      posInput
+    ),
+    el("div", { class: "btn-row" },
+      savePosbtn,
+      micPos ? micPos : null,
+      clearBtn
+    ),
+
+    s.likeMode === "divorced_widowed"
+      ? el("div", null,
+          sectionHeader(t("bot_profile_check")),
+          el("p", { class: "subtitle" }, t("bot_profile_already")),
+          el("label", { class: "field" },
+            el("span", { class: "field-label" }, t("bot_profile_check")),
+            checkInput
+          ),
+          el("div", { class: "btn-row" },
+            el("button", { class: "btn btn-block", type: "button", onClick: onCheck }, t("bot_profile_check_run")),
+            micCheck ? micCheck : null
+          ),
+          checkResultBox
+        )
+      : null,
+
+    sectionHeader(t("bot_guide_title")),
+    el("div", { class: "callout" },
+      el("div", null, "🗺 " + guideNav),
+      el("div", null, "❤️ " + guideLike)
+    ),
+
+    backButton()
+  );
+}
+
 export const Views = {
   home: viewHome,
   more: viewMore,
@@ -1487,5 +1679,6 @@ export const Views = {
   about: viewAbout,
   walking: viewWalking,
   "voice-convo": viewVoiceConvo,
-  "doc-qa": viewDocQa
+  "doc-qa": viewDocQa,
+  bot: viewBot
 };

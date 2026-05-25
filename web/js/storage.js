@@ -10,20 +10,23 @@ const K = {
   memory_products: "basir.memory.products.v1",
   memory_places: "basir.memory.places.v1",
   emergency: "basir.emergency.v1",
-  // v2.x — last uploaded file ref for Document Q&A (server auto-expires after ~48h)
-  qaDoc: "basir.qa.doc.v1"
+  qaDoc: "basir.qa.doc.v1",
+  botState: "basir.bot.state.v1"
 };
 
 const DEFAULT_SETTINGS = {
   language: navigator.language && navigator.language.startsWith("ar") ? "ar" : "ar",
   tts: true,
   ttsRate: 1.0,
-  fontStep: 1,            // 1=normal, 1.15=large, 1.3=xlarge
+  fontStep: 1,
   privacy: false,
   autoSave: true,
-  proxyUrl: "",           // empty -> same-origin
+  proxyUrl: "",
   appToken: "",
-  quality: "balanced"     // fast | balanced | best
+  quality: "balanced",
+  likeMode: "normal",        // normal | divorced_widowed
+  afterRefresh: "continue",  // continue | restart
+  botNavMode: "online"       // online | search (navigation path in the app)
 };
 
 function read(key, fallback) {
@@ -109,6 +112,17 @@ export function isQaDocFresh() {
   if (!d || !d.at) return false;
   // Gemini Files API auto-expires after ~48h. Use 47h to be safe.
   return Date.now() - d.at < 47 * 60 * 60 * 1000;
+}
+
+// ---------- Bot state (position tracking) ----------
+export function getBotState() {
+  return read(K.botState, { lastMemberName: "", processedCount: 0, at: null });
+}
+export function setBotState(patch) {
+  write(K.botState, { ...getBotState(), ...patch, at: Date.now() });
+}
+export function clearBotState() {
+  localStorage.removeItem(K.botState);
 }
 
 // ---------- Bulk reset ----------
