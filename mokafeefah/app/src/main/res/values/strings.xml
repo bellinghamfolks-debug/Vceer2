@@ -148,4 +148,14 @@
     <string name="btn_seed_defaults">استعادة إحداثيات مودة الافتراضية</string>
     <string name="msg_seed_added">تم إضافة %1$d إحداثية افتراضية لمودة</string>
     <string name="msg_seed_already">إحداثيات مودة الافتراضية موجودة بالفعل</string>
+
+    <!-- v1.12 — find-members mode (online vs. three-dots) -->
+    <string name="section_find_mode">طريقة العثور على الأعضاء</string>
+    <string name="section_find_mode_hint">يحدد كيف يصل البوت إلى قائمة الأعضاء بعد كل تجديد (كل 80 إعجابًا).</string>
+    <string name="label_find_mode_online">المتواجدون الآن (الوضع الحالي)</string>
+    <string name="label_find_mode_online_desc">يضغط البوت تبويب الأعضاء ثم المتواجدون الآن، وهو السلوك الافتراضي.</string>
+    <string name="label_find_mode_three_dots">ثلاث نقاط ← بحث ← بحث (الوضع الجديد)</string>
+    <string name="label_find_mode_three_dots_desc">يستخدم البوت إحداثيات زر ثلاث نقاط المحفوظة، ثم يضغط بحث مرتين. مفيد عندما لا تظهر تبويبة المتواجدون الآن.</string>
+    <string name="action_three_dots_tap">نقر على زر ثلاث نقاط</string>
+    <string name="action_search_tap">نقر على زر بحث</string>
 </resources>

@@ -89,6 +89,18 @@ public class ClickerService extends AccessibilityService {
     // status and likes only if مطلقة / أرملة).
     private static final int STATE_INSPECT_PROFILE = 7;
 
+    // v1.12: three-dots refresh path. After every LIKES_PER_SOFT_REFRESH
+    // likes, if findMembersMode = "three_dots" the bot taps the saved
+    // 'ثلاث نقاط' coordinate (gesture-dispatched, since the menu button
+    // has empty contentDescription and can't be reached by text lookup),
+    // then text-matches the 'بحث' button twice in sequence:
+    //   STATE_REFRESH_FIND_SEARCH_1  — tap the menu's بحث entry
+    //   STATE_REFRESH_FIND_SEARCH_2  — submit by tapping بحث again
+    // After search completes, the same finishNavOnlineNow() logic runs
+    // (rewind vs. continue) so refreshContinueMode keeps working.
+    private static final int STATE_REFRESH_FIND_SEARCH_1 = 8;
+    private static final int STATE_REFRESH_FIND_SEARCH_2 = 9;
+
     // v10.0: latency budgets — relaxed because Mawada's late-session popup
     // can take 6-7 s to even appear. The previous 2.5 s timeout was firing
     // a stale AFTER_LIKE → LOOK transition before "نعم" had rendered, then
@@ -128,6 +140,10 @@ public class ClickerService extends AccessibilityService {
     // are on the members page. The user's spec: every list traversal must
     // follow "الأعضاء ← المتواجدون الآن".
     private static final String[] ONLINE_NOW_KEYWORDS = { "المتواجدون الآن", "المتواجدون الان" };
+    // v1.12: 'بحث' label inside the menu opened by tapping three-dots.
+    private static final String[] SEARCH_KEYWORDS = { "بحث" };
+    // v1.12: the saved-coordinate row this refresh path looks up.
+    private static final String COORD_THREE_DOTS = "ثلاث نقاط (قائمة علوية)";
     // How long to wait after tapping the members tab before resuming.
     // Mawada's first paint of the fresh list is ~1.5-2 s on average.
     private static final long SOFT_REFRESH_WAIT_MS = 2500L;
@@ -170,6 +186,9 @@ public class ClickerService extends AccessibilityService {
     private BotConfig config;
     private StatusListener listener;
     private LikedMembersDb db;
+    // v1.12: lookup for saved (name → x,y). Used by the three-dots
+    // refresh path to find the menu coordinate the user pre-saved.
+    private SavedCoordinatesDb coordsDb;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final AtomicBoolean running = new AtomicBoolean(false);
@@ -279,6 +298,7 @@ public class ClickerService extends AccessibilityService {
         super.onServiceConnected();
         instance = this;
         if (db == null) db = new LikedMembersDb(this);
+        if (coordsDb == null) coordsDb = new SavedCoordinatesDb(this);
     }
 
     @Override
@@ -396,6 +416,8 @@ public class ClickerService extends AccessibilityService {
             case STATE_AFTER_YES:       return "AFTER_YES";
             case STATE_MUST_SCROLL:     return "SCROLL";
             case STATE_INSPECT_PROFILE: return "INSPECT";
+            case STATE_REFRESH_FIND_SEARCH_1: return "REFRESH_SEARCH_1";
+            case STATE_REFRESH_FIND_SEARCH_2: return "REFRESH_SEARCH_2";
             default:                    return "?(" + s + ")";
         }
     }
@@ -536,6 +558,8 @@ public class ClickerService extends AccessibilityService {
             case STATE_SOFT_REFRESH:    return handleSoftRefresh(roots, now);
             case STATE_NAV_ONLINE_NOW:  return handleNavOnlineNow(roots, now);
             case STATE_INSPECT_PROFILE: return handleInspectProfile(roots, now);
+            case STATE_REFRESH_FIND_SEARCH_1: return handleRefreshFindSearch(roots, now, 1);
+            case STATE_REFRESH_FIND_SEARCH_2: return handleRefreshFindSearch(roots, now, 2);
             default:
                 transitionTo(STATE_LOOK_LIKE);
                 return config.scanIntervalMs;
@@ -961,6 +985,13 @@ public class ClickerService extends AccessibilityService {
      * without a refresh — better to keep liking slowly than to halt.
      */
     private long handleSoftRefresh(List<AccessibilityNodeInfo> roots, long now) {
+        // v1.12: branch on the user's find-members mode. The default
+        // ('online') keeps the existing الأعضاء ← المتواجدون الآن path;
+        // 'three_dots' taps the saved menu coordinate and then matches
+        // 'بحث' by text twice.
+        if ("three_dots".equals(config.findMembersMode)) {
+            return startThreeDotsRefresh(now);
+        }
         AccessibilityNodeInfo tab = null;
         for (String kw : MEMBERS_TAB_KEYWORDS) {
             tab = findClickableInAll(roots, kw);
@@ -1042,6 +1073,99 @@ public class ClickerService extends AccessibilityService {
         rewindStepsDone = 0;
         transitionTo(STATE_REWIND_TO_TOP);
         return 600L;
+    }
+
+    /**
+     * v1.12 — three-dots refresh entry. Looks up the saved 'ثلاث نقاط'
+     * coordinate and dispatches a gesture tap. The menu button has empty
+     * contentDescription in Mawada, so a text-based lookup never finds
+     * it; that's exactly why we record the coordinate up front.
+     *
+     * If the coord isn't saved (e.g. user wiped it without re-seeding)
+     * we fall back to the existing online path so the bot keeps making
+     * progress instead of stalling.
+     */
+    private long startThreeDotsRefresh(long now) {
+        SavedCoordinatesDb.Coord coord =
+                coordsDb == null ? null : coordsDb.findByName(COORD_THREE_DOTS);
+        if (coord == null) {
+            diagEvent("REFRESH(3-dots): saved coord missing, falling back to online path");
+            // Force the rest of this tick down the online branch by
+            // temporarily mutating the mode? No — just delegate.
+            return fallbackOnlinePath(now);
+        }
+        boolean ok = tapAt(coord.x, coord.y);
+        if (!ok) {
+            diagEvent("REFRESH(3-dots): tapAt failed at (" + coord.x + "," + coord.y + ")");
+            likesSinceRefresh = 0;
+            transitionTo(STATE_LOOK_LIKE);
+            return 300L;
+        }
+        diagEvent("REFRESH(3-dots): tapped ثلاث نقاط at (" + coord.x + "," + coord.y + ")");
+        setAction(getString(R.string.action_three_dots_tap));
+        likesSinceRefresh = 0;
+        processedBounds.clear();
+        transitionTo(STATE_REFRESH_FIND_SEARCH_1);
+        return SOFT_REFRESH_WAIT_MS;
+    }
+
+    /**
+     * Used when three-dots mode is selected but no coord is saved.
+     * Re-runs the online branch of handleSoftRefresh manually so we
+     * still consume this tick productively.
+     */
+    private long fallbackOnlinePath(long now) {
+        // We're already inside handleSoftRefresh's scope; emit one BACK
+        // so a popup can't block us, then come back next tick in the
+        // online branch by clearing the find-members override locally.
+        likesSinceRefresh = 0;
+        transitionTo(STATE_SOFT_REFRESH);
+        // Force one tick under the online branch by toggling: we can't
+        // mutate config, but the caller will re-enter handleSoftRefresh
+        // and we'll branch on findMembersMode again — same outcome
+        // (still three_dots, still missing). To avoid an infinite loop,
+        // resume LOOK_LIKE directly.
+        transitionTo(STATE_LOOK_LIKE);
+        return 600L;
+    }
+
+    /**
+     * v1.12 — find the 'بحث' button by text and tap it. Used twice in
+     * the three-dots refresh:
+     *   attempt 1 → tap بحث in the menu opened by the three-dots tap
+     *   attempt 2 → tap بحث again on the search form (submit)
+     * After attempt 2 the bot is back on a fresh search-results list
+     * and finishNavOnlineNow() applies the same continue/restart logic
+     * the online path uses, so refreshContinueMode keeps working.
+     */
+    private long handleRefreshFindSearch(List<AccessibilityNodeInfo> roots, long now, int attempt) {
+        AccessibilityNodeInfo searchNode = null;
+        for (String kw : SEARCH_KEYWORDS) {
+            searchNode = findClickableInAll(roots, kw);
+            if (searchNode != null) break;
+        }
+        if (searchNode != null && performClick(searchNode)) {
+            diagEvent("REFRESH(3-dots): tapped بحث (attempt " + attempt + ")");
+            setAction(getString(R.string.action_search_tap));
+            if (attempt == 1) {
+                transitionTo(STATE_REFRESH_FIND_SEARCH_2);
+                return SOFT_REFRESH_WAIT_MS;
+            }
+            // attempt 2 done — reuse the existing finish logic so
+            // refreshContinueMode (continue vs. restart) still applies.
+            return finishNavOnlineNow(now);
+        }
+        // Not visible yet — wait briefly in case the screen is still
+        // rendering. Give up after ~3× the normal wait so we don't
+        // stall forever on a popup the user dismissed already.
+        long sinceState = now - stateChangedAt;
+        if (sinceState < SOFT_REFRESH_WAIT_MS * 3) {
+            setAction(getString(R.string.action_inspect_loading));
+            return SOFT_REFRESH_WAIT_MS;
+        }
+        diagEvent("REFRESH(3-dots): بحث not found at attempt " + attempt + ", resuming");
+        transitionTo(STATE_LOOK_LIKE);
+        return 300L;
     }
 
     /**
@@ -1891,11 +2015,16 @@ public class ClickerService extends AccessibilityService {
         //   true             → resume in place, letting dedup skip already-
         //                      liked members until a new one is reached.
         public final boolean refreshContinueMode;
+        // v1.12 — how the bot finds the next batch of members on refresh:
+        //   "online"      → الأعضاء ← المتواجدون الآن (default, text only)
+        //   "three_dots"  → tap saved 'ثلاث نقاط' coord ← بحث ← بحث
+        public final String findMembersMode;
 
         public BotConfig(String likeText, String yesText, String closeText, String targetPackage,
                          List<String> profileKeywords, long scanIntervalMs, long popupWaitMs,
                          long idleTimeoutMs, boolean dedupEnabled,
-                         boolean filterDivorcedWidowedOnly, boolean refreshContinueMode) {
+                         boolean filterDivorcedWidowedOnly, boolean refreshContinueMode,
+                         String findMembersMode) {
             this.likeText = likeText == null ? "" : likeText.trim();
             this.yesText = yesText == null ? "" : yesText.trim();
             this.closeText = closeText == null ? "" : closeText.trim();
@@ -1907,6 +2036,8 @@ public class ClickerService extends AccessibilityService {
             this.dedupEnabled = dedupEnabled;
             this.filterDivorcedWidowedOnly = filterDivorcedWidowedOnly;
             this.refreshContinueMode = refreshContinueMode;
+            this.findMembersMode = (findMembersMode != null && !findMembersMode.isEmpty())
+                    ? findMembersMode : "online";
         }
     }
 }

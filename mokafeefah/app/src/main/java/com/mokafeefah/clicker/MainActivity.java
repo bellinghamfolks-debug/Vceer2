@@ -49,6 +49,8 @@ public class MainActivity extends AppCompatActivity {
     // v1.11 — new selectable modes.
     private static final String K_LIKE_MODE_FILTER = "like_mode_filter";   // false = normal, true = divorced/widowed
     private static final String K_REFRESH_CONTINUE = "refresh_continue";   // false = restart, true = continue
+    // v1.12 — "online" (default) or "three_dots".
+    private static final String K_FIND_MODE        = "find_members_mode";
 
     private SharedPreferences prefs;
 
@@ -68,6 +70,10 @@ public class MainActivity extends AppCompatActivity {
     private RadioGroup  groupRefreshMode;
     private RadioButton radioRefreshModeContinue;
     private RadioButton radioRefreshModeRestart;
+    // v1.12
+    private RadioGroup  groupFindMode;
+    private RadioButton radioFindModeOnline;
+    private RadioButton radioFindModeThreeDots;
 
     private Button       btnToggleAdvanced;
     private LinearLayout advancedSettings;
@@ -117,6 +123,9 @@ public class MainActivity extends AppCompatActivity {
         groupRefreshMode         = findViewById(R.id.groupRefreshMode);
         radioRefreshModeContinue = findViewById(R.id.radioRefreshModeContinue);
         radioRefreshModeRestart  = findViewById(R.id.radioRefreshModeRestart);
+        groupFindMode            = findViewById(R.id.groupFindMode);
+        radioFindModeOnline      = findViewById(R.id.radioFindModeOnline);
+        radioFindModeThreeDots   = findViewById(R.id.radioFindModeThreeDots);
         btnToggleAdvanced    = findViewById(R.id.btnToggleAdvanced);
         advancedSettings     = findViewById(R.id.advancedSettings);
         serviceStatusText    = findViewById(R.id.serviceStatusText);
@@ -165,6 +174,9 @@ public class MainActivity extends AppCompatActivity {
         groupRefreshMode.setOnCheckedChangeListener((g, id) ->
                 prefs.edit().putBoolean(K_REFRESH_CONTINUE,
                         id == R.id.radioRefreshModeContinue).apply());
+        groupFindMode.setOnCheckedChangeListener((g, id) ->
+                prefs.edit().putString(K_FIND_MODE,
+                        id == R.id.radioFindModeThreeDots ? "three_dots" : "online").apply());
     }
 
     private void toggleAdvancedSettings() {
@@ -265,10 +277,12 @@ public class MainActivity extends AppCompatActivity {
         boolean dedup = checkDedup != null && checkDedup.isChecked();
         boolean filterMode = radioLikeModeFilter != null && radioLikeModeFilter.isChecked();
         boolean refreshContinue = radioRefreshModeContinue != null && radioRefreshModeContinue.isChecked();
+        String findMode = (radioFindModeThreeDots != null && radioFindModeThreeDots.isChecked())
+                ? "three_dots" : "online";
         ClickerService.BotConfig cfg = new ClickerService.BotConfig(
                 like, yes, close, pkg, keywords,
                 interval, popup, idleS * 1000L, dedup,
-                filterMode, refreshContinue);
+                filterMode, refreshContinue, findMode);
 
         boolean ok = svc.startBot(cfg);
         toast(getString(ok ? R.string.msg_started : R.string.msg_already_running));
@@ -302,6 +316,7 @@ public class MainActivity extends AppCompatActivity {
         if (checkDedup != null) checkDedup.setChecked(true);
         if (radioLikeModeNormal != null) radioLikeModeNormal.setChecked(true);
         if (radioRefreshModeContinue != null) radioRefreshModeContinue.setChecked(true);
+        if (radioFindModeOnline != null) radioFindModeOnline.setChecked(true);
         saveCurrentValues();
         toast(getString(R.string.msg_reset_done));
     }
@@ -383,6 +398,9 @@ public class MainActivity extends AppCompatActivity {
         boolean refreshContinue = prefs.getBoolean(K_REFRESH_CONTINUE, true);
         if (refreshContinue) radioRefreshModeContinue.setChecked(true);
         else                 radioRefreshModeRestart.setChecked(true);
+        String findMode = prefs.getString(K_FIND_MODE, "online");
+        if ("three_dots".equals(findMode)) radioFindModeThreeDots.setChecked(true);
+        else                                radioFindModeOnline.setChecked(true);
         boolean advOpen = prefs.getBoolean(K_ADVANCED_OPEN, false);
         advancedSettings.setVisibility(advOpen ? View.VISIBLE : View.GONE);
         btnToggleAdvanced.setText(advOpen
@@ -409,6 +427,10 @@ public class MainActivity extends AppCompatActivity {
         }
         if (radioRefreshModeContinue != null) {
             e.putBoolean(K_REFRESH_CONTINUE, radioRefreshModeContinue.isChecked());
+        }
+        if (radioFindModeThreeDots != null) {
+            e.putString(K_FIND_MODE,
+                    radioFindModeThreeDots.isChecked() ? "three_dots" : "online");
         }
         e.apply();
     }

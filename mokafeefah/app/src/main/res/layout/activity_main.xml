@@ -388,6 +388,73 @@
                 android:layout_height="wrap_content"/>
         </RadioGroup>
 
+        <!-- v1.12 — find-members mode (online vs. three-dots) -->
+        <TextView
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:textColor="@color/accent"
+            android:paddingTop="24dp"
+            android:paddingBottom="6dp"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/section_find_mode"
+            android:accessibilityHeading="true"/>
+        <TextView
+            android:textSize="13sp"
+            android:textColor="@color/text_secondary"
+            android:paddingBottom="10dp"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/section_find_mode_hint"/>
+        <RadioGroup
+            android:id="@+id/groupFindMode"
+            android:orientation="vertical"
+            android:padding="14dp"
+            android:background="@color/surface_elevated"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content">
+            <RadioButton
+                android:id="@+id/radioFindModeOnline"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_primary"
+                android:text="@string/label_find_mode_online"
+                android:minHeight="48dp"
+                android:checked="true"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:contentDescription="@string/label_find_mode_online"/>
+            <TextView
+                android:textSize="13sp"
+                android:textColor="@color/text_secondary"
+                android:paddingStart="32dp"
+                android:paddingEnd="8dp"
+                android:paddingBottom="8dp"
+                android:lineSpacingExtra="2dp"
+                android:text="@string/label_find_mode_online_desc"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"/>
+            <RadioButton
+                android:id="@+id/radioFindModeThreeDots"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_primary"
+                android:text="@string/label_find_mode_three_dots"
+                android:minHeight="48dp"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:contentDescription="@string/label_find_mode_three_dots"/>
+            <TextView
+                android:textSize="13sp"
+                android:textColor="@color/text_secondary"
+                android:paddingStart="32dp"
+                android:paddingEnd="8dp"
+                android:lineSpacingExtra="2dp"
+                android:text="@string/label_find_mode_three_dots_desc"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"/>
+        </RadioGroup>
+
         <!-- Advanced settings toggle — hidden by default because the defaults
              are correct for almost every user. -->
         <Button
