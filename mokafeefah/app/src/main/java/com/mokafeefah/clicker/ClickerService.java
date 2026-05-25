@@ -111,13 +111,22 @@ public class ClickerService extends AccessibilityService {
     // tree has roughly doubled, latency is starting to climb, but a refresh
     // is still well below Mawada's apparent rate-limit thresholds.
     private static final int  LIKES_PER_SOFT_REFRESH = 80;
-    // Visible text / desc of Mawada's bottom-bar entry that returns the
-    // user to the members search page. Confirmed in the v9.4 dump:
-    //   [C] [V] [412,2387][806,2712] android.view.View desc="الأعضاء"
+    // v10.0.1: Mawada's refresh is a TWO-STEP navigation, confirmed by the
+    // user. First tap the bottom-bar "الأعضاء" entry, which opens a sub-
+    // page listing browsing modes; then tap "المتواجدون الآن" to return
+    // to the actual search-results list.
     private static final String[] MEMBERS_TAB_KEYWORDS = { "الأعضاء" };
-    // How long to wait after tapping the members tab before resuming.
-    // Mawada's first paint of the fresh list is ~1.5-2 s on average.
+    private static final String[] ONLINE_NOW_KEYWORDS  = {
+            "المتواجدون الآن", "المتواجدون الان", "المتواجدون", "النشطون"
+    };
+    // Wait between step 1 and step 2 — Mawada's sub-page paint.
+    private static final long SOFT_REFRESH_STEP_WAIT_MS = 1500L;
+    // How long to wait after step 2 before resuming. Mawada's first paint of
+    // the fresh list is ~1.5-2 s on average.
     private static final long SOFT_REFRESH_WAIT_MS = 2500L;
+    // Hard time-cap per refresh step — if Mawada doesn't surface the
+    // expected button within this, we skip the refresh rather than block.
+    private static final long REFRESH_STEP_TIMEOUT_MS = 5000L;
 
     // v8: keywords that say "load more / show more" — we tap them before
     // swiping if visible, because some apps don't auto-paginate on scroll.
@@ -202,6 +211,10 @@ public class ClickerService extends AccessibilityService {
     // reaches LIKES_PER_SOFT_REFRESH we switch into STATE_SOFT_REFRESH to
     // tap Mawada's own "members" tab and reset its WebView DOM.
     private int    likesSinceRefresh        = 0;
+    // v10.0.1: which step of the soft refresh we're currently on.
+    //   0 → need to tap "الأعضاء"
+    //   1 → just tapped الأعضاء, need to tap "المتواجدون الآن"
+    private int    refreshStepsDone         = 0;
 
     // Screen metrics — cached per tick
     private int    screenW = 0;
@@ -293,6 +306,7 @@ public class ClickerService extends AccessibilityService {
         rewindStepsDone = 0;
         scrollPatternIndex = 0;
         likesSinceRefresh = 0;
+        refreshStepsDone = 0;
         long now = System.currentTimeMillis();
         lastButtonFoundMs = now;
         // v8: rewind the target list to its true top before searching. Mawadda's
@@ -631,37 +645,73 @@ public class ClickerService extends AccessibilityService {
      * without a refresh — better to keep liking slowly than to halt.
      */
     private long handleSoftRefresh(List<AccessibilityNodeInfo> roots, long now) {
-        AccessibilityNodeInfo tab = null;
-        for (String kw : MEMBERS_TAB_KEYWORDS) {
-            tab = findClickableInAll(roots, kw);
-            if (tab != null) break;
-        }
-        if (tab != null && performClick(tab)) {
-            diagEvent("REFRESH: tapped members tab, resetting refresh counter");
-            setAction(getString(R.string.action_soft_refresh));
-            likesSinceRefresh = 0;
-            // Clear our per-viewport processed-bounds cache since after the
-            // refresh Mawada will re-render different rows at the same
-            // screen coordinates as the freshly-loaded list.
-            processedBounds.clear();
-            // Re-rewind on the fresh page so we start at row #1.
-            rewindStepsDone = 0;
-            transitionTo(STATE_REWIND_TO_TOP);
-            return SOFT_REFRESH_WAIT_MS;
-        }
-        // Tab not visible — probably a popup is in the way. One BACK press
-        // usually clears stray dialogs without harming the search list.
         long sinceState = now - stateChangedAt;
-        if (sinceState < 4000L) {
-            diagEvent("REFRESH: members tab not visible, sending BACK");
-            performGlobalAction(GLOBAL_ACTION_BACK);
-            lastBackTime = now;
-            setAction(getString(R.string.action_back));
-            return POST_BACK_WAIT_MS;
+
+        // ----- Step 0: tap "الأعضاء" (opens the browse-modes sub-page) -----
+        if (refreshStepsDone == 0) {
+            AccessibilityNodeInfo tab = null;
+            for (String kw : MEMBERS_TAB_KEYWORDS) {
+                tab = findClickableInAll(roots, kw);
+                if (tab != null) break;
+            }
+            if (tab != null && performClick(tab)) {
+                diagEvent("REFRESH step 1/2: tapped الأعضاء");
+                setAction(getString(R.string.action_soft_refresh));
+                refreshStepsDone = 1;
+                stateChangedAt = now;  // reset per-step timeout
+                return SOFT_REFRESH_STEP_WAIT_MS;
+            }
+            // Tab not visible — likely a stray popup. Try one BACK press.
+            if (sinceState < REFRESH_STEP_TIMEOUT_MS) {
+                diagEvent("REFRESH: الأعضاء not visible, sending BACK");
+                performGlobalAction(GLOBAL_ACTION_BACK);
+                lastBackTime = now;
+                setAction(getString(R.string.action_back));
+                return POST_BACK_WAIT_MS;
+            }
+            // Gave up — skip refresh this round.
+            diagEvent("REFRESH: الأعضاء still not found, skipping");
+            likesSinceRefresh = 0;
+            refreshStepsDone = 0;
+            transitionTo(STATE_LOOK_LIKE);
+            return 300L;
         }
-        // Tab still not findable after a back press — skip the refresh
-        // this round so we don't get stuck. Try again in another 80 likes.
-        diagEvent("REFRESH: tab still not found, skipping refresh this round");
+
+        // ----- Step 1: tap "المتواجدون الآن" (back to the search list) -----
+        if (refreshStepsDone == 1) {
+            AccessibilityNodeInfo link = null;
+            for (String kw : ONLINE_NOW_KEYWORDS) {
+                link = findClickableInAll(roots, kw);
+                if (link != null) break;
+            }
+            if (link != null && performClick(link)) {
+                diagEvent("REFRESH step 2/2: tapped المتواجدون الآن");
+                setAction(getString(R.string.action_soft_refresh));
+                // Refresh complete — wipe per-viewport state and re-rewind.
+                likesSinceRefresh = 0;
+                refreshStepsDone = 0;
+                processedBounds.clear();
+                rewindStepsDone = 0;
+                transitionTo(STATE_REWIND_TO_TOP);
+                return SOFT_REFRESH_WAIT_MS;
+            }
+            // "المتواجدون الآن" not surfacing — Mawada may already be on
+            // the right page (e.g. the tab swap was a no-op because we were
+            // already on الأعضاء). Skip step 2 and proceed.
+            if (sinceState > REFRESH_STEP_TIMEOUT_MS) {
+                diagEvent("REFRESH: المتواجدون not found, assuming already on list");
+                likesSinceRefresh = 0;
+                refreshStepsDone = 0;
+                processedBounds.clear();
+                rewindStepsDone = 0;
+                transitionTo(STATE_REWIND_TO_TOP);
+                return 500L;
+            }
+            return 400L;  // keep polling
+        }
+
+        // Unknown step value — reset.
+        refreshStepsDone = 0;
         likesSinceRefresh = 0;
         transitionTo(STATE_LOOK_LIKE);
         return 300L;
