@@ -1502,11 +1502,12 @@ export function viewDocQa() {
 // Bot — Smart automation assistant
 // ============================================================
 
-// Default Mawada coordinates (extracted from a 1080×2340 screenshot
-// of the home screen). Names match the workflow: three-dots → search,
-// plus the bottom navigation. Resolution should match most modern
-// Android phones; the user can retake any coordinate via the
-// "tap on screenshot" tool if their device differs.
+// Default Mawada coordinates expressed at the 1080×2340 base resolution.
+// At load time these are rescaled to the user's actual screen size from
+// settings (screenWidth × screenHeight), so they remain accurate on any
+// device — e.g. a 1220×2712 panel gets x multiplied by ~1.13, y by ~1.16.
+const MAWADA_BASE_WIDTH  = 1080;
+const MAWADA_BASE_HEIGHT = 2340;
 const MAWADA_PRESETS = [
   { name: "ثلاث نقاط (قائمة علوية)", x: 1004, y: 211 },
   { name: "بحث (أعلى يسار)",       x:   54, y: 211 },
@@ -1517,6 +1518,17 @@ const MAWADA_PRESETS = [
   { name: "تقييم التطبيق",          x:  540, y:  760 },
   { name: "أيقونة الوصول (يسار)",   x:   72, y:  370 }
 ];
+
+function scaleToScreen(presets) {
+  const s = store.getSettings();
+  const sx = (s.screenWidth  || MAWADA_BASE_WIDTH)  / MAWADA_BASE_WIDTH;
+  const sy = (s.screenHeight || MAWADA_BASE_HEIGHT) / MAWADA_BASE_HEIGHT;
+  return presets.map(p => ({
+    name: p.name,
+    x: Math.round(p.x * sx),
+    y: Math.round(p.y * sy)
+  }));
+}
 
 function checkMaritalStatusLocally(text) {
   const clean = (text || "").replace(/\s+/g, " ");
@@ -1796,7 +1808,7 @@ export function viewBot() {
     onClick: () => {
       const existing = new Set(store.getBotCoords().map(c => c.name));
       let added = 0;
-      for (const p of MAWADA_PRESETS) {
+      for (const p of scaleToScreen(MAWADA_PRESETS)) {
         if (existing.has(p.name)) continue;
         store.addBotCoord(p);
         added++;
@@ -1847,6 +1859,28 @@ export function viewBot() {
           checkResultBox
         )
       : null,
+
+    sectionHeader(t("bot_screen_size")),
+    el("p", { class: "subtitle" }, t("bot_screen_size_hint")),
+    (() => {
+      const wIn = el("input", { type: "number", min: "200", step: "1", value: String(s.screenWidth || 1080), "aria-label": t("bot_screen_w") });
+      const hIn = el("input", { type: "number", min: "200", step: "1", value: String(s.screenHeight || 2340), "aria-label": t("bot_screen_h") });
+      const saveBtn = el("button", { class: "btn", type: "button",
+        onClick: () => {
+          const w = parseInt(wIn.value, 10);
+          const h = parseInt(hIn.value, 10);
+          if (!w || !h || w < 200 || h < 200) return toast(t("bot_screen_invalid"));
+          store.setSettings({ screenWidth: w, screenHeight: h });
+          toast(t("saved"));
+          sp.vibrate(20);
+        }
+      }, t("save"));
+      return el("div", null,
+        el("label", { class: "field" }, el("span", { class: "field-label" }, t("bot_screen_w")), wIn),
+        el("label", { class: "field" }, el("span", { class: "field-label" }, t("bot_screen_h")), hIn),
+        el("div", { class: "btn-row" }, saveBtn)
+      );
+    })(),
 
     sectionHeader(t("bot_coords_section")),
     el("p", { class: "subtitle" }, t("bot_coord_screenshot_hint")),

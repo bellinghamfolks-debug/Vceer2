@@ -415,6 +415,11 @@ export const STRINGS = {
     bot_coord_load_mawada: "تحميل إحداثيات مودة",
     bot_coord_mawada_added: "تم حفظ إحداثيات مودة",
     bot_coord_mawada_exists: "إحداثيات مودة محفوظة مسبقًا.",
+    bot_screen_size: "دقة شاشة جهازك",
+    bot_screen_size_hint: "اضبط دقة شاشتك الفعلية لتُحسب إحداثيات مودة بدقة. مثلاً: 1080×2340 أو 1220×2712.",
+    bot_screen_w: "العرض (بكسل)",
+    bot_screen_h: "الطول (بكسل)",
+    bot_screen_invalid: "أدخل أرقامًا صحيحة للعرض والطول.",
   },
 
   en: {
@@ -807,6 +812,11 @@ export const STRINGS = {
     bot_coord_load_mawada: "Load Mawada coordinates",
     bot_coord_mawada_added: "Mawada coordinates saved",
     bot_coord_mawada_exists: "Mawada coordinates already saved.",
+    bot_screen_size: "Your device screen resolution",
+    bot_screen_size_hint: "Set your actual screen resolution so Mawada coordinates are calculated accurately. e.g. 1080×2340 or 1220×2712.",
+    bot_screen_w: "Width (pixels)",
+    bot_screen_h: "Height (pixels)",
+    bot_screen_invalid: "Enter valid numbers for width and height.",
   }
 };
 

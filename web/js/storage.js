@@ -27,7 +27,9 @@ const DEFAULT_SETTINGS = {
   quality: "balanced",
   likeMode: "normal",        // normal | divorced_widowed
   afterRefresh: "continue",  // continue | restart
-  botNavMode: "online"       // online | search (navigation path in the app)
+  botNavMode: "online",      // online | search (navigation path in the app)
+  screenWidth: 1080,         // device screen width in pixels (for preset scaling)
+  screenHeight: 2340         // device screen height in pixels
 };
 
 function read(key, fallback) {
