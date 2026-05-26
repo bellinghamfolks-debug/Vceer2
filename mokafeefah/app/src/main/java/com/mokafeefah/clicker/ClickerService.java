@@ -140,8 +140,11 @@ public class ClickerService extends AccessibilityService {
     // are on the members page. The user's spec: every list traversal must
     // follow "الأعضاء ← المتواجدون الآن".
     private static final String[] ONLINE_NOW_KEYWORDS = { "المتواجدون الآن", "المتواجدون الان" };
-    // v1.12: 'بحث' label inside the menu opened by tapping three-dots.
-    private static final String[] SEARCH_KEYWORDS = { "بحث" };
+    // v1.12.9: 'بحث' label inside the menu opened by tapping three-dots.
+    // Mawada writes the submit button as 'بـحـث' (with U+0640 tatweel
+    // characters between letters) — the native substring search ignores
+    // string normalization, so we have to feed it both literal forms.
+    private static final String[] SEARCH_KEYWORDS = { "بحث", "بـحـث" };
     // v1.12: the saved-coordinate row this refresh path looks up.
     private static final String COORD_THREE_DOTS = "ثلاث نقاط (قائمة علوية)";
     // How long to wait after tapping the members tab before resuming.
@@ -1156,19 +1159,23 @@ public class ClickerService extends AccessibilityService {
      * the online path uses, so refreshContinueMode keeps working.
      */
     private long handleRefreshFindSearch(List<AccessibilityNodeInfo> roots, long now, int attempt) {
-        // v1.12.8 — three-layer lookup so we always end up on the plain
-        // 'بحث' submit button, never on 'بحث متقدم' / 'بحث باسم
-        // المستخدم' which both contain 'بحث' as a substring:
-        //   1) EXACT match on text or contentDescription (after Arabic
-        //      normalization including bidi-mark stripping).
-        //   2) SHORTEST visible label that still contains 'بحث' — the
-        //      submit button is one word, the other two are 2-3 words,
-        //      so length is a reliable tie-breaker if exact match
-        //      misses (e.g. button label has stray punctuation).
-        //   3) Plain substring match as last resort.
-        AccessibilityNodeInfo searchNode = findExactClickableInAll(roots, "بحث");
+        // v1.12.9 — three-layer lookup, but each layer tries every literal
+        // form in SEARCH_KEYWORDS. Native findAccessibilityNodeInfosByText
+        // does raw substring matching with no normalization, so the
+        // tatweel-laden 'بـحـث' is only reachable by passing that exact
+        // string. Normalization (which collapses tatweel) still kicks in
+        // when comparing label==needle, so the exact-match check accepts
+        // either form against either form.
+        AccessibilityNodeInfo searchNode = null;
+        for (String kw : SEARCH_KEYWORDS) {
+            searchNode = findExactClickableInAll(roots, kw);
+            if (searchNode != null) break;
+        }
         if (searchNode == null) {
-            searchNode = findShortestClickableContaining(roots, "بحث");
+            for (String kw : SEARCH_KEYWORDS) {
+                searchNode = findShortestClickableContaining(roots, kw);
+                if (searchNode != null) break;
+            }
         }
         if (searchNode == null) {
             for (String kw : SEARCH_KEYWORDS) {
@@ -1912,7 +1919,13 @@ public class ClickerService extends AccessibilityService {
 
     private static String normalizeArabic(String s) {
         if (s == null) return "";
-        String r = s.replaceAll("[ً-ْٰٱ]", "");
+        // v1.12.9 — also strip Arabic Tatweel (U+0640 ـ) so 'بـحـث'
+        // and 'بحث' compare equal. Mawada uses the tatweel form for its
+        // search-submit button (confirmed in the v1.12.8 diagnostic dump),
+        // which made the substring search return only the three OTHER
+        // buttons whose label contains plain 'بحث', and the bot kept
+        // tapping 'بحث بإسم المستخدم'.
+        String r = s.replaceAll("[ً-ْٰٱـ]", "");
         r = r.replace((char) 1571, (char) 1575)
              .replace((char) 1573, (char) 1575)
              .replace((char) 1570, (char) 1575)
