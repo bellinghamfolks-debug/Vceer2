@@ -4,6 +4,8 @@ import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.View;
@@ -556,9 +558,21 @@ public class MainActivity extends AppCompatActivity {
         actions.addView(testBtn);
         actions.addView(delBtn);
 
+        Button delayedTestBtn = new Button(this);
+        delayedTestBtn.setText(R.string.btn_test_coord_delayed);
+        delayedTestBtn.setContentDescription(
+                getString(R.string.btn_test_coord_delayed) + " " + c.name);
+        delayedTestBtn.setMinHeight(dp(48));
+        LinearLayout.LayoutParams dltp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        dltp.topMargin = dp(4);
+        delayedTestBtn.setLayoutParams(dltp);
+        delayedTestBtn.setOnClickListener(v -> performDelayedTestTap(c));
+
         row.addView(name);
         row.addView(xy);
         row.addView(actions);
+        row.addView(delayedTestBtn);
         return row;
     }
 
@@ -571,6 +585,21 @@ public class MainActivity extends AppCompatActivity {
         boolean ok = svc.tapAt(c.x, c.y);
         toast(ok ? getString(R.string.msg_tap_done, c.name)
                  : getString(R.string.msg_tap_failed));
+    }
+
+    private void performDelayedTestTap(SavedCoordinatesDb.Coord c) {
+        ClickerService svc = ClickerService.getInstance();
+        if (svc == null) {
+            toast(getString(R.string.msg_tap_failed));
+            return;
+        }
+        toast(getString(R.string.msg_tap_delayed));
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            boolean ok = svc.tapAt(c.x, c.y);
+            runOnUiThread(() -> toast(ok
+                    ? getString(R.string.msg_tap_done, c.name)
+                    : getString(R.string.msg_tap_failed)));
+        }, 5000L);
     }
 
     private void confirmDeleteCoord(SavedCoordinatesDb.Coord c) {
