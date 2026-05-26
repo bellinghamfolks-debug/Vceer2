@@ -657,7 +657,9 @@ public class ClickerService extends AccessibilityService {
                 likesCount.incrementAndGet();
                 likesSinceRefresh++;
                 if (fp != null && db != null) db.markLiked(fp);
-                diagEvent("LOOK: clicked like-btn at " + key + " (likes now " + likesCount.get() + ")");
+                diagEvent("LOOK: clicked like-btn at " + key + " (likes now "
+                        + likesCount.get() + ") fp="
+                        + (fp == null ? "NULL" : fp.substring(0, Math.min(12, fp.length()))));
                 setAction(getString(R.string.action_like));
                 lastButtonFoundMs = now;
                 firstNoProgressScrollMs = 0L;
