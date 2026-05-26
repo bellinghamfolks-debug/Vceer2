@@ -743,9 +743,19 @@ public class ClickerService extends AccessibilityService {
         boolean profileReady = containsAnyKeyword(roots, MARITAL_LABEL_HINTS);
         if (!profileReady) {
             if (now - stateChangedAt > MAX_WAIT_FOR_PROFILE_LOAD_MS) {
-                diagEvent("INSPECT: profile didn't load within budget, BACK");
+                diagEvent("INSPECT: profile didn't load within budget, BACK + markInspected");
                 performGlobalAction(GLOBAL_ACTION_BACK);
                 lastBackTime = now;
+                // v1.12.6: mark the member as inspected even though we
+                // couldn't read their marital status. Without this, the
+                // very next LOOK_LIKE picks the same member, opens their
+                // profile, hits the same load-timeout, sends BACK, and
+                // the bot loops forever between list and one slow
+                // profile — exactly the "enter / exit / enter / exit"
+                // symptom the user reported.
+                if (pendingProfileFp != null && db != null) {
+                    db.markInspected(pendingProfileFp);
+                }
                 skippedCount.incrementAndGet();
                 clearInspectState();
                 transitionTo(STATE_LOOK_LIKE);
@@ -806,9 +816,16 @@ public class ClickerService extends AccessibilityService {
             return 700L;
         }
         if (now - stateChangedAt > MAX_WAIT_IN_INSPECT_MS) {
-            diagEvent("INSPECT: timeout waiting for yes, sending BACK");
+            diagEvent("INSPECT: timeout waiting for yes, BACK + markInspected");
             performGlobalAction(GLOBAL_ACTION_BACK);
             lastBackTime = now;
+            // v1.12.6: same defence as stage 0. If we clicked like on
+            // the profile but "نعم" never appeared, the like didn't
+            // commit and we'd re-pick this member next loop. Mark
+            // inspected so we move on to a different candidate.
+            if (pendingProfileFp != null && db != null) {
+                db.markInspected(pendingProfileFp);
+            }
             clearInspectState();
             transitionTo(STATE_LOOK_LIKE);
             return POST_BACK_WAIT_MS;
