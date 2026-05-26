@@ -1936,54 +1936,32 @@ public class ClickerService extends AccessibilityService {
     }
 
     /**
-     * v1.12.12 — loose member identifier used by the short-term rolling
-     * buffer. Where fingerprintMemberFromButton() is strict (must climb to
-     * a card-shaped ancestor, must collect ≥ 6 chars, must see Arabic
-     * letters before returning anything), this one returns whatever
-     * identifying signal it can pull off the like button's neighborhood:
+     * v1.12.13 — strict loose member identifier. Earlier v1.12.12 tried
+     * three fallback sources (card text → like button desc → parent
+     * chain desc) and broke catastrophically: the like button's own
+     * contentDescription is just 'إهتمام' on every Mawada card, so the
+     * second-tier fallback returned an IDENTICAL hash for every member.
+     * After the very first like that hash entered recentMemberIds and
+     * every subsequent member matched the buffer → skipped → the bot
+     * stopped liking anyone.
      *
-     *   1. Card-text hash, if climbToMemberCard() finds one.
-     *   2. Like button's own contentDescription, when Mawada exposes a
-     *      per-member URL there.
-     *   3. The like button's nearest non-empty ancestor desc, walking up
-     *      a few levels.
-     *
-     * This is only used to detect the refresh-loop overlap, not to write
-     * to the long-term LikedMembersDb. A collision between two genuinely
-     * different members inside a 10-entry window is unlikely enough that
-     * the user's suggested approach holds: similarity is rare.
+     * The lesson: a "loose" identifier still has to be unique per member.
+     * If we can't compute the card-text hash, we return null and let the
+     * buffer simply not help on that screen rather than collide everyone
+     * onto a single shared label.
      */
     private String looseMemberId(AccessibilityNodeInfo likeBtn) {
         if (likeBtn == null) return null;
         AccessibilityNodeInfo card = climbToMemberCard(likeBtn);
-        if (card != null) {
-            Rect cardR = new Rect();
-            card.getBoundsInScreen(cardR);
-            if (!cardR.isEmpty()) {
-                StringBuilder sb = new StringBuilder(256);
-                collectCardText(card, cardR, sb, 0);
-                if (sb.length() > 0) {
-                    String h = LikedMembersDb.fingerprint(sb.toString());
-                    if (h != null) return "T:" + h;
-                }
-            }
-        }
-        CharSequence btnDesc = likeBtn.getContentDescription();
-        if (btnDesc != null && btnDesc.length() > 0) {
-            String h = LikedMembersDb.fingerprint(btnDesc.toString());
-            if (h != null) return "B:" + h;
-        }
-        AccessibilityNodeInfo parent = likeBtn.getParent();
-        for (int i = 0; i < 4 && parent != null; i++) {
-            track(parent);
-            CharSequence d = parent.getContentDescription();
-            if (d != null && d.length() > 0) {
-                String h = LikedMembersDb.fingerprint(d.toString());
-                if (h != null) return "P" + i + ":" + h;
-            }
-            parent = parent.getParent();
-        }
-        return null;
+        if (card == null) return null;
+        Rect cardR = new Rect();
+        card.getBoundsInScreen(cardR);
+        if (cardR.isEmpty()) return null;
+        StringBuilder sb = new StringBuilder(256);
+        collectCardText(card, cardR, sb, 0);
+        if (sb.length() < MIN_TEXT_CHARS_FOR_FP) return null;
+        String h = LikedMembersDb.fingerprint(sb.toString());
+        return h == null ? null : "T:" + h;
     }
 
     private void rememberRecentMember(String id) {
