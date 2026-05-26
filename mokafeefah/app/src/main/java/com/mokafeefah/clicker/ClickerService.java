@@ -1159,28 +1159,33 @@ public class ClickerService extends AccessibilityService {
      * the online path uses, so refreshContinueMode keeps working.
      */
     private long handleRefreshFindSearch(List<AccessibilityNodeInfo> roots, long now, int attempt) {
-        // v1.12.9 — three-layer lookup, but each layer tries every literal
-        // form in SEARCH_KEYWORDS. Native findAccessibilityNodeInfosByText
-        // does raw substring matching with no normalization, so the
-        // tatweel-laden 'بـحـث' is only reachable by passing that exact
-        // string. Normalization (which collapses tatweel) still kicks in
-        // when comparing label==needle, so the exact-match check accepts
-        // either form against either form.
-        AccessibilityNodeInfo searchNode = null;
-        for (String kw : SEARCH_KEYWORDS) {
-            searchNode = findExactClickableInAll(roots, kw);
-            if (searchNode != null) break;
-        }
+        // v1.12.10 — replace the native-search-driven picker with a
+        // DFS-based one that walks the tree ourselves, normalises every
+        // text / contentDescription, and ranks candidates. The native
+        // findAccessibilityNodeInfosByText API was returning hits that
+        // didn't include Mawada's tatweel-laden 'بـحـث' submit button
+        // even though it was clearly visible in the dump — most likely
+        // a WebView accessibility-cache quirk. DFS avoids the issue
+        // entirely.
+        AccessibilityNodeInfo searchNode = findSearchSubmitByDfs(roots, "بحث");
         if (searchNode == null) {
+            // Last resort: fall back to the older native lookups so we
+            // never regress on screens where DFS missed something.
             for (String kw : SEARCH_KEYWORDS) {
-                searchNode = findShortestClickableContaining(roots, kw);
+                searchNode = findExactClickableInAll(roots, kw);
                 if (searchNode != null) break;
             }
-        }
-        if (searchNode == null) {
-            for (String kw : SEARCH_KEYWORDS) {
-                searchNode = findClickableInAll(roots, kw);
-                if (searchNode != null) break;
+            if (searchNode == null) {
+                for (String kw : SEARCH_KEYWORDS) {
+                    searchNode = findShortestClickableContaining(roots, kw);
+                    if (searchNode != null) break;
+                }
+            }
+            if (searchNode == null) {
+                for (String kw : SEARCH_KEYWORDS) {
+                    searchNode = findClickableInAll(roots, kw);
+                    if (searchNode != null) break;
+                }
             }
         }
         if (searchNode != null) {
@@ -1652,6 +1657,102 @@ public class ClickerService extends AccessibilityService {
             }
         }
         return bestClickable;
+    }
+
+    /**
+     * v1.12.10 — pure-DFS search for Mawada's 'بـحـث' submit button.
+     *
+     * Why DFS instead of findAccessibilityNodeInfosByText: on the v1.12.9
+     * production diagnostic, native search returned only the three
+     * substring siblings ('بحث بإسم المستخدم', 'البحث السريع', 'البحث
+     * المتقدم') and never the tatweel form 'بـحـث', even though it was
+     * clearly in the tree at the time. WebView accessibility caches
+     * appear to index by raw substring without normalisation, so a
+     * tatweel-decorated label is invisible to that API. DFS reads every
+     * node ourselves and compares NORMALISED forms, so the tatweel
+     * collapse in normalizeArabic() lets us see all 'بحث'-containing
+     * labels uniformly.
+     *
+     * Ranking, in order:
+     *   1) exact normalised-label match  (one node: the 'بـحـث' submit)
+     *   2) shortest normalised label that still contains the needle
+     *
+     * Every visited candidate is logged via diagEvent so the dump shows
+     * the full ranking next time something goes wrong.
+     */
+    private AccessibilityNodeInfo findSearchSubmitByDfs(
+            List<AccessibilityNodeInfo> roots, String needleRaw) {
+        String needle = normalizeArabic(needleRaw);
+        AccessibilityNodeInfo exact = null;
+        AccessibilityNodeInfo shortest = null;
+        int shortestLen = Integer.MAX_VALUE;
+        StringBuilder logBuf = new StringBuilder();
+        int logCount = 0;
+        for (AccessibilityNodeInfo root : roots) {
+            if (root == null) continue;
+            AccessibilityNodeInfo[] ex = { exact };
+            AccessibilityNodeInfo[] sh = { shortest };
+            int[] shLen = { shortestLen };
+            int[] logC = { logCount };
+            dfsCollectSearchCandidates(root, needle, 0, ex, sh, shLen, logBuf, logC);
+            exact = ex[0];
+            shortest = sh[0];
+            shortestLen = shLen[0];
+            logCount = logC[0];
+            if (exact != null) break; // exact wins immediately
+        }
+        if (logBuf.length() > 0) {
+            diagEvent("REFRESH(3-dots) DFS candidates: " + logBuf.toString());
+        }
+        return exact != null ? exact : shortest;
+    }
+
+    private void dfsCollectSearchCandidates(
+            AccessibilityNodeInfo node, String needle, int depth,
+            AccessibilityNodeInfo[] exact, AccessibilityNodeInfo[] shortest,
+            int[] shortestLen, StringBuilder logBuf, int[] logCount) {
+        if (node == null || depth > MAX_TREE_DEPTH) return;
+        if (exact[0] != null) return; // already found best possible
+        // Read both text and contentDescription, normalise, check
+        // whether either contains the needle. Don't restrict to leaves —
+        // many of Mawada's buttons are <view.View> wrappers that own the
+        // contentDescription on themselves and a TextView child with the
+        // same string.
+        String[] labels = new String[2];
+        CharSequence t = node.getText();
+        if (t != null) labels[0] = normalizeArabic(t.toString());
+        CharSequence d = node.getContentDescription();
+        if (d != null) labels[1] = normalizeArabic(d.toString());
+        for (String label : labels) {
+            if (label == null || label.isEmpty()) continue;
+            if (!label.contains(needle)) continue;
+            if (!node.isVisibleToUser()) break;
+            CharSequence cls = node.getClassName();
+            if (cls != null && cls.toString().contains("EditText")) break;
+            AccessibilityNodeInfo clickable = climbToClickable(node);
+            if (clickable == null) break;
+            if (logCount[0] < 8) {
+                if (logBuf.length() > 0) logBuf.append(" | ");
+                logBuf.append(label).append("[").append(label.length()).append("]");
+                logCount[0]++;
+            }
+            if (label.equals(needle)) {
+                exact[0] = clickable;
+                return;
+            }
+            if (label.length() < shortestLen[0]) {
+                shortest[0] = clickable;
+                shortestLen[0] = label.length();
+            }
+            break;
+        }
+        int n = node.getChildCount();
+        for (int i = 0; i < n && exact[0] == null; i++) {
+            AccessibilityNodeInfo child = node.getChild(i);
+            if (child == null) continue;
+            track(child);
+            dfsCollectSearchCandidates(child, needle, depth + 1, exact, shortest, shortestLen, logBuf, logCount);
+        }
     }
 
     /**

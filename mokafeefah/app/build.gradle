@@ -10,8 +10,8 @@ android {
         applicationId 'com.mokafeefah.clicker'
         minSdk 24
         targetSdk 34
-        versionCode 27
-        versionName '1.12.9'
+        versionCode 28
+        versionName '1.12.10'
     }
 
     buildTypes {
