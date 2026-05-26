@@ -1317,8 +1317,13 @@ public class ClickerService extends AccessibilityService {
      *
      * The path must contain at least one segment, so we move and then draw
      * a 1-px line — a no-op visually but required by GestureDescription.
-     * Duration is intentionally short (~80 ms) so the tap is registered as
-     * a click rather than a long press.
+     *
+     * v1.12.5 — duration extended from 80 ms to 150 ms. 80 ms taps were
+     * landing on the right pixel but Mawada's WebView never opened the
+     * menu, because some WebView touch handlers treat presses shorter
+     * than ~120 ms as accidental brushes and ignore them. 150 ms matches
+     * a natural finger tap and is still well below the long-press
+     * threshold (~500 ms on Android).
      */
     public boolean tapAt(int x, int y) {
         try {
@@ -1326,7 +1331,7 @@ public class ClickerService extends AccessibilityService {
             path.moveTo(x, y);
             path.lineTo(x + 1, y + 1);
             GestureDescription.StrokeDescription stroke =
-                    new GestureDescription.StrokeDescription(path, 0L, 80L);
+                    new GestureDescription.StrokeDescription(path, 0L, 150L);
             GestureDescription gesture =
                     new GestureDescription.Builder().addStroke(stroke).build();
             return dispatchGesture(gesture, null, null);
