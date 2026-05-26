@@ -103,6 +103,7 @@ public class MainActivity extends AppCompatActivity {
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         coordsDb = new SavedCoordinatesDb(getApplicationContext());
         coordsDb.seedIfEmpty();
+        coordsDb.migrateThreeDotsCoord();
         bindViews();
         loadSavedValues();
         wireButtons();

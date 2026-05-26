@@ -111,6 +111,10 @@ public class SavedCoordinatesDb extends SQLiteOpenHelper {
      * (extracted from the home-screen screenshot). The 'ثلاث نقاط' button is
      * the unlabeled menu the user reported as 'the first unreadable button'.
      *
+     * v1.12.2 — three-dots coordinate corrected from the user's measured
+     * bounding box: x∈[944,1080], y∈[93,233] (1080×2340 reference). Center:
+     * (1012, 163). Earlier (1134, 244) was a visual estimate and was wrong.
+     *
      * Two seeding modes:
      *   - seedIfEmpty(): only inserts when the table is empty (called on
      *     first launch so the user sees defaults without doing anything).
@@ -120,7 +124,7 @@ public class SavedCoordinatesDb extends SQLiteOpenHelper {
      */
     private static final String[][] MAWADA_DEFAULTS = {
             // name,                                 x,    y
-            { "ثلاث نقاط (قائمة علوية)", "1134", "244"  },
+            { "ثلاث نقاط (قائمة علوية)", "1012", "163"  },
             { "بحث (أعلى يسار)",        "61",   "244"  },
             { "جرس الإشعارات",          "976",  "244"  },
             { "الأعضاء (تنقّل سفلي)",   "610",  "2576" },
@@ -133,6 +137,24 @@ public class SavedCoordinatesDb extends SQLiteOpenHelper {
     public synchronized int seedIfEmpty() {
         if (!listAll().isEmpty()) return 0;
         return seedMissing();
+    }
+
+    /**
+     * v1.12.2 one-shot migration: replaces the old wrong three-dots estimate
+     * (1134, 244) with the user-measured value (1012, 163). Idempotent —
+     * after the first run the stored value no longer matches the OLD pair
+     * so the check becomes a no-op. If the user already calibrated the
+     * coordinate to anything else, we leave it alone (their value wins).
+     * Returns true iff the row was actually overwritten.
+     */
+    public synchronized boolean migrateThreeDotsCoord() {
+        Coord cur = findByName("ثلاث نقاط (قائمة علوية)");
+        if (cur == null) return false;
+        if (cur.x == 1134 && cur.y == 244) {
+            upsert("ثلاث نقاط (قائمة علوية)", 1012, 163);
+            return true;
+        }
+        return false;
     }
 
     public synchronized int seedMissing() {
