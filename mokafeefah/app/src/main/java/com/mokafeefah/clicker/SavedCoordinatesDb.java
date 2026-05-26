@@ -111,9 +111,9 @@ public class SavedCoordinatesDb extends SQLiteOpenHelper {
      * (extracted from the home-screen screenshot). The 'ثلاث نقاط' button is
      * the unlabeled menu the user reported as 'the first unreadable button'.
      *
-     * v1.12.2 — three-dots coordinate corrected from the user's measured
-     * bounding box: x∈[944,1080], y∈[93,233] (1080×2340 reference). Center:
-     * (1012, 163). Earlier (1134, 244) was a visual estimate and was wrong.
+     * v1.12.3 — three-dots coordinate refined to (1055, 160) per the user's
+     * latest on-device measurement. Earlier values (1134, 244) and (1012, 163)
+     * are now both treated as stale and overwritten on first launch.
      *
      * Two seeding modes:
      *   - seedIfEmpty(): only inserts when the table is empty (called on
@@ -124,7 +124,7 @@ public class SavedCoordinatesDb extends SQLiteOpenHelper {
      */
     private static final String[][] MAWADA_DEFAULTS = {
             // name,                                 x,    y
-            { "ثلاث نقاط (قائمة علوية)", "1012", "163"  },
+            { "ثلاث نقاط (قائمة علوية)", "1055", "160"  },
             { "بحث (أعلى يسار)",        "61",   "244"  },
             { "جرس الإشعارات",          "976",  "244"  },
             { "الأعضاء (تنقّل سفلي)",   "610",  "2576" },
@@ -140,18 +140,22 @@ public class SavedCoordinatesDb extends SQLiteOpenHelper {
     }
 
     /**
-     * v1.12.2 one-shot migration: replaces the old wrong three-dots estimate
-     * (1134, 244) with the user-measured value (1012, 163). Idempotent —
-     * after the first run the stored value no longer matches the OLD pair
-     * so the check becomes a no-op. If the user already calibrated the
-     * coordinate to anything else, we leave it alone (their value wins).
-     * Returns true iff the row was actually overwritten.
+     * One-shot migration that brings stale three-dots defaults forward to
+     * the current best estimate. Any row whose value matches a previously
+     * shipped default is overwritten; user-calibrated values (anything not
+     * in the known-stale set) are preserved.
+     *
+     * v1.12.3 target: (1055, 160). Known stale: (1134, 244) from v1.12.0–1
+     * and (1012, 163) from v1.12.2.
      */
     public synchronized boolean migrateThreeDotsCoord() {
         Coord cur = findByName("ثلاث نقاط (قائمة علوية)");
         if (cur == null) return false;
-        if (cur.x == 1134 && cur.y == 244) {
-            upsert("ثلاث نقاط (قائمة علوية)", 1012, 163);
+        boolean stale =
+                (cur.x == 1134 && cur.y == 244) ||
+                (cur.x == 1012 && cur.y == 163);
+        if (stale) {
+            upsert("ثلاث نقاط (قائمة علوية)", 1055, 160);
             return true;
         }
         return false;

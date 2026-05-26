@@ -142,8 +142,14 @@
     <string name="confirm_clear_coords_msg">سيتم حذف كل الإحداثيات المحفوظة. لا يمكن التراجع. هل تريد المتابعة؟</string>
     <string name="confirm_delete_coord">حذف هذه الإحداثية؟</string>
     <string name="btn_test_coord">اختبار فوري</string>
-    <string name="btn_test_coord_delayed">اختبار بعد 5 ثوانٍ</string>
-    <string name="msg_tap_delayed">سيتم النقر خلال 5 ثوانٍ — انتقل إلى مودة الآن</string>
+    <string name="btn_test_coord_delayed">اختبار بعد 15 ثانية</string>
+    <string name="msg_tap_delayed">سيتم النقر خلال 15 ثانية — انتقل إلى مودة الآن</string>
+    <string name="btn_edit_coord">تعديل يدوي</string>
+    <string name="dialog_edit_coord_title">تعديل إحداثية</string>
+    <string name="dialog_edit_coord_x_hint">الإحداثي س (الأفقي)</string>
+    <string name="dialog_edit_coord_y_hint">الإحداثي ص (العمودي)</string>
+    <string name="msg_coord_updated">تم تحديث الإحداثية: %1$s</string>
+    <string name="msg_invalid_xy">يجب إدخال أرقام صحيحة للإحداثيات</string>
     <string name="btn_delete_coord">حذف</string>
     <string name="coord_xy_format">س = %1$d  ·  ص = %2$d</string>
     <string name="save_coord">حفظ</string>

@@ -559,6 +559,17 @@ public class MainActivity extends AppCompatActivity {
         actions.addView(testBtn);
         actions.addView(delBtn);
 
+        Button editBtn = new Button(this);
+        editBtn.setText(R.string.btn_edit_coord);
+        editBtn.setContentDescription(
+                getString(R.string.btn_edit_coord) + " " + c.name);
+        editBtn.setMinHeight(dp(48));
+        LinearLayout.LayoutParams elp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        elp.topMargin = dp(4);
+        editBtn.setLayoutParams(elp);
+        editBtn.setOnClickListener(v -> promptEditCoord(c));
+
         Button delayedTestBtn = new Button(this);
         delayedTestBtn.setText(R.string.btn_test_coord_delayed);
         delayedTestBtn.setContentDescription(
@@ -573,6 +584,7 @@ public class MainActivity extends AppCompatActivity {
         row.addView(name);
         row.addView(xy);
         row.addView(actions);
+        row.addView(editBtn);
         row.addView(delayedTestBtn);
         return row;
     }
@@ -600,7 +612,60 @@ public class MainActivity extends AppCompatActivity {
             runOnUiThread(() -> toast(ok
                     ? getString(R.string.msg_tap_done, c.name)
                     : getString(R.string.msg_tap_failed)));
-        }, 5000L);
+        }, 15000L);
+    }
+
+    private void promptEditCoord(SavedCoordinatesDb.Coord c) {
+        EditText xInput = new EditText(this);
+        xInput.setHint(R.string.dialog_edit_coord_x_hint);
+        xInput.setInputType(android.text.InputType.TYPE_CLASS_NUMBER
+                | android.text.InputType.TYPE_NUMBER_FLAG_SIGNED);
+        xInput.setText(String.valueOf(c.x));
+        xInput.setMinHeight(dp(56));
+
+        EditText yInput = new EditText(this);
+        yInput.setHint(R.string.dialog_edit_coord_y_hint);
+        yInput.setInputType(android.text.InputType.TYPE_CLASS_NUMBER
+                | android.text.InputType.TYPE_NUMBER_FLAG_SIGNED);
+        yInput.setText(String.valueOf(c.y));
+        yInput.setMinHeight(dp(56));
+
+        LinearLayout container = new LinearLayout(this);
+        container.setOrientation(LinearLayout.VERTICAL);
+        int sidePad = dp(20);
+        container.setPadding(sidePad, dp(8), sidePad, 0);
+
+        TextView label = new TextView(this);
+        label.setText(c.name);
+        label.setTextSize(15);
+        label.setPadding(0, 0, 0, dp(12));
+        container.addView(label);
+        container.addView(xInput);
+        container.addView(yInput);
+
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.dialog_edit_coord_title)
+                .setView(container)
+                .setPositiveButton(R.string.save_coord, (d, w) -> {
+                    Integer nx = parseInt(xInput);
+                    Integer ny = parseInt(yInput);
+                    if (nx == null || ny == null) {
+                        toast(getString(R.string.msg_invalid_xy));
+                        return;
+                    }
+                    coordsDb.upsert(c.name, nx, ny);
+                    toast(getString(R.string.msg_coord_updated, c.name));
+                    refreshCoordsList();
+                })
+                .setNegativeButton(R.string.cancel, null)
+                .show();
+    }
+
+    private Integer parseInt(EditText et) {
+        String s = textOf(et);
+        if (TextUtils.isEmpty(s)) return null;
+        try { return Integer.parseInt(s); }
+        catch (NumberFormatException e) { return null; }
     }
 
     private void confirmDeleteCoord(SavedCoordinatesDb.Coord c) {
