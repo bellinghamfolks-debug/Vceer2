@@ -1156,10 +1156,16 @@ public class ClickerService extends AccessibilityService {
      * the online path uses, so refreshContinueMode keeps working.
      */
     private long handleRefreshFindSearch(List<AccessibilityNodeInfo> roots, long now, int attempt) {
-        AccessibilityNodeInfo searchNode = null;
-        for (String kw : SEARCH_KEYWORDS) {
-            searchNode = findClickableInAll(roots, kw);
-            if (searchNode != null) break;
+        // v1.12.7 — try EXACT 'بحث' first so we don't accidentally tap
+        // 'بحث متقدم' or 'بحث باسم المستخدم' on Mawada's search screen
+        // (both contain 'بحث' as a substring). Only fall back to the
+        // substring search if no exact match is visible.
+        AccessibilityNodeInfo searchNode = findExactClickableInAll(roots, "بحث");
+        if (searchNode == null) {
+            for (String kw : SEARCH_KEYWORDS) {
+                searchNode = findClickableInAll(roots, kw);
+                if (searchNode != null) break;
+            }
         }
         if (searchNode != null && performClick(searchNode)) {
             diagEvent("REFRESH(3-dots): tapped بحث (attempt " + attempt + ")");
@@ -1525,6 +1531,55 @@ public class ClickerService extends AccessibilityService {
                 if (clickable == null) continue;
                 if (skipProcessed && processedBounds.contains(boundsKey(clickable))) continue;
                 return clickable;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * v1.12.7 — exact-text variant for cases where the substring search
+     * isn't selective enough. Mawada's "بحث" screen contains three
+     * different buttons whose text starts with بحث ("بحث",
+     * "بحث متقدم", "بحث باسم المستخدم"); the substring search returns
+     * whichever the framework iterates to first, which is rarely the
+     * simple submit button we want. This variant filters the native-API
+     * hits down to the ones whose visible text OR contentDescription
+     * equals the needle exactly (after normalization), and returns the
+     * first clickable ancestor of any such match.
+     */
+    private AccessibilityNodeInfo findExactClickableInAll(
+            List<AccessibilityNodeInfo> roots, String text) {
+        if (text == null || text.isEmpty()) return null;
+        String exactNeedle = normalizeArabic(text.trim());
+        for (AccessibilityNodeInfo root : roots) {
+            if (root == null) continue;
+            List<AccessibilityNodeInfo> hits;
+            try {
+                hits = root.findAccessibilityNodeInfosByText(text);
+            } catch (Throwable t) {
+                continue;
+            }
+            if (hits == null) continue;
+            for (AccessibilityNodeInfo h : hits) {
+                if (h == null) continue;
+                track(h);
+                if (!h.isVisibleToUser()) continue;
+                boolean exact = false;
+                CharSequence ht = h.getText();
+                if (ht != null
+                        && exactNeedle.equals(normalizeArabic(ht.toString().trim()))) {
+                    exact = true;
+                }
+                if (!exact) {
+                    CharSequence hd = h.getContentDescription();
+                    if (hd != null
+                            && exactNeedle.equals(normalizeArabic(hd.toString().trim()))) {
+                        exact = true;
+                    }
+                }
+                if (!exact) continue;
+                AccessibilityNodeInfo clickable = climbToClickable(h);
+                if (clickable != null) return clickable;
             }
         }
         return null;
