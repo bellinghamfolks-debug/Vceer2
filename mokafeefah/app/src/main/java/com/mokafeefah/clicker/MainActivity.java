@@ -616,39 +616,44 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void promptEditCoord(SavedCoordinatesDb.Coord c) {
-        EditText xInput = new EditText(this);
-        xInput.setHint(R.string.dialog_edit_coord_x_hint);
-        xInput.setInputType(android.text.InputType.TYPE_CLASS_NUMBER
-                | android.text.InputType.TYPE_NUMBER_FLAG_SIGNED);
-        xInput.setText(String.valueOf(c.x));
-        xInput.setMinHeight(dp(56));
-
-        EditText yInput = new EditText(this);
-        yInput.setHint(R.string.dialog_edit_coord_y_hint);
-        yInput.setInputType(android.text.InputType.TYPE_CLASS_NUMBER
-                | android.text.InputType.TYPE_NUMBER_FLAG_SIGNED);
-        yInput.setText(String.valueOf(c.y));
-        yInput.setMinHeight(dp(56));
-
         LinearLayout container = new LinearLayout(this);
         container.setOrientation(LinearLayout.VERTICAL);
         int sidePad = dp(20);
         container.setPadding(sidePad, dp(8), sidePad, 0);
 
-        TextView label = new TextView(this);
-        label.setText(c.name);
-        label.setTextSize(15);
-        label.setPadding(0, 0, 0, dp(12));
-        container.addView(label);
+        TextView nameLabel = new TextView(this);
+        nameLabel.setText(c.name);
+        nameLabel.setTextSize(16);
+        nameLabel.setTypeface(nameLabel.getTypeface(), android.graphics.Typeface.BOLD);
+        nameLabel.setPadding(0, 0, 0, dp(16));
+        container.addView(nameLabel);
+
+        TextView xLabel = new TextView(this);
+        xLabel.setText(R.string.dialog_edit_coord_x_hint);
+        xLabel.setTextSize(15);
+        xLabel.setPadding(0, dp(4), 0, dp(4));
+        container.addView(xLabel);
+
+        EditText xInput = buildCoordEditField(String.valueOf(c.x),
+                getString(R.string.dialog_edit_coord_x_hint));
         container.addView(xInput);
+
+        TextView yLabel = new TextView(this);
+        yLabel.setText(R.string.dialog_edit_coord_y_hint);
+        yLabel.setTextSize(15);
+        yLabel.setPadding(0, dp(16), 0, dp(4));
+        container.addView(yLabel);
+
+        EditText yInput = buildCoordEditField(String.valueOf(c.y),
+                getString(R.string.dialog_edit_coord_y_hint));
         container.addView(yInput);
 
         new AlertDialog.Builder(this)
                 .setTitle(R.string.dialog_edit_coord_title)
                 .setView(container)
                 .setPositiveButton(R.string.save_coord, (d, w) -> {
-                    Integer nx = parseInt(xInput);
-                    Integer ny = parseInt(yInput);
+                    Integer nx = parseCoord(xInput);
+                    Integer ny = parseCoord(yInput);
                     if (nx == null || ny == null) {
                         toast(getString(R.string.msg_invalid_xy));
                         return;
@@ -661,10 +666,50 @@ public class MainActivity extends AppCompatActivity {
                 .show();
     }
 
-    private Integer parseInt(EditText et) {
-        String s = textOf(et);
-        if (TextUtils.isEmpty(s)) return null;
-        try { return Integer.parseInt(s); }
+    private EditText buildCoordEditField(String initialValue, String description) {
+        EditText et = new EditText(this);
+        et.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        et.setText(initialValue);
+        et.setMinHeight(dp(56));
+        et.setTextSize(20);
+        et.setContentDescription(description);
+        et.setSelectAllOnFocus(true);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        et.setLayoutParams(lp);
+        try { et.setSelection(initialValue.length()); } catch (Throwable ignore) {}
+        return et;
+    }
+
+    /**
+     * Parse an integer that may contain Arabic-Indic digits (٠١٢٣٤٥٦٧٨٩) or
+     * Eastern Arabic-Indic digits (۰۱۲۳۴۵۶۷۸۹). The soft keyboard on Arabic-
+     * locale phones routinely produces these instead of Latin digits, and
+     * the bare Integer.parseInt() rejects them — silently leaving the user
+     * convinced "the edit doesn't work". Strip whitespace and bidi marks
+     * before parsing.
+     */
+    private Integer parseCoord(EditText et) {
+        if (et == null) return null;
+        String raw = et.getText() == null ? "" : et.getText().toString();
+        if (raw.isEmpty()) return null;
+        StringBuilder out = new StringBuilder(raw.length());
+        for (int i = 0; i < raw.length(); i++) {
+            char ch = raw.charAt(i);
+            if (ch >= '٠' && ch <= '٩') {
+                out.append((char) ('0' + (ch - '٠')));
+            } else if (ch >= '۰' && ch <= '۹') {
+                out.append((char) ('0' + (ch - '۰')));
+            } else if (ch >= '0' && ch <= '9') {
+                out.append(ch);
+            } else if (ch == '-' || ch == '+') {
+                out.append(ch);
+            }
+            // Drop spaces, bidi marks, commas, anything else.
+        }
+        if (out.length() == 0) return null;
+        try { return Integer.parseInt(out.toString()); }
         catch (NumberFormatException e) { return null; }
     }
 
