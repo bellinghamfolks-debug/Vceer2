@@ -18,12 +18,10 @@ import android.view.accessibility.AccessibilityWindowInfo;
 import java.io.File;
 import java.io.FileWriter;
 import java.text.SimpleDateFormat;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.Date;
-import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
@@ -117,7 +115,12 @@ public class ClickerService extends AccessibilityService {
     private static final int  MAX_NODES_PER_TICK    = 6000;
     private static final int  CARD_MAX_CLIMB        = 9;
     private static final int  CARD_TEXT_DEPTH       = 6;
-    private static final int  MIN_TEXT_CHARS_FOR_FP = 6;
+    // v1.12.14: dropped 6 → 3. Mawada's search-results cards expose very
+    // little text per row (often just an age or a country); the older
+    // 6-char threshold was rejecting every search-result card and
+    // collapsing fingerprintMemberFromButton() to null, which is the
+    // root cause of the refresh-loop dedup failures.
+    private static final int  MIN_TEXT_CHARS_FOR_FP = 3;
 
     // v8: rewind state — repeatedly fires SCROLL_BACKWARD on the main
     // scrollable until it refuses or we hit the safety cap.
@@ -129,11 +132,15 @@ public class ClickerService extends AccessibilityService {
     // actually respond. 3 minutes of unproductive scrolling is the new bar.
     private static final long NO_PROGRESS_BUDGET_MS = 180_000L;
 
-    // v10.0: soft-refresh tuning. Tap Mawada's "members" tab every N
-    // confirmed likes. 80 is a sweet spot from the dump data — by then the
-    // tree has roughly doubled, latency is starting to climb, but a refresh
-    // is still well below Mawada's apparent rate-limit thresholds.
-    private static final int  LIKES_PER_SOFT_REFRESH = 80;
+    // v1.12.14: bumped 80 → 200. The previous cadence forced a refresh
+    // every ~25 minutes of liking, and each three-dots refresh effectively
+    // dropped the bot back near the top of a re-sorted search result list.
+    // While dedup is unreliable on the search-results layout, 200 likes
+    // between refreshes minimises the number of restart-from-top cycles.
+    // Pre-existing latency considerations: even at 200 likes the WebView
+    // tree only roughly doubles from its baseline (~1.3 K → ~2.5 K nodes),
+    // which the v9.4 hot-path fixes already absorb without throughput loss.
+    private static final int  LIKES_PER_SOFT_REFRESH = 200;
     // Visible text / desc of Mawada's bottom-bar entry that returns the
     // user to the members search page. Confirmed in the v9.4 dump:
     //   [C] [V] [412,2387][806,2712] android.view.View desc="الأعضاء"
@@ -254,17 +261,21 @@ public class ClickerService extends AccessibilityService {
     // tap Mawada's own "members" tab and reset its WebView DOM.
     private int    likesSinceRefresh        = 0;
 
-    // v1.12.12: short-term rolling buffer of the last RECENT_MEMBER_BUFFER
-    // member identifiers the bot interacted with this session. Catches the
-    // refresh-loop case where Mawada's search submission brings us back to
-    // the top of a list that overlaps with the rows we JUST liked: the
-    // DB-based dedup misses those rows whenever fingerprintMemberFromButton
-    // returned null (e.g. card layout doesn't satisfy 'card-shaped'), so
-    // they'd be re-liked silently. A window of 10 is small enough that a
-    // coincidental collision between two genuinely different members is
-    // negligible, and large enough to cover the typical refresh overlap.
-    private static final int RECENT_MEMBER_BUFFER = 10;
-    private final Deque<String> recentMemberIds = new ArrayDeque<>(RECENT_MEMBER_BUFFER + 1);
+    // v1.12.14: unlimited session-local set of member identifiers we've
+    // interacted with in this session. Grew out of v1.12.12's 10-entry
+    // rolling buffer: a small window helps with the refresh overlap but
+    // gets defeated as soon as Mawada's three-dots refresh shuffles the
+    // result order or returns >10 already-liked rows at the top. The
+    // session set has no size limit — every successful like (or filter-
+    // mode profile inspection) inserts its looseId here, and every LOOK
+    // tick checks before tapping. Memory cost is negligible (a SHA-1 hex
+    // string is ~42 bytes; at 1000 likes the set holds ~42 KB).
+    //
+    // Companion to LikedMembersDb.isLiked() which uses the strict
+    // Arabic-only fingerprint: looseMemberId() now uses the more
+    // permissive 3-char card-text hash, so this set catches members on
+    // screens where the strict fingerprint returns null.
+    private final Set<String> sessionMemberIds = new HashSet<>(512);
 
     // v1.11: tracks the member fingerprint we entered the profile for in
     // filter mode, so that on exit (whether we liked or not) we can record
@@ -373,7 +384,7 @@ public class ClickerService extends AccessibilityService {
         rewindStepsDone = 0;
         scrollPatternIndex = 0;
         likesSinceRefresh = 0;
-        recentMemberIds.clear();
+        sessionMemberIds.clear();
         long now = System.currentTimeMillis();
         lastButtonFoundMs = now;
         // v8: rewind the target list to its true top before searching. Mawadda's
@@ -621,14 +632,15 @@ public class ClickerService extends AccessibilityService {
             String key = boundsKey(likeBtn);
 
             String fp = fingerprintMemberFromButton(likeBtn);
-            // v1.12.12: short-term rolling-buffer dedup. Catches refresh-loop
-            // repeats even when fp would be null (search-results card layout
-            // doesn't always satisfy fingerprintMemberFromButton's heuristics).
+            // v1.12.14: session-local dedup using the permissive loose ID.
+            // Catches refresh-loop repeats even when the strict fp would be
+            // null (search-results card layout doesn't always satisfy
+            // fingerprintMemberFromButton's Arabic-letter / length rules).
             String looseId = looseMemberId(likeBtn);
-            if (looseId != null && recentMemberIds.contains(looseId)) {
+            if (looseId != null && sessionMemberIds.contains(looseId)) {
                 processedBounds.add(key);
                 skippedCount.incrementAndGet();
-                diagEvent("LOOK: member at " + key + " matches recent buffer, skipping (looseId="
+                diagEvent("LOOK: member at " + key + " matches session set, skipping (looseId="
                         + looseId.substring(0, Math.min(12, looseId.length())) + ")");
                 setAction(getString(R.string.action_skip));
                 lastButtonFoundMs = now;
@@ -670,7 +682,7 @@ public class ClickerService extends AccessibilityService {
                     pendingProfileFp = fp;
                     pendingProfileBoundsKey = key;
                     inspectStage = 0;
-                    rememberRecentMember(looseId);
+                    if (looseId != null) sessionMemberIds.add(looseId);
                     diagEvent("LOOK[FILTER]: opened profile from card at " + key);
                     setAction(getString(R.string.action_inspect_open));
                     lastButtonFoundMs = now;
@@ -686,7 +698,7 @@ public class ClickerService extends AccessibilityService {
                 likesCount.incrementAndGet();
                 likesSinceRefresh++;
                 if (fp != null && db != null) db.markLiked(fp);
-                rememberRecentMember(looseId);
+                if (looseId != null) sessionMemberIds.add(looseId);
                 diagEvent("LOOK: clicked like-btn at " + key + " (likes now "
                         + likesCount.get() + ") fp="
                         + (fp == null ? "NULL" : fp.substring(0, Math.min(12, fp.length())))
@@ -1917,10 +1929,17 @@ public class ClickerService extends AccessibilityService {
             current.getBoundsInScreen(r);
             long area = (long) Math.max(0, r.width()) * (long) Math.max(0, r.height());
 
+            // v1.12.14: width threshold dropped 50% → 30% so we also catch
+            // Mawada's search-result grid cells (which are roughly a third
+            // of the screen wide). The "smallest non-zero card-shaped
+            // ancestor" rule already prevents us from accidentally
+            // climbing to the whole list, because the list itself is
+            // taller than 55% of the screen and gets rejected by the
+            // upper-bound check.
             boolean cardShaped =
                     r.height() >= btnH * 2 &&
                     r.height() <= (int) (screenH * 0.55f) &&
-                    r.width()  >= (int) (screenW * 0.50f) &&
+                    r.width()  >= (int) (screenW * 0.30f) &&
                     area > 0;
 
             if (cardShaped && area < bestArea) {
@@ -1962,15 +1981,6 @@ public class ClickerService extends AccessibilityService {
         if (sb.length() < MIN_TEXT_CHARS_FOR_FP) return null;
         String h = LikedMembersDb.fingerprint(sb.toString());
         return h == null ? null : "T:" + h;
-    }
-
-    private void rememberRecentMember(String id) {
-        if (id == null) return;
-        recentMemberIds.remove(id); // keep most-recent at the tail
-        recentMemberIds.addLast(id);
-        while (recentMemberIds.size() > RECENT_MEMBER_BUFFER) {
-            recentMemberIds.pollFirst();
-        }
     }
 
     /**
