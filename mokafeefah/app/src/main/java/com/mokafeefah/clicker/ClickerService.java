@@ -18,10 +18,12 @@ import android.view.accessibility.AccessibilityWindowInfo;
 import java.io.File;
 import java.io.FileWriter;
 import java.text.SimpleDateFormat;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.Date;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
@@ -252,6 +254,18 @@ public class ClickerService extends AccessibilityService {
     // tap Mawada's own "members" tab and reset its WebView DOM.
     private int    likesSinceRefresh        = 0;
 
+    // v1.12.12: short-term rolling buffer of the last RECENT_MEMBER_BUFFER
+    // member identifiers the bot interacted with this session. Catches the
+    // refresh-loop case where Mawada's search submission brings us back to
+    // the top of a list that overlaps with the rows we JUST liked: the
+    // DB-based dedup misses those rows whenever fingerprintMemberFromButton
+    // returned null (e.g. card layout doesn't satisfy 'card-shaped'), so
+    // they'd be re-liked silently. A window of 10 is small enough that a
+    // coincidental collision between two genuinely different members is
+    // negligible, and large enough to cover the typical refresh overlap.
+    private static final int RECENT_MEMBER_BUFFER = 10;
+    private final Deque<String> recentMemberIds = new ArrayDeque<>(RECENT_MEMBER_BUFFER + 1);
+
     // v1.11: tracks the member fingerprint we entered the profile for in
     // filter mode, so that on exit (whether we liked or not) we can record
     // the outcome on the right member and avoid re-opening it next round.
@@ -359,6 +373,7 @@ public class ClickerService extends AccessibilityService {
         rewindStepsDone = 0;
         scrollPatternIndex = 0;
         likesSinceRefresh = 0;
+        recentMemberIds.clear();
         long now = System.currentTimeMillis();
         lastButtonFoundMs = now;
         // v8: rewind the target list to its true top before searching. Mawadda's
@@ -606,6 +621,19 @@ public class ClickerService extends AccessibilityService {
             String key = boundsKey(likeBtn);
 
             String fp = fingerprintMemberFromButton(likeBtn);
+            // v1.12.12: short-term rolling-buffer dedup. Catches refresh-loop
+            // repeats even when fp would be null (search-results card layout
+            // doesn't always satisfy fingerprintMemberFromButton's heuristics).
+            String looseId = looseMemberId(likeBtn);
+            if (looseId != null && recentMemberIds.contains(looseId)) {
+                processedBounds.add(key);
+                skippedCount.incrementAndGet();
+                diagEvent("LOOK: member at " + key + " matches recent buffer, skipping (looseId="
+                        + looseId.substring(0, Math.min(12, looseId.length())) + ")");
+                setAction(getString(R.string.action_skip));
+                lastButtonFoundMs = now;
+                return Math.max(150L, config.scanIntervalMs / 2);
+            }
             if (config.dedupEnabled && fp != null && db != null && db.isLiked(fp)) {
                 processedBounds.add(key);
                 skippedCount.incrementAndGet();
@@ -642,6 +670,7 @@ public class ClickerService extends AccessibilityService {
                     pendingProfileFp = fp;
                     pendingProfileBoundsKey = key;
                     inspectStage = 0;
+                    rememberRecentMember(looseId);
                     diagEvent("LOOK[FILTER]: opened profile from card at " + key);
                     setAction(getString(R.string.action_inspect_open));
                     lastButtonFoundMs = now;
@@ -657,9 +686,12 @@ public class ClickerService extends AccessibilityService {
                 likesCount.incrementAndGet();
                 likesSinceRefresh++;
                 if (fp != null && db != null) db.markLiked(fp);
+                rememberRecentMember(looseId);
                 diagEvent("LOOK: clicked like-btn at " + key + " (likes now "
                         + likesCount.get() + ") fp="
-                        + (fp == null ? "NULL" : fp.substring(0, Math.min(12, fp.length()))));
+                        + (fp == null ? "NULL" : fp.substring(0, Math.min(12, fp.length())))
+                        + " loose=" + (looseId == null ? "NULL"
+                                : looseId.substring(0, Math.min(12, looseId.length()))));
                 setAction(getString(R.string.action_like));
                 lastButtonFoundMs = now;
                 firstNoProgressScrollMs = 0L;
@@ -1901,6 +1933,66 @@ public class ClickerService extends AccessibilityService {
             current = parent;
         }
         return best;
+    }
+
+    /**
+     * v1.12.12 — loose member identifier used by the short-term rolling
+     * buffer. Where fingerprintMemberFromButton() is strict (must climb to
+     * a card-shaped ancestor, must collect ≥ 6 chars, must see Arabic
+     * letters before returning anything), this one returns whatever
+     * identifying signal it can pull off the like button's neighborhood:
+     *
+     *   1. Card-text hash, if climbToMemberCard() finds one.
+     *   2. Like button's own contentDescription, when Mawada exposes a
+     *      per-member URL there.
+     *   3. The like button's nearest non-empty ancestor desc, walking up
+     *      a few levels.
+     *
+     * This is only used to detect the refresh-loop overlap, not to write
+     * to the long-term LikedMembersDb. A collision between two genuinely
+     * different members inside a 10-entry window is unlikely enough that
+     * the user's suggested approach holds: similarity is rare.
+     */
+    private String looseMemberId(AccessibilityNodeInfo likeBtn) {
+        if (likeBtn == null) return null;
+        AccessibilityNodeInfo card = climbToMemberCard(likeBtn);
+        if (card != null) {
+            Rect cardR = new Rect();
+            card.getBoundsInScreen(cardR);
+            if (!cardR.isEmpty()) {
+                StringBuilder sb = new StringBuilder(256);
+                collectCardText(card, cardR, sb, 0);
+                if (sb.length() > 0) {
+                    String h = LikedMembersDb.fingerprint(sb.toString());
+                    if (h != null) return "T:" + h;
+                }
+            }
+        }
+        CharSequence btnDesc = likeBtn.getContentDescription();
+        if (btnDesc != null && btnDesc.length() > 0) {
+            String h = LikedMembersDb.fingerprint(btnDesc.toString());
+            if (h != null) return "B:" + h;
+        }
+        AccessibilityNodeInfo parent = likeBtn.getParent();
+        for (int i = 0; i < 4 && parent != null; i++) {
+            track(parent);
+            CharSequence d = parent.getContentDescription();
+            if (d != null && d.length() > 0) {
+                String h = LikedMembersDb.fingerprint(d.toString());
+                if (h != null) return "P" + i + ":" + h;
+            }
+            parent = parent.getParent();
+        }
+        return null;
+    }
+
+    private void rememberRecentMember(String id) {
+        if (id == null) return;
+        recentMemberIds.remove(id); // keep most-recent at the tail
+        recentMemberIds.addLast(id);
+        while (recentMemberIds.size() > RECENT_MEMBER_BUFFER) {
+            recentMemberIds.pollFirst();
+        }
     }
 
     /**
