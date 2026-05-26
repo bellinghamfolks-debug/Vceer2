@@ -1156,16 +1156,31 @@ public class ClickerService extends AccessibilityService {
      * the online path uses, so refreshContinueMode keeps working.
      */
     private long handleRefreshFindSearch(List<AccessibilityNodeInfo> roots, long now, int attempt) {
-        // v1.12.7 — try EXACT 'بحث' first so we don't accidentally tap
-        // 'بحث متقدم' or 'بحث باسم المستخدم' on Mawada's search screen
-        // (both contain 'بحث' as a substring). Only fall back to the
-        // substring search if no exact match is visible.
+        // v1.12.8 — three-layer lookup so we always end up on the plain
+        // 'بحث' submit button, never on 'بحث متقدم' / 'بحث باسم
+        // المستخدم' which both contain 'بحث' as a substring:
+        //   1) EXACT match on text or contentDescription (after Arabic
+        //      normalization including bidi-mark stripping).
+        //   2) SHORTEST visible label that still contains 'بحث' — the
+        //      submit button is one word, the other two are 2-3 words,
+        //      so length is a reliable tie-breaker if exact match
+        //      misses (e.g. button label has stray punctuation).
+        //   3) Plain substring match as last resort.
         AccessibilityNodeInfo searchNode = findExactClickableInAll(roots, "بحث");
+        if (searchNode == null) {
+            searchNode = findShortestClickableContaining(roots, "بحث");
+        }
         if (searchNode == null) {
             for (String kw : SEARCH_KEYWORDS) {
                 searchNode = findClickableInAll(roots, kw);
                 if (searchNode != null) break;
             }
+        }
+        if (searchNode != null) {
+            CharSequence picked = searchNode.getText();
+            if (picked == null) picked = searchNode.getContentDescription();
+            diagEvent("REFRESH(3-dots) attempt " + attempt
+                    + ": chose search candidate label='" + picked + "'");
         }
         if (searchNode != null && performClick(searchNode)) {
             diagEvent("REFRESH(3-dots): tapped بحث (attempt " + attempt + ")");
@@ -1586,6 +1601,53 @@ public class ClickerService extends AccessibilityService {
     }
 
     /**
+     * v1.12.8 — last-resort heuristic for the search-button picker.
+     * Returns the visible clickable node whose label (text or contentDesc)
+     * contains the needle AND is the shortest among all such nodes. The
+     * idea: when there are several variants like 'بحث', 'بحث متقدم',
+     * 'بحث باسم المستخدم', the plain submit button has the shortest
+     * label, so picking by length reliably skips the longer ones even
+     * if the exact-equality check missed (because of stray punctuation,
+     * an extra space, an icon character glued to the text, etc.).
+     * Falls back to substring search only after this returns null.
+     */
+    private AccessibilityNodeInfo findShortestClickableContaining(
+            List<AccessibilityNodeInfo> roots, String text) {
+        if (text == null || text.isEmpty()) return null;
+        String needle = normalizeArabic(text);
+        AccessibilityNodeInfo bestClickable = null;
+        int bestLen = Integer.MAX_VALUE;
+        for (AccessibilityNodeInfo root : roots) {
+            if (root == null) continue;
+            List<AccessibilityNodeInfo> hits;
+            try { hits = root.findAccessibilityNodeInfosByText(text); }
+            catch (Throwable t) { continue; }
+            if (hits == null) continue;
+            for (AccessibilityNodeInfo h : hits) {
+                if (h == null) continue;
+                track(h);
+                if (!h.isVisibleToUser()) continue;
+                CharSequence cls = h.getClassName();
+                if (cls != null && cls.toString().contains("EditText")) continue;
+                String label = "";
+                CharSequence ht = h.getText();
+                if (ht != null) label = normalizeArabic(ht.toString());
+                if (label.isEmpty()) {
+                    CharSequence hd = h.getContentDescription();
+                    if (hd != null) label = normalizeArabic(hd.toString());
+                }
+                if (label.isEmpty() || !label.contains(needle)) continue;
+                if (label.length() >= bestLen) continue;
+                AccessibilityNodeInfo clickable = climbToClickable(h);
+                if (clickable == null) continue;
+                bestClickable = clickable;
+                bestLen = label.length();
+            }
+        }
+        return bestClickable;
+    }
+
+    /**
      * NOTE: returned node is already in the tick pool (because every obtain
      * tracked it). Callers MUST NOT re-track or pre-recycle it.
      */
@@ -1856,6 +1918,31 @@ public class ClickerService extends AccessibilityService {
              .replace((char) 1570, (char) 1575)
              .replace((char) 1609, (char) 1610)
              .replace((char) 1577, (char) 1607);
+        // v1.12.8 — strip bidi / format / zero-width characters that
+        // Mawada sometimes embeds in button labels. String.trim() does
+        // not remove these (they are not whitespace by Java's rules),
+        // so a node whose text is literally "بحث‎" would fail an
+        // equals("بحث") check even though it is visually identical.
+        StringBuilder b = null;
+        for (int i = 0; i < r.length(); i++) {
+            char c = r.charAt(i);
+            boolean drop =
+                    c == '​' || c == '‌' || c == '‍' ||
+                    c == '‎' || c == '‏' ||
+                    c == '‪' || c == '‫' || c == '‬' ||
+                    c == '‭' || c == '‮' ||
+                    c == '⁦' || c == '⁧' || c == '⁨' ||
+                    c == '⁩' || c == '﻿';
+            if (drop) {
+                if (b == null) {
+                    b = new StringBuilder(r.length());
+                    b.append(r, 0, i);
+                }
+            } else if (b != null) {
+                b.append(c);
+            }
+        }
+        if (b != null) r = b.toString();
         return r.trim().toLowerCase(Locale.ROOT);
     }
 
