@@ -114,12 +114,13 @@ public class ClickerService extends AccessibilityService {
     private static final int  MAX_NODES_PER_TICK    = 6000;
     private static final int  CARD_MAX_CLIMB        = 9;
     private static final int  CARD_TEXT_DEPTH       = 6;
-    // v1.12.14: dropped 6 → 3. Mawada's search-results cards expose very
-    // little text per row (often just an age or a country); the older
-    // 6-char threshold was rejecting every search-result card and
-    // collapsing fingerprintMemberFromButton() to null, which is the
-    // root cause of the refresh-loop dedup failures.
-    private static final int  MIN_TEXT_CHARS_FOR_FP = 3;
+    // v1.13.1: dropped 3 → 2. Some search-result cards contain almost
+    // nothing readable (e.g. only an age like "38" or a country code).
+    // 2 chars is still enough to discriminate between distinct members
+    // when combined with the loose-vs-strict separation in
+    // identifyMember(): if the card text is below 2 chars we genuinely
+    // don't have enough signal to dedup against.
+    private static final int  MIN_TEXT_CHARS_FOR_FP = 2;
 
     // v8: rewind state — repeatedly fires SCROLL_BACKWARD on the main
     // scrollable until it refuses or we hit the safety cap.
@@ -148,14 +149,24 @@ public class ClickerService extends AccessibilityService {
     // cycles, because that's almost always a sign Mawada changed its
     // layout and we'd just spin forever.
     private static final int  MAX_CONSECUTIVE_ERRORS  = 3;
-    private static final int  MAX_REFRESH_FAILURES    = 3;
+    // v1.13.1 — raised from 3 to 8. The previous threshold tripped after
+    // ~3 refresh cycles because attempt 2 timeout was wrongly counted as
+    // a failure (it's the expected outcome when Mawada's three-dots tap
+    // navigates DIRECTLY to the search form, so the first بحث tap submits
+    // and the second بحث has nothing to find). attempt 2 is now treated
+    // as a success when it times out; this cap is a final safety net for
+    // genuine repeated three-dots failures.
+    private static final int  MAX_REFRESH_FAILURES    = 8;
     // v1.13.0 — viewport-signature scroll verification. If three
     // consecutive scrolls leave the viewport unchanged, switch to soft
     // refresh instead of swiping uselessly forever.
     private static final int  MAX_UNCHANGED_SCROLLS   = 3;
-    // v1.13.0 — heavy timeline / snapshot diagnostics are off in
-    // production builds. Flip to true when investigating a regression.
-    private static final boolean DEBUG_DIAGNOSTICS = false;
+    // v1.13.1 — turned back on while we stabilise the v1.13.x line. The
+    // diagnostic dump is the only window we have into what's happening
+    // on the user's device, and the bug reports against v1.13.0 cannot
+    // be reproduced or fixed without it. Will be flipped to false in
+    // v1.13.2 once the user confirms stability.
+    private static final boolean DEBUG_DIAGNOSTICS = true;
     // Visible text / desc of Mawada's bottom-bar entry that returns the
     // user to the members search page. Confirmed in the v9.4 dump:
     //   [C] [V] [412,2387][806,2712] android.view.View desc="الأعضاء"
@@ -1285,14 +1296,24 @@ public class ClickerService extends AccessibilityService {
             setAction(getString(R.string.action_inspect_loading));
             return SOFT_REFRESH_WAIT_MS;
         }
-        diagEvent("REFRESH(3-dots): بحث not found at attempt " + attempt + ", resuming");
-        refreshFailures++;
-        if (refreshFailures >= MAX_REFRESH_FAILURES) {
-            stopInternal(STATUS_AUTO_STOPPED, "توقف لأن التحديث فشل أكثر من مرة");
+        diagEvent("REFRESH(3-dots): بحث not found at attempt " + attempt);
+        // v1.13.1 — distinguish a real failure (attempt 1: we never
+        // managed to open the search) from the expected end-of-flow case
+        // (attempt 2: Mawada's three-dots → search-form path submits with
+        // the FIRST بحث tap, so the second pass simply has nothing left
+        // to find — that's success, not failure).
+        if (attempt == 1) {
+            refreshFailures++;
+            if (refreshFailures >= MAX_REFRESH_FAILURES) {
+                stopInternal(STATUS_AUTO_STOPPED, "توقف لأن التحديث فشل أكثر من مرة");
+                return 300L;
+            }
+            transitionTo(STATE_LOOK_LIKE);
             return 300L;
         }
-        transitionTo(STATE_LOOK_LIKE);
-        return 300L;
+        // attempt 2 timeout → results page is showing; resume liking.
+        refreshFailures = 0;
+        return finishNavOnlineNow(now);
     }
 
     /**
@@ -1623,13 +1644,14 @@ public class ClickerService extends AccessibilityService {
      */
     private AccessibilityNodeInfo findByTextNative(
             List<AccessibilityNodeInfo> roots, String text, boolean skipProcessed) {
-        // v1.13.0 — collect every matching clickable then sort top-down
+        // v1.13.1 — collect every matching clickable then sort top-down
         // (and right-to-left within a row to respect RTL list order).
-        // The old "first hit wins" returned whichever node the framework
-        // iterated to, which on Mawada often picked a hidden header
-        // before the actual member's like button.
-        int topBand = (int) (screenH * 0.10f);
-        int bottomBand = (int) (screenH * 0.88f);
+        // The Y-band exclusion that lived here in v1.13.0 has been
+        // removed: it could exclude the first like-button in the list
+        // when the header was taller than expected, or the last one
+        // just before a soft scroll. Visual sort alone is enough to
+        // pick the right candidate; we no longer second-guess which
+        // ones to discard.
         List<AccessibilityNodeInfo> candidates = new ArrayList<>();
         List<Rect> bounds = new ArrayList<>();
         for (AccessibilityNodeInfo root : roots) {
@@ -1647,8 +1669,6 @@ public class ClickerService extends AccessibilityService {
                 if (skipProcessed && processedBounds.contains(boundsKey(clickable))) continue;
                 Rect r = new Rect();
                 clickable.getBoundsInScreen(r);
-                int cy = (r.top + r.bottom) / 2;
-                if (cy < topBand || cy > bottomBand) continue;
                 candidates.add(clickable);
                 bounds.add(r);
             }
