@@ -96,8 +96,7 @@ public class ClickerService extends AccessibilityService {
     // then text-matches the 'بحث' button twice in sequence:
     //   STATE_REFRESH_FIND_SEARCH_1  — tap the menu's بحث entry
     //   STATE_REFRESH_FIND_SEARCH_2  — submit by tapping بحث again
-    // After search completes, the same finishNavOnlineNow() logic runs
-    // (rewind vs. continue) so refreshContinueMode keeps working.
+    // After search completes finishNavOnlineNow() resumes LOOK_LIKE.
     private static final int STATE_REFRESH_FIND_SEARCH_1 = 8;
     private static final int STATE_REFRESH_FIND_SEARCH_2 = 9;
 
@@ -132,15 +131,31 @@ public class ClickerService extends AccessibilityService {
     // actually respond. 3 minutes of unproductive scrolling is the new bar.
     private static final long NO_PROGRESS_BUDGET_MS = 180_000L;
 
-    // v1.12.14: bumped 80 → 200. The previous cadence forced a refresh
-    // every ~25 minutes of liking, and each three-dots refresh effectively
-    // dropped the bot back near the top of a re-sorted search result list.
-    // While dedup is unreliable on the search-results layout, 200 likes
-    // between refreshes minimises the number of restart-from-top cycles.
-    // Pre-existing latency considerations: even at 200 likes the WebView
-    // tree only roughly doubles from its baseline (~1.3 K → ~2.5 K nodes),
-    // which the v9.4 hot-path fixes already absorb without throughput loss.
-    private static final int  LIKES_PER_SOFT_REFRESH = 200;
+    // v1.13.0 — adaptive soft-refresh trigger. The old fixed-count
+    // approach (LIKES_PER_SOFT_REFRESH = 80, then 200) either refreshed
+    // too often (reset-to-top loop) or too late (latency creeps). Now we
+    // refresh when EITHER the average tick cost exceeds MAX_AVG_TICK_MS
+    // (real performance signal) OR we hit the HARD cap (safety net for
+    // when the metric never fires). MIN_LIKES_BEFORE_REFRESH stays as a
+    // lower bound so we don't refresh during the first 80 likes regardless
+    // of how slow the device is.
+    private static final int  MIN_LIKES_BEFORE_REFRESH  = 80;
+    private static final int  HARD_LIKES_BEFORE_REFRESH = 140;
+    private static final long MAX_AVG_TICK_MS           = 1200L;
+    // v1.13.0 — safety caps. consecutiveTickErrors stops the bot after
+    // 3 unhandled exceptions in a row instead of swallowing them
+    // silently. refreshFailures stops it after 3 unsuccessful refresh
+    // cycles, because that's almost always a sign Mawada changed its
+    // layout and we'd just spin forever.
+    private static final int  MAX_CONSECUTIVE_ERRORS  = 3;
+    private static final int  MAX_REFRESH_FAILURES    = 3;
+    // v1.13.0 — viewport-signature scroll verification. If three
+    // consecutive scrolls leave the viewport unchanged, switch to soft
+    // refresh instead of swiping uselessly forever.
+    private static final int  MAX_UNCHANGED_SCROLLS   = 3;
+    // v1.13.0 — heavy timeline / snapshot diagnostics are off in
+    // production builds. Flip to true when investigating a regression.
+    private static final boolean DEBUG_DIAGNOSTICS = false;
     // Visible text / desc of Mawada's bottom-bar entry that returns the
     // user to the members search page. Confirmed in the v9.4 dump:
     //   [C] [V] [412,2387][806,2712] android.view.View desc="الأعضاء"
@@ -154,8 +169,10 @@ public class ClickerService extends AccessibilityService {
     // characters between letters) — the native substring search ignores
     // string normalization, so we have to feed it both literal forms.
     private static final String[] SEARCH_KEYWORDS = { "بحث", "بـحـث" };
-    // v1.12: the saved-coordinate row this refresh path looks up.
-    private static final String COORD_THREE_DOTS = "ثلاث نقاط (قائمة علوية)";
+    // v1.13.0: hard-coded coordinates for Mawada's three-dots menu button.
+    // SavedCoordinatesDb is gone; user no longer edits this in the UI.
+    private static final int THREE_DOTS_X = 60;
+    private static final int THREE_DOTS_Y = 160;
     // How long to wait after tapping the members tab before resuming.
     // Mawada's first paint of the fresh list is ~1.5-2 s on average.
     private static final long SOFT_REFRESH_WAIT_MS = 2500L;
@@ -198,9 +215,6 @@ public class ClickerService extends AccessibilityService {
     private BotConfig config;
     private StatusListener listener;
     private LikedMembersDb db;
-    // v1.12: lookup for saved (name → x,y). Used by the three-dots
-    // refresh path to find the menu coordinate the user pre-saved.
-    private SavedCoordinatesDb coordsDb;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final AtomicBoolean running = new AtomicBoolean(false);
@@ -256,10 +270,25 @@ public class ClickerService extends AccessibilityService {
     private int    likesAtLastScroll       = 0;
     private int    rewindStepsDone         = 0;
     private int    scrollPatternIndex      = 0; // rotates 0,1,2 within a streak
-    // v10.0: confirmed likes since the most recent soft refresh. When this
-    // reaches LIKES_PER_SOFT_REFRESH we switch into STATE_SOFT_REFRESH to
-    // tap Mawada's own "members" tab and reset its WebView DOM.
+    // v10.0: confirmed likes since the most recent soft refresh.
     private int    likesSinceRefresh        = 0;
+
+    // v1.13.0 — exponential moving average of tick cost (ms), used by
+    // shouldSoftRefresh() as the primary signal.
+    private long   avgTickMs                = 0L;
+    // v1.13.0 — consecutive performOneTick() exceptions. Resets on the
+    // first successful tick. Bot auto-stops at MAX_CONSECUTIVE_ERRORS.
+    private int    consecutiveTickErrors    = 0;
+    // v1.13.0 — soft-refresh failures (couldn't find بحث, three-dots
+    // tap didn't open menu, etc.). Bot auto-stops at MAX_REFRESH_FAILURES.
+    private int    refreshFailures          = 0;
+    // v1.13.0 — viewport signature taken right before performSmartScroll.
+    // Compared against the new viewport in handleLookLike's first tick
+    // after the scroll. If unchanged, the scroll didn't actually move
+    // the list and we shouldn't clear processedBounds (which would make
+    // us re-tap the same buttons).
+    private String pendingScrollSignature   = null;
+    private int    unchangedScrollCount     = 0;
 
     // v1.12.14: unlimited session-local set of member identifiers we've
     // interacted with in this session. Grew out of v1.12.12's 10-entry
@@ -301,12 +330,24 @@ public class ClickerService extends AccessibilityService {
         @Override public void run() {
             if (!running.get()) return;
             long nextDelay;
+            long tickStart = System.currentTimeMillis();
             try {
                 nextDelay = performOneTick();
+                consecutiveTickErrors = 0;
             } catch (Throwable t) {
+                consecutiveTickErrors++;
+                diagEvent("TICK ERROR: " + t.getClass().getSimpleName()
+                        + " (" + consecutiveTickErrors + "/" + MAX_CONSECUTIVE_ERRORS + ")");
                 nextDelay = Math.max(1000L, config != null ? config.scanIntervalMs : 1000L);
+                if (consecutiveTickErrors >= MAX_CONSECUTIVE_ERRORS) {
+                    stopInternal(STATUS_AUTO_STOPPED, "توقف بسبب أخطاء متكررة في الخدمة");
+                    drainTickPool();
+                    return;
+                }
             } finally {
                 drainTickPool();
+                long cost = System.currentTimeMillis() - tickStart;
+                avgTickMs = (avgTickMs == 0L) ? cost : ((avgTickMs * 7L) + cost) / 8L;
             }
             if (running.get()) {
                 handler.postDelayed(this, Math.max(150L, nextDelay));
@@ -326,13 +367,13 @@ public class ClickerService extends AccessibilityService {
         super.onServiceConnected();
         instance = this;
         if (db == null) db = new LikedMembersDb(this);
-        if (coordsDb == null) coordsDb = new SavedCoordinatesDb(this);
     }
 
     @Override
     public boolean onUnbind(Intent intent) {
         instance = null;
         running.set(false);
+        if (db != null) db.flushNow();
         return super.onUnbind(intent);
     }
 
@@ -342,6 +383,7 @@ public class ClickerService extends AccessibilityService {
         running.set(false);
         handler.removeCallbacksAndMessages(null);
         drainTickPool();
+        if (db != null) db.flushNow();
         super.onDestroy();
     }
 
@@ -374,6 +416,7 @@ public class ClickerService extends AccessibilityService {
     public boolean startBot(BotConfig cfg) {
         if (running.get()) return false;
         if (db == null) db = new LikedMembersDb(this);
+        db.warmUp();
         this.config = cfg;
         likesCount.set(0);
         skippedCount.set(0);
@@ -385,6 +428,12 @@ public class ClickerService extends AccessibilityService {
         scrollPatternIndex = 0;
         likesSinceRefresh = 0;
         sessionMemberIds.clear();
+        // v1.13.0 — reset adaptive-refresh / safety counters.
+        avgTickMs = 0L;
+        consecutiveTickErrors = 0;
+        refreshFailures = 0;
+        pendingScrollSignature = null;
+        unchangedScrollCount = 0;
         long now = System.currentTimeMillis();
         lastButtonFoundMs = now;
         // v8: rewind the target list to its true top before searching. Mawadda's
@@ -404,7 +453,7 @@ public class ClickerService extends AccessibilityService {
                 + " yesText='" + cfg.yesText + "'"
                 + " dedup=" + cfg.dedupEnabled
                 + " filterMode=" + (cfg.filterDivorcedWidowedOnly ? "DIV_WID_ONLY" : "ALL")
-                + " refreshMode=" + (cfg.refreshContinueMode ? "CONTINUE" : "RESTART"));
+                + " findMode=" + cfg.findMembersMode);
         running.set(true);
         notifyUpdate(STATUS_RUNNING);
         handler.removeCallbacksAndMessages(null);
@@ -424,6 +473,7 @@ public class ClickerService extends AccessibilityService {
         running.set(false);
         handler.removeCallbacksAndMessages(null);
         if (reason != null && !reason.isEmpty()) lastAction = reason;
+        if (db != null) db.flushNow();
         vibrateAlert();
         notifyUpdate(status);
     }
@@ -452,6 +502,7 @@ public class ClickerService extends AccessibilityService {
     }
 
     private void diagBegin(long now) {
+        if (!DEBUG_DIAGNOSTICS) return;
         diagLog.setLength(0);
         diagLogStartMs = now;
         lastSnapshotMs = now;
@@ -461,27 +512,20 @@ public class ClickerService extends AccessibilityService {
     }
 
     private void diagEvent(String event) {
+        if (!DEBUG_DIAGNOSTICS) return;
         if (diagLogStartMs == 0L) return;
         long elapsed = System.currentTimeMillis() - diagLogStartMs;
-        // v9.4: avoid String.format() per event. Profile data from a 240-like
-        // session showed diagEvent was called ~10x per like (state changes,
-        // clicks, scrolls); String.format allocates several short-lived
-        // String + char[] objects each time, adding measurable GC pressure
-        // that compounded after 90+ likes. Direct StringBuilder append
-        // is ~5x cheaper and produces the same output.
         diagLog.append(elapsed).append(" ms | s=").append(stateName(state))
                .append(" | likes=").append(likesCount.get())
                .append(" skip=").append(skippedCount.get())
                .append(" | ").append(event).append('\n');
-        // Aggressively trim. The previous 256 KB cap meant a long session
-        // could keep ~250 KB of log text live in the heap, fragmenting the
-        // young generation and triggering more frequent GCs.
         if (diagLog.length() > 64 * 1024) {
             diagLog.delete(0, diagLog.length() / 2);
         }
     }
 
     private void diagMaybeSnapshot(long now, List<AccessibilityNodeInfo> roots) {
+        if (!DEBUG_DIAGNOSTICS) return;
         if (diagLogStartMs == 0L) return;
         if (now - lastSnapshotMs < SNAPSHOT_INTERVAL_MS) return;
         lastSnapshotMs = now;
@@ -489,7 +533,6 @@ public class ClickerService extends AccessibilityService {
         try { summary = buildScreenSummary(roots); }
         catch (Throwable t) { summary = "(snapshot failed)"; }
         long elapsed = now - diagLogStartMs;
-        // v9.4: same allocation reason as diagEvent — append parts directly.
         diagLog.append('\n').append("--- Snapshot @ ").append(elapsed)
                .append(" ms | state=").append(stateName(state))
                .append(" ---\n").append(summary).append('\n').append('\n');
@@ -514,11 +557,18 @@ public class ClickerService extends AccessibilityService {
             return config.scanIntervalMs;
         }
 
+        // v1.13.0 — filter to target package roots FIRST, before any
+        // expensive snapshot / keyword scan. Walking system_ui or other
+        // root windows wastes node-visit budget on trees we'll discard.
+        roots = filterTargetRoots(roots);
+        if (roots.isEmpty()) {
+            setAction(getString(R.string.action_wait));
+            return config.scanIntervalMs;
+        }
+
         diagMaybeSnapshot(now, roots);
 
-        // v9: idle-timeout check is now after roots are collected so the
-        // diagnostic dump has data to record. If we're idle, the dump tells
-        // us exactly what's on screen at the moment of failure.
+        // Idle timeout: if no buttons found for the configured budget, stop.
         if (now - lastButtonFoundMs > config.idleTimeoutMs) {
             diagEvent("AUTO-STOP: idle timeout fired (no buttons for "
                     + (now - lastButtonFoundMs) + "ms, limit=" + config.idleTimeoutMs + ")");
@@ -527,15 +577,7 @@ public class ClickerService extends AccessibilityService {
             return config.scanIntervalMs;
         }
 
-        // v8: detect Mawadda's "no more members" message before doing anything
-        // else this tick, so the user sees a clear stop reason instead of a
-        // silent timeout.
-        // v9.4: throttle this. Running a full tree scan every tick added
-        // ~50-100 ms per tick on Mawadda's ~4 K-node WebView, which is the
-        // dominant source of the "throughput drops from 5/min to 3/min
-        // after 90 likes" complaint. The check is only meaningful when
-        // pagination is stuck — so check it on every MUST_SCROLL tick (free
-        // signal that pagination just failed) plus a 20 s periodic poll.
+        // End-of-list message check (throttled, mainly in MUST_SCROLL).
         boolean shouldCheckEol =
                 state == STATE_MUST_SCROLL
              || (now - lastEndOfListCheckMs > END_OF_LIST_INTERVAL_MS);
@@ -545,20 +587,6 @@ public class ClickerService extends AccessibilityService {
                 diagEvent("AUTO-STOP: end-of-list message detected on screen");
                 autoStopWithDiagnostic(STATUS_AUTO_STOPPED,
                         getString(R.string.stop_reason_end_of_list), roots);
-                return config.scanIntervalMs;
-            }
-        }
-
-        if (config.targetPackage != null && !config.targetPackage.isEmpty()) {
-            boolean matches = false;
-            for (AccessibilityNodeInfo r : roots) {
-                CharSequence pkg = r.getPackageName();
-                if (pkg != null && config.targetPackage.equals(pkg.toString())) {
-                    matches = true; break;
-                }
-            }
-            if (!matches) {
-                setAction(getString(R.string.action_wait));
                 return config.scanIntervalMs;
             }
         }
@@ -600,19 +628,42 @@ public class ClickerService extends AccessibilityService {
     // ============================================================
 
     private long handleLookLike(List<AccessibilityNodeInfo> roots, long now) {
-        // v10.0: periodic soft refresh of Mawada's search page. Triggered
-        // here (top of LOOK_LIKE, when we're about to scan for a new like
-        // button) so it never fires mid-popup. After ~80 likes Mawada's
-        // WebView DOM has bloated to 2-3x its initial size and per-cycle
-        // latency starts climbing — tapping the members tab forces a
-        // re-render, the tree drops back to ~1.3 K nodes, and the next
-        // 80 likes run at early-session speed.
-        if (likesSinceRefresh >= LIKES_PER_SOFT_REFRESH) {
-            diagEvent("LOOK: triggering soft refresh after "
-                    + likesSinceRefresh + " likes since last refresh");
+        // v1.13.0 — verify the last scroll actually moved the viewport
+        // before clearing processedBounds. dispatchGesture() returning
+        // true only means the gesture was queued, not that the list
+        // scrolled. If it didn't, re-tapping the same bounds would
+        // bounce the bot on the same row forever.
+        if (pendingScrollSignature != null) {
+            String nowSig = viewportSignature(roots);
+            if (pendingScrollSignature.equals(nowSig)) {
+                unchangedScrollCount++;
+                diagEvent("LOOK: scroll did not change viewport, count="
+                        + unchangedScrollCount);
+                if (unchangedScrollCount >= MAX_UNCHANGED_SCROLLS) {
+                    pendingScrollSignature = null;
+                    unchangedScrollCount = 0;
+                    transitionTo(STATE_SOFT_REFRESH);
+                    return 100L;
+                }
+                pendingScrollSignature = null;
+                transitionTo(STATE_MUST_SCROLL);
+                return 500L;
+            }
+            unchangedScrollCount = 0;
+            pendingScrollSignature = null;
+            processedBounds.clear();
+        }
+
+        // v1.13.0 — adaptive soft refresh. Fires when EITHER the
+        // average tick cost crosses MAX_AVG_TICK_MS (latency signal)
+        // OR we hit HARD_LIKES_BEFORE_REFRESH (safety net).
+        if (shouldSoftRefresh()) {
+            diagEvent("LOOK: triggering soft refresh (likesSince="
+                    + likesSinceRefresh + " avgTick=" + avgTickMs + "ms)");
             transitionTo(STATE_SOFT_REFRESH);
             return 100L;
         }
+
         AccessibilityNodeInfo yes = findClickableInAll(roots, config.yesText);
         if (yes != null && performClick(yes)) {
             setAction(getString(R.string.action_yes));
@@ -629,50 +680,50 @@ public class ClickerService extends AccessibilityService {
 
         AccessibilityNodeInfo likeBtn = findUnprocessedClickable(roots, config.likeText);
         if (likeBtn != null) {
-            String key = boundsKey(likeBtn);
+            // v1.13.0 — single tree walk for both strict + loose IDs.
+            MemberIdentity id = identifyMember(likeBtn);
+            String key = id.boundsKey;
+            String fp = id.strictFp;
+            String looseId = id.looseId;
 
-            String fp = fingerprintMemberFromButton(likeBtn);
-            // v1.12.14: session-local dedup using the permissive loose ID.
-            // Catches refresh-loop repeats even when the strict fp would be
-            // null (search-results card layout doesn't always satisfy
-            // fingerprintMemberFromButton's Arabic-letter / length rules).
-            String looseId = looseMemberId(likeBtn);
-            if (looseId != null && sessionMemberIds.contains(looseId)) {
-                processedBounds.add(key);
-                skippedCount.incrementAndGet();
-                diagEvent("LOOK: member at " + key + " matches session set, skipping (looseId="
-                        + looseId.substring(0, Math.min(12, looseId.length())) + ")");
-                setAction(getString(R.string.action_skip));
-                lastButtonFoundMs = now;
-                return Math.max(150L, config.scanIntervalMs / 2);
+            // v1.13.0 — persistent loose-ID dedup via the DB. Combined
+            // with session set: DB catches cross-session repeats, the
+            // session set catches in-session repeats even before the
+            // first flush hits disk.
+            if (looseId != null) {
+                if (sessionMemberIds.contains(looseId)
+                        || (db != null && db.isLiked(looseId))) {
+                    processedBounds.add(key);
+                    skippedCount.incrementAndGet();
+                    diagEvent("LOOK: skip via looseId match " + key);
+                    setAction(getString(R.string.action_skip));
+                    lastButtonFoundMs = now;
+                    return Math.max(150L, config.scanIntervalMs / 2);
+                }
             }
             if (config.dedupEnabled && fp != null && db != null && db.isLiked(fp)) {
                 processedBounds.add(key);
                 skippedCount.incrementAndGet();
-                diagEvent("LOOK: like-btn at " + key + " skipped (already liked)");
+                diagEvent("LOOK: skip via strict fp match " + key);
                 setAction(getString(R.string.action_skip));
                 lastButtonFoundMs = now;
                 return Math.max(150L, config.scanIntervalMs / 2);
             }
 
-            // v1.11: filter mode — don't tap the like button directly.
-            // Open the member's profile, verify marital status, then
-            // either like or skip and back out.
+            // Filter mode — open profile, check marital status, like or skip.
             if (config.filterDivorcedWidowedOnly) {
                 if (fp != null && db != null && db.isInspected(fp)) {
                     processedBounds.add(key);
                     skippedCount.incrementAndGet();
-                    diagEvent("LOOK[FILTER]: member at " + key + " skipped (inspected before, not eligible)");
+                    diagEvent("LOOK[FILTER]: skip already-inspected " + key);
                     setAction(getString(R.string.action_skip_inspected));
                     lastButtonFoundMs = now;
                     return Math.max(150L, config.scanIntervalMs / 2);
                 }
                 AccessibilityNodeInfo openTarget = findProfileOpenTarget(likeBtn);
                 if (openTarget == null) {
-                    // No safe tap target found on the card — skip this row,
-                    // mark its bounds processed so we don't loop on it.
                     processedBounds.add(key);
-                    diagEvent("LOOK[FILTER]: no profile-open target on card at " + key + ", skipping");
+                    diagEvent("LOOK[FILTER]: no profile-open target at " + key);
                     skippedCount.incrementAndGet();
                     setAction(getString(R.string.action_skip));
                     return Math.max(150L, config.scanIntervalMs / 2);
@@ -682,8 +733,11 @@ public class ClickerService extends AccessibilityService {
                     pendingProfileFp = fp;
                     pendingProfileBoundsKey = key;
                     inspectStage = 0;
-                    if (looseId != null) sessionMemberIds.add(looseId);
-                    diagEvent("LOOK[FILTER]: opened profile from card at " + key);
+                    if (looseId != null) {
+                        sessionMemberIds.add(looseId);
+                        if (db != null) db.markLiked(looseId);
+                    }
+                    diagEvent("LOOK[FILTER]: opened profile " + key);
                     setAction(getString(R.string.action_inspect_open));
                     lastButtonFoundMs = now;
                     transitionTo(STATE_INSPECT_PROFILE);
@@ -698,26 +752,19 @@ public class ClickerService extends AccessibilityService {
                 likesCount.incrementAndGet();
                 likesSinceRefresh++;
                 if (fp != null && db != null) db.markLiked(fp);
-                if (looseId != null) sessionMemberIds.add(looseId);
-                diagEvent("LOOK: clicked like-btn at " + key + " (likes now "
-                        + likesCount.get() + ") fp="
-                        + (fp == null ? "NULL" : fp.substring(0, Math.min(12, fp.length())))
-                        + " loose=" + (looseId == null ? "NULL"
-                                : looseId.substring(0, Math.min(12, looseId.length()))));
+                if (looseId != null) {
+                    sessionMemberIds.add(looseId);
+                    if (db != null) db.markLiked(looseId);
+                }
+                diagEvent("LOOK: clicked like " + key + " likes=" + likesCount.get());
                 setAction(getString(R.string.action_like));
                 lastButtonFoundMs = now;
                 firstNoProgressScrollMs = 0L;
                 scrollPatternIndex = 0;
                 transitionTo(STATE_AFTER_LIKE);
-                // v10.0: shorter post-click delay. The previous popupWaitMs
-                // (1500 ms) was a blind sleep before we'd even start looking
-                // for "نعم"; the popup typically appears in 200-400 ms so
-                // we were wasting ~1 s on every successful like. Now we
-                // wait just long enough for the tap to register, then start
-                // polling at the (now-tighter) scanIntervalMs.
                 return 300L;
             }
-            diagEvent("LOOK: like-btn at " + key + " click FAILED");
+            diagEvent("LOOK: like-btn click FAILED at " + key);
             return config.scanIntervalMs;
         }
 
@@ -725,6 +772,20 @@ public class ClickerService extends AccessibilityService {
                 + " (processedBounds=" + processedBounds.size() + ")");
         transitionTo(STATE_MUST_SCROLL);
         return 300L;
+    }
+
+    /**
+     * v1.13.0 — adaptive refresh decision. Returns true when EITHER:
+     *  - the rolling average tick cost exceeds MAX_AVG_TICK_MS (latency
+     *    signal — Mawada's WebView tree has bloated enough to slow scans), OR
+     *  - we've crossed HARD_LIKES_BEFORE_REFRESH (safety cap regardless of
+     *    latency).
+     * Never fires before MIN_LIKES_BEFORE_REFRESH so we don't reset early.
+     */
+    private boolean shouldSoftRefresh() {
+        if (likesSinceRefresh < MIN_LIKES_BEFORE_REFRESH) return false;
+        if (avgTickMs > MAX_AVG_TICK_MS) return true;
+        return likesSinceRefresh >= HARD_LIKES_BEFORE_REFRESH;
     }
 
     /**
@@ -1029,14 +1090,13 @@ public class ClickerService extends AccessibilityService {
     }
 
     /**
-     * v10.0 — periodic soft refresh of Mawada's search-results page.
-     *
-     * Once every {@link #LIKES_PER_SOFT_REFRESH} confirmed likes we tap
-     * Mawada's own bottom-bar "الأعضاء" tab. That makes Mawada re-render
-     * the search page; the WebView accessibility DOM drops from ~6.5 K
-     * back to ~1.3 K nodes and per-cycle latency snaps back to early-
-     * session values. The user's filters are preserved because we're
-     * navigating WITHIN Mawada, not restarting it.
+     * v1.13.0 — periodic soft refresh of Mawada's search-results page.
+     * Triggered by shouldSoftRefresh() based on tick latency / like count.
+     * Tapping Mawada's own bottom-bar "الأعضاء" tab forces it to re-render
+     * the search page so the WebView accessibility DOM drops back to its
+     * initial size and per-cycle latency snaps back to early-session values.
+     * The user's filters are preserved because we're navigating WITHIN
+     * Mawada, not restarting it.
      *
      * Two-phase implementation:
      *   1. Find a clickable matching MEMBERS_TAB_KEYWORDS via the native
@@ -1095,13 +1155,9 @@ public class ClickerService extends AccessibilityService {
     }
 
     /**
-     * v1.11 — after tapping الأعضاء, try to also tap المتواجدون الآن so
-     * the bot lands on the "currently-online" sub-list as the user
-     * requested. After this completes, behaviour branches on the user's
-     * "after refresh" setting:
-     *   • refreshContinueMode = false (default)  → rewind to top.
-     *   • refreshContinueMode = true             → resume in place (dedup
-     *     will skip already-liked members and the bot keeps going).
+     * v1.13.0 — after tapping الأعضاء, also tap المتواجدون الآن so the
+     * bot lands on the "currently-online" sub-list. Always resumes
+     * LOOK_LIKE after (no rewind option).
      */
     private long handleNavOnlineNow(List<AccessibilityNodeInfo> roots, long now) {
         AccessibilityNodeInfo onlineTab = null;
@@ -1126,48 +1182,39 @@ public class ClickerService extends AccessibilityService {
     }
 
     private long finishNavOnlineNow(long now) {
+        // v1.13.0 — always resume LOOK_LIKE after a refresh. The old
+        // "restart from top" mode caused the bot to re-walk the first
+        // N rows of every refreshed list, where dedup (when imperfect)
+        // would silently re-tap them. We rely on the session set + DB
+        // looseId dedup to skip overlap and on viewportSignature to
+        // detect when scrolls don't make progress.
         processedBounds.clear();
-        if (config.refreshContinueMode) {
-            // Resume in place. Dedup (if on) handles skipping already-liked
-            // members as the bot scans down again.
-            diagEvent("NAV_ONLINE: refreshContinueMode=ON, resuming LOOK_LIKE");
-            transitionTo(STATE_LOOK_LIKE);
-            return 600L;
-        }
-        // Restart from top: rewind back to row #1 of the fresh list.
-        diagEvent("NAV_ONLINE: refreshContinueMode=OFF, rewinding to top");
-        rewindStepsDone = 0;
-        transitionTo(STATE_REWIND_TO_TOP);
+        likesSinceRefresh = 0;
+        diagEvent("NAV_ONLINE: refresh done, resuming LOOK_LIKE");
+        transitionTo(STATE_LOOK_LIKE);
         return 600L;
     }
 
     /**
-     * v1.12 — three-dots refresh entry. Looks up the saved 'ثلاث نقاط'
-     * coordinate and dispatches a gesture tap. The menu button has empty
-     * contentDescription in Mawada, so a text-based lookup never finds
-     * it; that's exactly why we record the coordinate up front.
-     *
-     * If the coord isn't saved (e.g. user wiped it without re-seeding)
-     * we fall back to the existing online path so the bot keeps making
-     * progress instead of stalling.
+     * v1.13.0 — three-dots refresh entry. The button's coordinate is
+     * fixed (THREE_DOTS_X, THREE_DOTS_Y) — Mawada doesn't expose it
+     * via accessibility text/desc, so we always dispatch a gesture tap.
      */
     private long startThreeDotsRefresh(long now) {
-        SavedCoordinatesDb.Coord coord =
-                coordsDb == null ? null : coordsDb.findByName(COORD_THREE_DOTS);
-        if (coord == null) {
-            diagEvent("REFRESH(3-dots): saved coord missing, falling back to online path");
-            // Force the rest of this tick down the online branch by
-            // temporarily mutating the mode? No — just delegate.
-            return fallbackOnlinePath(now);
-        }
-        boolean ok = tapAt(coord.x, coord.y);
+        boolean ok = tapAt(THREE_DOTS_X, THREE_DOTS_Y);
         if (!ok) {
-            diagEvent("REFRESH(3-dots): tapAt failed at (" + coord.x + "," + coord.y + ")");
+            diagEvent("REFRESH(3-dots): tapAt failed at (" + THREE_DOTS_X + "," + THREE_DOTS_Y + ")");
+            refreshFailures++;
+            if (refreshFailures >= MAX_REFRESH_FAILURES) {
+                stopInternal(STATUS_AUTO_STOPPED, "توقف لأن التحديث فشل أكثر من مرة");
+                return 300L;
+            }
             likesSinceRefresh = 0;
             transitionTo(STATE_LOOK_LIKE);
             return 300L;
         }
-        diagEvent("REFRESH(3-dots): tapped ثلاث نقاط at (" + coord.x + "," + coord.y + ")");
+        diagEvent("REFRESH(3-dots): tapped ثلاث نقاط at ("
+                + THREE_DOTS_X + "," + THREE_DOTS_Y + ")");
         setAction(getString(R.string.action_three_dots_tap));
         likesSinceRefresh = 0;
         processedBounds.clear();
@@ -1176,33 +1223,11 @@ public class ClickerService extends AccessibilityService {
     }
 
     /**
-     * Used when three-dots mode is selected but no coord is saved.
-     * Re-runs the online branch of handleSoftRefresh manually so we
-     * still consume this tick productively.
-     */
-    private long fallbackOnlinePath(long now) {
-        // We're already inside handleSoftRefresh's scope; emit one BACK
-        // so a popup can't block us, then come back next tick in the
-        // online branch by clearing the find-members override locally.
-        likesSinceRefresh = 0;
-        transitionTo(STATE_SOFT_REFRESH);
-        // Force one tick under the online branch by toggling: we can't
-        // mutate config, but the caller will re-enter handleSoftRefresh
-        // and we'll branch on findMembersMode again — same outcome
-        // (still three_dots, still missing). To avoid an infinite loop,
-        // resume LOOK_LIKE directly.
-        transitionTo(STATE_LOOK_LIKE);
-        return 600L;
-    }
-
-    /**
-     * v1.12 — find the 'بحث' button by text and tap it. Used twice in
-     * the three-dots refresh:
+     * v1.13.0 — find the 'بحث' submit button (tatweel-tolerant) and tap it.
+     * Used twice per three-dots refresh:
      *   attempt 1 → tap بحث in the menu opened by the three-dots tap
      *   attempt 2 → tap بحث again on the search form (submit)
-     * After attempt 2 the bot is back on a fresh search-results list
-     * and finishNavOnlineNow() applies the same continue/restart logic
-     * the online path uses, so refreshContinueMode keeps working.
+     * After attempt 2 finishNavOnlineNow() resumes LOOK_LIKE.
      */
     private long handleRefreshFindSearch(List<AccessibilityNodeInfo> roots, long now, int attempt) {
         // v1.12.10 — replace the native-search-driven picker with a
@@ -1243,23 +1268,29 @@ public class ClickerService extends AccessibilityService {
         if (searchNode != null && performClick(searchNode)) {
             diagEvent("REFRESH(3-dots): tapped بحث (attempt " + attempt + ")");
             setAction(getString(R.string.action_search_tap));
+            // Successful tap on attempt 2 means the refresh sequence
+            // completed; reset failure counter.
+            if (attempt == 2) refreshFailures = 0;
             if (attempt == 1) {
                 transitionTo(STATE_REFRESH_FIND_SEARCH_2);
                 return SOFT_REFRESH_WAIT_MS;
             }
-            // attempt 2 done — reuse the existing finish logic so
-            // refreshContinueMode (continue vs. restart) still applies.
             return finishNavOnlineNow(now);
         }
         // Not visible yet — wait briefly in case the screen is still
         // rendering. Give up after ~3× the normal wait so we don't
-        // stall forever on a popup the user dismissed already.
+        // stall forever.
         long sinceState = now - stateChangedAt;
         if (sinceState < SOFT_REFRESH_WAIT_MS * 3) {
             setAction(getString(R.string.action_inspect_loading));
             return SOFT_REFRESH_WAIT_MS;
         }
         diagEvent("REFRESH(3-dots): بحث not found at attempt " + attempt + ", resuming");
+        refreshFailures++;
+        if (refreshFailures >= MAX_REFRESH_FAILURES) {
+            stopInternal(STATUS_AUTO_STOPPED, "توقف لأن التحديث فشل أكثر من مرة");
+            return 300L;
+        }
         transitionTo(STATE_LOOK_LIKE);
         return 300L;
     }
@@ -1340,13 +1371,18 @@ public class ClickerService extends AccessibilityService {
             return POST_SCROLL_WAIT_MS;
         }
 
+        // v1.13.0 — capture pre-scroll viewport signature so the next
+        // LOOK tick can detect whether the scroll actually moved the
+        // list. processedBounds is no longer cleared eagerly here —
+        // that's the LOOK tick's job once it confirms the viewport
+        // changed.
+        pendingScrollSignature = viewportSignature(roots);
         boolean scrolled = performSmartScroll(roots, scrollPatternIndex);
         diagEvent("SCROLL: pattern=" + scrollPatternIndex + " result=" + scrolled
                 + " (likesAtLastScroll=" + likesAtLastScroll + ")");
         if (scrolled) setAction(getString(R.string.action_scroll));
         scrollPatternIndex = (scrollPatternIndex + 1) % 3;
 
-        processedBounds.clear();
         transitionTo(STATE_LOOK_LIKE);
         return POST_SCROLL_WAIT_MS;
     }
@@ -1587,14 +1623,20 @@ public class ClickerService extends AccessibilityService {
      */
     private AccessibilityNodeInfo findByTextNative(
             List<AccessibilityNodeInfo> roots, String text, boolean skipProcessed) {
+        // v1.13.0 — collect every matching clickable then sort top-down
+        // (and right-to-left within a row to respect RTL list order).
+        // The old "first hit wins" returned whichever node the framework
+        // iterated to, which on Mawada often picked a hidden header
+        // before the actual member's like button.
+        int topBand = (int) (screenH * 0.10f);
+        int bottomBand = (int) (screenH * 0.88f);
+        List<AccessibilityNodeInfo> candidates = new ArrayList<>();
+        List<Rect> bounds = new ArrayList<>();
         for (AccessibilityNodeInfo root : roots) {
             if (root == null) continue;
             List<AccessibilityNodeInfo> hits;
-            try {
-                hits = root.findAccessibilityNodeInfosByText(text);
-            } catch (Throwable t) {
-                continue;
-            }
+            try { hits = root.findAccessibilityNodeInfosByText(text); }
+            catch (Throwable t) { continue; }
             if (hits == null) continue;
             for (AccessibilityNodeInfo h : hits) {
                 if (h == null) continue;
@@ -1603,10 +1645,25 @@ public class ClickerService extends AccessibilityService {
                 AccessibilityNodeInfo clickable = climbToClickable(h);
                 if (clickable == null) continue;
                 if (skipProcessed && processedBounds.contains(boundsKey(clickable))) continue;
-                return clickable;
+                Rect r = new Rect();
+                clickable.getBoundsInScreen(r);
+                int cy = (r.top + r.bottom) / 2;
+                if (cy < topBand || cy > bottomBand) continue;
+                candidates.add(clickable);
+                bounds.add(r);
             }
         }
-        return null;
+        if (candidates.isEmpty()) return null;
+        // Selection sort by (top asc, right desc for RTL).
+        int bestIdx = 0;
+        for (int i = 1; i < candidates.size(); i++) {
+            Rect b = bounds.get(bestIdx);
+            Rect c = bounds.get(i);
+            if (c.top < b.top || (c.top == b.top && c.right > b.right)) {
+                bestIdx = i;
+            }
+        }
+        return candidates.get(bestIdx);
     }
 
     /**
@@ -1955,63 +2012,98 @@ public class ClickerService extends AccessibilityService {
     }
 
     /**
-     * v1.12.13 — strict loose member identifier. Earlier v1.12.12 tried
-     * three fallback sources (card text → like button desc → parent
-     * chain desc) and broke catastrophically: the like button's own
-     * contentDescription is just 'إهتمام' on every Mawada card, so the
-     * second-tier fallback returned an IDENTICAL hash for every member.
-     * After the very first like that hash entered recentMemberIds and
-     * every subsequent member matched the buffer → skipped → the bot
-     * stopped liking anyone.
-     *
-     * The lesson: a "loose" identifier still has to be unique per member.
-     * If we can't compute the card-text hash, we return null and let the
-     * buffer simply not help on that screen rather than collide everyone
-     * onto a single shared label.
+     * v1.13.0 — single-walk identity computation. Replaces the older pair
+     * (fingerprintMemberFromButton + looseMemberId) that each climbed the
+     * card and collected the same text — a 2x redundant tree walk on the
+     * hot path. One call now produces both:
+     *   - strictFp: SHA-1 of card text, ONLY if it contains Arabic
+     *     letters (back-compat with the DB written by v1.12.x).
+     *   - looseId:  "T:" + same SHA-1, returned even when no Arabic is
+     *     present, used by the session set + DB looseId column.
+     *   - boundsKey: coarse grid hash for processedBounds.
+     * Any field can be null independently if the card text is too short
+     * or the card can't be detected.
      */
-    private String looseMemberId(AccessibilityNodeInfo likeBtn) {
-        if (likeBtn == null) return null;
+    private MemberIdentity identifyMember(AccessibilityNodeInfo likeBtn) {
+        String key = boundsKey(likeBtn);
+        if (likeBtn == null) return new MemberIdentity(null, null, key);
         AccessibilityNodeInfo card = climbToMemberCard(likeBtn);
-        if (card == null) return null;
+        if (card == null) return new MemberIdentity(null, null, key);
         Rect cardR = new Rect();
         card.getBoundsInScreen(cardR);
-        if (cardR.isEmpty()) return null;
+        if (cardR.isEmpty()) return new MemberIdentity(null, null, key);
         StringBuilder sb = new StringBuilder(256);
         collectCardText(card, cardR, sb, 0);
-        if (sb.length() < MIN_TEXT_CHARS_FOR_FP) return null;
-        String h = LikedMembersDb.fingerprint(sb.toString());
-        return h == null ? null : "T:" + h;
-    }
-
-    /**
-     * Compute a per-member fingerprint by collecting visible text inside the
-     * card's bounding rect. Filters by isVisibleToUser AND bounds intersection
-     * so off-screen list items don't contaminate the hash.
-     */
-    private String fingerprintMemberFromButton(AccessibilityNodeInfo likeBtn) {
-        if (likeBtn == null || !config.dedupEnabled) return null;
-        AccessibilityNodeInfo card = climbToMemberCard(likeBtn);
-        if (card == null) return null;
-        Rect cardR = new Rect();
-        card.getBoundsInScreen(cardR);
-        if (cardR.isEmpty()) return null;
-
-        StringBuilder sb = new StringBuilder(256);
-        collectCardText(card, cardR, sb, 0);
-        if (sb.length() < MIN_TEXT_CHARS_FOR_FP) return null;
-
-        // Validation: a real member card usually has SOME Arabic letters in
-        // it. If we see none, treat the fingerprint as untrusted and return
-        // null so the like fires but is NOT marked as deduped (avoids
-        // poisoning the DB with junk).
+        if (sb.length() < MIN_TEXT_CHARS_FOR_FP) {
+            return new MemberIdentity(null, null, key);
+        }
+        String hash = LikedMembersDb.fingerprint(sb.toString());
+        if (hash == null) return new MemberIdentity(null, null, key);
+        String loose = "T:" + hash;
         boolean hasArabic = false;
         for (int i = 0; i < sb.length(); i++) {
             char c = sb.charAt(i);
             if (c >= 0x0600 && c <= 0x06FF) { hasArabic = true; break; }
         }
-        if (!hasArabic) return null;
+        String strict = (hasArabic && config != null && config.dedupEnabled) ? hash : null;
+        return new MemberIdentity(strict, loose, key);
+    }
 
-        return LikedMembersDb.fingerprint(sb.toString());
+    private static final class MemberIdentity {
+        final String strictFp;
+        final String looseId;
+        final String boundsKey;
+        MemberIdentity(String strictFp, String looseId, String boundsKey) {
+            this.strictFp = strictFp;
+            this.looseId = looseId;
+            this.boundsKey = boundsKey;
+        }
+    }
+
+    /**
+     * v1.13.0 — short hash of the first ~12 visible clickable's text /
+     * bounds. Used to detect whether a scroll actually moved the
+     * viewport: same signature before and after → scroll was a no-op.
+     */
+    private String viewportSignature(List<AccessibilityNodeInfo> roots) {
+        if (roots == null || roots.isEmpty()) return "";
+        StringBuilder sb = new StringBuilder(384);
+        int[] cap = { 12 };
+        for (AccessibilityNodeInfo root : roots) {
+            if (cap[0] <= 0 || sb.length() > 480) break;
+            collectViewportSig(root, sb, 0, cap);
+        }
+        if (sb.length() == 0) return "";
+        String h = LikedMembersDb.fingerprint(sb.toString());
+        return h == null ? sb.toString() : h;
+    }
+
+    private void collectViewportSig(AccessibilityNodeInfo node, StringBuilder out,
+                                    int depth, int[] cap) {
+        if (node == null || depth > CARD_TEXT_DEPTH * 2 || cap[0] <= 0) return;
+        if (out.length() > 480) return;
+        Rect r = new Rect();
+        node.getBoundsInScreen(r);
+        if (r.isEmpty()) return;
+        if (node.isClickable() && node.isVisibleToUser()) {
+            CharSequence t = node.getText();
+            CharSequence d = node.getContentDescription();
+            String label = "";
+            if (t != null && t.length() > 0) label = t.toString();
+            else if (d != null && d.length() > 0) label = d.toString();
+            if (!label.isEmpty()) {
+                out.append(label, 0, Math.min(label.length(), 28))
+                   .append('|').append(r.top).append(',').append(r.left).append(';');
+                cap[0]--;
+            }
+        }
+        int n = node.getChildCount();
+        for (int i = 0; i < n && cap[0] > 0; i++) {
+            AccessibilityNodeInfo c = node.getChild(i);
+            if (c == null) continue;
+            track(c);
+            collectViewportSig(c, out, depth + 1, cap);
+        }
     }
 
     private void collectCardText(AccessibilityNodeInfo node, Rect cardBounds,
@@ -2081,6 +2173,28 @@ public class ClickerService extends AccessibilityService {
             if (!dup) result.add(0, active);
         }
         return result;
+    }
+
+    /**
+     * v1.13.0 — keep only roots whose package matches the configured
+     * targetPackage. If no targetPackage is configured the original list
+     * is returned untouched (back-compat). Called once per tick right
+     * after collectAllRoots() so all downstream scans skip system_ui /
+     * status-bar / launcher trees.
+     */
+    private List<AccessibilityNodeInfo> filterTargetRoots(List<AccessibilityNodeInfo> roots) {
+        if (config == null || config.targetPackage == null || config.targetPackage.isEmpty()) {
+            return roots;
+        }
+        List<AccessibilityNodeInfo> filtered = new ArrayList<>(roots.size());
+        for (AccessibilityNodeInfo r : roots) {
+            if (r == null) continue;
+            CharSequence pkg = r.getPackageName();
+            if (pkg != null && config.targetPackage.equals(pkg.toString())) {
+                filtered.add(r);
+            }
+        }
+        return filtered;
     }
 
     private String boundsKey(AccessibilityNodeInfo node) {
@@ -2179,17 +2293,24 @@ public class ClickerService extends AccessibilityService {
      */
     private void autoStopWithDiagnostic(String status, String reasonBase,
                                         List<AccessibilityNodeInfo> roots) {
+        // v1.13.0 — only write the full accessibility tree dump when
+        // DEBUG_DIAGNOSTICS is on. In production we just record the reason
+        // and a short on-screen summary so the user understands why the
+        // bot stopped without writing a large file to external storage.
         String summary;
-        String path;
-        try {
-            summary = buildScreenSummary(roots);
-            path    = writeAccessibilityDump(roots, reasonBase, summary);
-        } catch (Throwable t) {
-            summary = "(فشل التشخيص)";
-            path    = "—";
+        try { summary = buildScreenSummary(roots); }
+        catch (Throwable t) { summary = "(فشل التشخيص)"; }
+        String full;
+        if (DEBUG_DIAGNOSTICS) {
+            String path;
+            try { path = writeAccessibilityDump(roots, reasonBase, summary); }
+            catch (Throwable t) { path = "—"; }
+            lastDumpPath = path;
+            full = reasonBase + " | " + summary + " | تشخيص: " + path;
+        } else {
+            lastDumpPath = "";
+            full = reasonBase + " | " + summary;
         }
-        lastDumpPath = path;
-        String full = reasonBase + " | " + summary + " | تشخيص: " + path;
         stopInternal(status, full);
     }
 
@@ -2367,24 +2488,16 @@ public class ClickerService extends AccessibilityService {
         public final long popupWaitMs;
         public final long idleTimeoutMs;
         public final boolean dedupEnabled;
-        // v1.11 — like only members whose marital status is مطلقة / أرملة.
-        // When false, the bot likes everyone in the list (original behaviour).
         public final boolean filterDivorcedWidowedOnly;
-        // v1.11 — what to do after a soft refresh:
-        //   false (default)  → rewind to top of fresh list and start over.
-        //   true             → resume in place, letting dedup skip already-
-        //                      liked members until a new one is reached.
-        public final boolean refreshContinueMode;
-        // v1.12 — how the bot finds the next batch of members on refresh:
-        //   "online"      → الأعضاء ← المتواجدون الآن (default, text only)
-        //   "three_dots"  → tap saved 'ثلاث نقاط' coord ← بحث ← بحث
+        // v1.13.0 — how the bot finds the next batch of members on refresh:
+        //   "online"      → الأعضاء ← المتواجدون الآن (text-based)
+        //   "three_dots"  → tap ثلاث نقاط coord ← بحث ← بحث (default in MainActivity)
         public final String findMembersMode;
 
         public BotConfig(String likeText, String yesText, String closeText, String targetPackage,
                          List<String> profileKeywords, long scanIntervalMs, long popupWaitMs,
                          long idleTimeoutMs, boolean dedupEnabled,
-                         boolean filterDivorcedWidowedOnly, boolean refreshContinueMode,
-                         String findMembersMode) {
+                         boolean filterDivorcedWidowedOnly, String findMembersMode) {
             this.likeText = likeText == null ? "" : likeText.trim();
             this.yesText = yesText == null ? "" : yesText.trim();
             this.closeText = closeText == null ? "" : closeText.trim();
@@ -2395,9 +2508,8 @@ public class ClickerService extends AccessibilityService {
             this.idleTimeoutMs = Math.max(5000L, idleTimeoutMs);
             this.dedupEnabled = dedupEnabled;
             this.filterDivorcedWidowedOnly = filterDivorcedWidowedOnly;
-            this.refreshContinueMode = refreshContinueMode;
             this.findMembersMode = (findMembersMode != null && !findMembersMode.isEmpty())
-                    ? findMembersMode : "online";
+                    ? findMembersMode : "three_dots";
         }
     }
 }

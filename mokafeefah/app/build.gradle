@@ -10,8 +10,8 @@ android {
         applicationId 'com.mokafeefah.clicker'
         minSdk 24
         targetSdk 34
-        versionCode 32
-        versionName '1.12.14'
+        versionCode 33
+        versionName '1.13.0'
     }
 
     buildTypes {
@@ -19,7 +19,8 @@ android {
             debuggable true
         }
         release {
-            minifyEnabled false
+            minifyEnabled true
+            shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
