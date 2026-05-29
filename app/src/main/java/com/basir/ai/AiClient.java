@@ -33,7 +33,10 @@ import java.nio.charset.StandardCharsets;
  *   ai_mode              "direct" | "proxy" (default "proxy")
  *   ai_server_url        base URL of the proxy
  *   ai_app_token         optional shared secret with the proxy
- *   gemini_api_key       Google AI Studio key (direct mode)
+ *   gemini_api_key       legacy plaintext key slot — read-only fallback,
+ *                        migrated to the encrypted slot on first launch
+ *                        (see {@link SecurePrefs}). All reads now go
+ *                        through SecurePrefs.getGeminiKey(prefs).
  *   gemini_model_quick   model preset for quick text tasks  (default flash)
  *   gemini_model_doc     model preset for document conversion (default pro)
  *   convert_output_mode  "full" | "simple" | "text_only" | "descriptions_only"
@@ -63,7 +66,7 @@ public final class AiClient {
 
     public static boolean isConfigured(SharedPreferences prefs) {
         if (MODE_DIRECT.equals(getMode(prefs))) {
-            String key = prefs.getString("gemini_api_key", "").trim();
+            String key = SecurePrefs.getGeminiKey(prefs).trim();
             return !key.isEmpty();
         }
         String url = prefs.getString("ai_server_url", "").trim();
@@ -355,7 +358,7 @@ public final class AiClient {
     static String directConvertToDocx(Context ctx, SharedPreferences prefs, Uri sourceUri,
                                               String mode, String language, File outFile,
                                               ProgressCallback progress) throws Exception {
-        String key = prefs.getString("gemini_api_key", "");
+        String key = SecurePrefs.getGeminiKey(prefs);
         String model = pickModel(prefs, "convert");
         String mimeType = ctx.getContentResolver().getType(sourceUri);
         if (mimeType == null) mimeType = "application/octet-stream";

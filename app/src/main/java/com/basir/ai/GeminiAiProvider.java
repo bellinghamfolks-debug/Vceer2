@@ -27,7 +27,7 @@ public final class GeminiAiProvider implements AiProvider {
     @Override
     public String ask(String task, String input, String instruction, String language,
                       String imageBase64, String mimeType) throws Exception {
-        String key = prefs.getString("gemini_api_key", "");
+        String key = SecurePrefs.getGeminiKey(prefs);
         String model = AiClient.pickModel(prefs, task);
         String systemText = AiClient.systemPrompt(language, instruction);
         String userMessage = AiClient.buildUserMessage(task, input, instruction,

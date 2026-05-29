@@ -55,6 +55,8 @@ jobs:
           # v2.4 conversion job + chunks (partial-result fallback)
           test -f app/src/main/java/com/basir/ai/ConversionChunk.java
           test -f app/src/main/java/com/basir/ai/ConversionJob.java
+          # v2.5 secure key storage
+          test -f app/src/main/java/com/basir/ai/SecurePrefs.java
           test -f app/src/main/res/values/strings.xml
           test -f app/src/main/res/values/styles.xml
           test -f app/src/main/res/drawable/ic_basir.xml

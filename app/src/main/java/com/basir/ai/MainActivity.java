@@ -130,6 +130,18 @@ public class MainActivity extends Activity
         prefs = getSharedPreferences("basir_settings", MODE_PRIVATE);
         db = new BasirDb(this);
         loadSettings();
+        // v2.5 — one-shot migration of the Gemini API key from the legacy
+        // plaintext slot into the Keystore-encrypted slot. Idempotent; runs
+        // on every launch but only does real work the first time.
+        SecurePrefs.migrateLegacyKeyOnStartup(prefs);
+        // v2.5 — keep the activity log + archived documents bounded. Runs
+        // off the main thread because old installs may have thousands of
+        // rows; doing this on the UI thread would block startup. autoTrim
+        // is a thin wrapper around two DELETE statements, no progress UI
+        // needed.
+        aiExecutor.execute(() -> {
+            try { db.autoTrim(); } catch (Throwable ignore) {}
+        });
         // v2.3 — three controllers replace ~150 lines that used to sit
         // directly on the Activity. Construction order: PermissionController
         // first (no other dependencies), TtsController second (kicks off
@@ -2091,7 +2103,7 @@ public class MainActivity extends Activity
 
         final String fileUri  = st.uploadedFileUri();
         final String mimeType = st.uploadedFileMime();
-        final String apiKey   = prefs.getString("gemini_api_key", "");
+        final String apiKey   = SecurePrefs.getGeminiKey(prefs);
         final String model    = AiClient.pickModel(prefs, "convert");
         final boolean arabic  = lang != null && lang.toLowerCase().startsWith("ar");
         final String system   = arabic
@@ -2775,7 +2787,7 @@ public class MainActivity extends Activity
 
         final EditText geminiKey = makeInput(t("مفتاح Gemini API", "Gemini API key"), false);
         geminiKey.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        geminiKey.setText(prefs.getString("gemini_api_key", ""));
+        geminiKey.setText(SecurePrefs.getGeminiKey(prefs));
         LinearLayout.LayoutParams gk = fullWidth(); gk.setMargins(0, dp(8), 0, 0);
         directGroup.addView(geminiKey, gk);
 
@@ -2862,7 +2874,12 @@ public class MainActivity extends Activity
                     e.putString("quick_quality", qualityIdAt(quickSpinner.getSelectedItemPosition()));
                     e.putString("doc_quality",   qualityIdAt(docSpinner.getSelectedItemPosition()));
                     if (directMode[0]) {
-                        e.putString("gemini_api_key", geminiKey.getText().toString().trim());
+                        // v2.5 — write via SecurePrefs so the value lands in
+                        // the encrypted slot, not the legacy plaintext one.
+                        e.apply();
+                        SecurePrefs.setGeminiKey(prefs,
+                                geminiKey.getText().toString().trim());
+                        e = prefs.edit();
                     } else {
                         e.putString("ai_server_url", url.getText().toString().trim());
                         e.putString("ai_app_token", token.getText().toString().trim());
