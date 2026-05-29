@@ -60,6 +60,8 @@ jobs:
           # v2.6 first slice of screen decomposition
           test -f app/src/main/java/com/basir/ai/BasirScreenHost.java
           test -f app/src/main/java/com/basir/ai/LegalScreens.java
+          # v2.7 image compression before AI calls
+          test -f app/src/main/java/com/basir/ai/ImageCompressor.java
           test -f app/src/main/res/values/strings.xml
           test -f app/src/main/res/values/styles.xml
           test -f app/src/main/res/drawable/ic_basir.xml

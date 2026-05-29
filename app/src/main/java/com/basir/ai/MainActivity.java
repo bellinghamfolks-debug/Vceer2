@@ -2262,11 +2262,15 @@ public class MainActivity extends Activity
         aiExecutor.execute(() -> {
             try {
                 String mime = AiClient.detectMime(this, uri);
-                byte[] bytes = AiClient.readUriBytes(this, uri, 8 * 1024 * 1024);
-                String b64 = AiClient.encodeBase64(bytes);
+                // v2.7 — walking-mode photos are 12-MP phone snapshots;
+                // downscale to ~1600 px before upload, ~80% bandwidth and
+                // ~25% token win without losing any detail Gemini uses.
+                ImageCompressor.Encoded enc = ImageCompressor.encodeForAi(
+                        this, uri, mime, 8 * 1024 * 1024);
+                String b64 = AiClient.encodeBase64(enc.bytes);
                 String description = AiClient.ask(prefs,
                         pendingTask, pendingPrompt,
-                        pendingInstruction, lang, b64, mime);
+                        pendingInstruction, lang, b64, enc.mimeType);
                 if (description == null) description = "";
                 final String d = description.trim();
                 lastWalkingDescription = d;
@@ -3087,10 +3091,14 @@ public class MainActivity extends Activity
         aiExecutor.execute(() -> {
             try {
                 String mime = AiClient.detectMime(MainActivity.this, uri);
-                byte[] bytes = AiClient.readUriBytes(MainActivity.this, uri, 20 * 1024 * 1024);
-                String b64 = AiClient.encodeBase64(bytes);
+                // v2.7 — auto-detect image vs other; image inputs are
+                // recompressed (~80% bandwidth save), other files (PDFs,
+                // text) go through raw with the 20-MB cap.
+                ImageCompressor.Encoded enc = ImageCompressor.encodeForAi(
+                        MainActivity.this, uri, mime, 20 * 1024 * 1024);
+                String b64 = AiClient.encodeBase64(enc.bytes);
                 String answer = AiClient.ask(prefs, task, prompt,
-                        instruction, lang, b64, mime);
+                        instruction, lang, b64, enc.mimeType);
                 log(task, answer);
                 runOnUiThread(() -> showResult(title, answer, true));
             } catch (Exception e) {
@@ -3243,10 +3251,13 @@ public class MainActivity extends Activity
         aiExecutor.execute(() -> {
             try {
                 String mime = AiClient.detectMime(MainActivity.this, uri);
-                byte[] bytes = AiClient.readUriBytes(MainActivity.this, uri, 6 * 1024 * 1024);
-                String b64 = AiClient.encodeBase64(bytes);
+                // v2.7 — scene/image-task uploads downscale to ~1600 px
+                // JPEG before they hit Gemini's vision tokeniser.
+                ImageCompressor.Encoded enc = ImageCompressor.encodeForAi(
+                        MainActivity.this, uri, mime, 6 * 1024 * 1024);
+                String b64 = AiClient.encodeBase64(enc.bytes);
                 String answer = AiClient.ask(prefs, pendingTask, pendingPrompt,
-                        pendingInstruction, lang, b64, mime);
+                        pendingInstruction, lang, b64, enc.mimeType);
                 log(pendingTask, answer);
                 runOnUiThread(() -> showResult(pendingTitle, answer, true));
             } catch (Exception e) {
