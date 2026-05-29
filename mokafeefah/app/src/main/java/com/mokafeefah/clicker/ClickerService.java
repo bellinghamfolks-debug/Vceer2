@@ -101,6 +101,17 @@ public class ClickerService extends AccessibilityService {
     private static final int STATE_REFRESH_FIND_SEARCH_1 = 8;
     private static final int STATE_REFRESH_FIND_SEARCH_2 = 9;
 
+    // v1.12.15: post-refresh catch-up state. After a successful three-dots
+    // refresh, Mawada hands back the search-result list re-sorted from the
+    // top — so the bot would otherwise spend a long time deduping members
+    // it just liked. This state fast-forwards through N scrolls (sized by
+    // the cumulative likes count) so the bot resumes liking at roughly the
+    // depth where it stopped. Dedup catches any overlap that remains.
+    private static final int STATE_POST_REFRESH_CATCHUP = 10;
+    private static final int  MAX_CATCHUP_SCROLLS    = 20;
+    private static final int  SCROLLS_PER_LIKES      = 8;
+    private static final long CATCHUP_SCROLL_WAIT_MS = 800L;
+
     // v10.0: latency budgets — relaxed because Mawada's late-session popup
     // can take 6-7 s to even appear. The previous 2.5 s timeout was firing
     // a stale AFTER_LIKE → LOOK transition before "نعم" had rendered, then
@@ -261,6 +272,11 @@ public class ClickerService extends AccessibilityService {
     // tap Mawada's own "members" tab and reset its WebView DOM.
     private int    likesSinceRefresh        = 0;
 
+    // v1.12.15: scrolls remaining in the post-refresh catch-up phase.
+    // Set by finishNavOnlineNow(), decremented in handlePostRefreshCatchup.
+    // Zero means "no catch-up running" — normal LOOK_LIKE flow.
+    private int    catchUpScrollsRemaining  = 0;
+
     // v1.12.14: unlimited session-local set of member identifiers we've
     // interacted with in this session. Grew out of v1.12.12's 10-entry
     // rolling buffer: a small window helps with the refresh overlap but
@@ -384,6 +400,7 @@ public class ClickerService extends AccessibilityService {
         rewindStepsDone = 0;
         scrollPatternIndex = 0;
         likesSinceRefresh = 0;
+        catchUpScrollsRemaining = 0;
         sessionMemberIds.clear();
         long now = System.currentTimeMillis();
         lastButtonFoundMs = now;
@@ -447,6 +464,7 @@ public class ClickerService extends AccessibilityService {
             case STATE_INSPECT_PROFILE: return "INSPECT";
             case STATE_REFRESH_FIND_SEARCH_1: return "REFRESH_SEARCH_1";
             case STATE_REFRESH_FIND_SEARCH_2: return "REFRESH_SEARCH_2";
+            case STATE_POST_REFRESH_CATCHUP:  return "CATCHUP";
             default:                    return "?(" + s + ")";
         }
     }
@@ -589,6 +607,7 @@ public class ClickerService extends AccessibilityService {
             case STATE_INSPECT_PROFILE: return handleInspectProfile(roots, now);
             case STATE_REFRESH_FIND_SEARCH_1: return handleRefreshFindSearch(roots, now, 1);
             case STATE_REFRESH_FIND_SEARCH_2: return handleRefreshFindSearch(roots, now, 2);
+            case STATE_POST_REFRESH_CATCHUP:  return handlePostRefreshCatchup(roots, now);
             default:
                 transitionTo(STATE_LOOK_LIKE);
                 return config.scanIntervalMs;
@@ -1051,6 +1070,9 @@ public class ClickerService extends AccessibilityService {
      * without a refresh — better to keep liking slowly than to halt.
      */
     private long handleSoftRefresh(List<AccessibilityNodeInfo> roots, long now) {
+        // v1.12.15: clear any leftover catch-up counter so two
+        // overlapping refresh cycles can't compound.
+        catchUpScrollsRemaining = 0;
         // v1.12: branch on the user's find-members mode. The default
         // ('online') keeps the existing الأعضاء ← المتواجدون الآن path;
         // 'three_dots' taps the saved menu coordinate and then matches
@@ -1128,8 +1150,20 @@ public class ClickerService extends AccessibilityService {
     private long finishNavOnlineNow(long now) {
         processedBounds.clear();
         if (config.refreshContinueMode) {
-            // Resume in place. Dedup (if on) handles skipping already-liked
-            // members as the bot scans down again.
+            // v1.12.15: instead of dropping the bot at the top of the new
+            // search-result list and relying on dedup to skip overlap, do
+            // N catch-up scrolls first so we land roughly at the depth
+            // we were at before the refresh. SCROLLS_PER_LIKES = 8 because
+            // dump data shows ~6-8 likes per visible page on this device.
+            int catchUp = Math.min(MAX_CATCHUP_SCROLLS,
+                    Math.max(0, likesCount.get() / SCROLLS_PER_LIKES));
+            if (catchUp > 0) {
+                catchUpScrollsRemaining = catchUp;
+                diagEvent("NAV_ONLINE: catch-up of " + catchUp
+                        + " scrolls (likes=" + likesCount.get() + ")");
+                transitionTo(STATE_POST_REFRESH_CATCHUP);
+                return 600L;
+            }
             diagEvent("NAV_ONLINE: refreshContinueMode=ON, resuming LOOK_LIKE");
             transitionTo(STATE_LOOK_LIKE);
             return 600L;
@@ -1139,6 +1173,31 @@ public class ClickerService extends AccessibilityService {
         rewindStepsDone = 0;
         transitionTo(STATE_REWIND_TO_TOP);
         return 600L;
+    }
+
+    /**
+     * v1.12.15 — fast-forward through the catch-up scrolls so the bot
+     * resumes at roughly the same depth in the new list. Each tick
+     * fires one swipe, decrements the counter, and refreshes
+     * lastButtonFoundMs so the idle-timeout watchdog doesn't trip
+     * while we're scrolling through empty viewport ms.
+     */
+    private long handlePostRefreshCatchup(List<AccessibilityNodeInfo> roots, long now) {
+        if (catchUpScrollsRemaining <= 0) {
+            diagEvent("CATCHUP: done, resuming LOOK");
+            transitionTo(STATE_LOOK_LIKE);
+            return 300L;
+        }
+        boolean scrolled = performSmartScroll(roots, scrollPatternIndex);
+        scrollPatternIndex = (scrollPatternIndex + 1) % 3;
+        catchUpScrollsRemaining--;
+        diagEvent("CATCHUP: scrolled (remaining=" + catchUpScrollsRemaining
+                + ", result=" + scrolled + ")");
+        setAction(getString(R.string.action_scroll));
+        // Keep the idle watchdog quiet during catch-up — these scrolls
+        // intentionally don't produce like-button finds.
+        lastButtonFoundMs = now;
+        return CATCHUP_SCROLL_WAIT_MS;
     }
 
     /**
