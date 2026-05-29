@@ -365,11 +365,21 @@ public final class AiClient {
 
         boolean isPdf  = mimeType.contains("pdf");
         boolean isPptx = mimeType.contains("presentation");
+        // v2.8.3 — DOCX needs its own path because Gemini's Files API
+        // rejects "application/vnd.openxmlformats-...wordprocessingml.document"
+        // (HTTP 400 Unsupported MIME type). We extract the text on-device
+        // first, then send PLAIN TEXT to Gemini, then render the JSON
+        // response into a fresh DOCX. Translation works end-to-end.
+        boolean isDocx = mimeType.contains("wordprocessingml")
+                || mimeType.equals("application/msword");
 
         if (progress != null) progress.onProgress(0, 0, "preparing");
 
         if (isPptx) {
             return directConvertPptx(ctx, sourceUri, key, model, mode, language, outFile, progress);
+        }
+        if (isDocx) {
+            return directConvertDocx(ctx, sourceUri, key, model, mode, language, outFile, progress);
         }
         if (!isPdf) {
             // Generic binary - one-shot, no chunking.
@@ -615,6 +625,90 @@ public final class AiClient {
         }
         if (progress != null) progress.onProgress(total, total, "done");
         doc.writeTo(outFile);
+        return outFile.getAbsolutePath();
+    }
+
+    /**
+     * v2.8.3 — DOCX conversion / translation.
+     *
+     * Gemini's Files API rejects "application/vnd.openxmlformats-...
+     * wordprocessingml.document" with HTTP 400, so we cannot follow the
+     * binary-upload path used for PDFs. Instead we extract the text and
+     * structure locally via {@link DocxExtractor}, send PLAIN TEXT to
+     * Gemini wrapped in the standard convert/translate prompt, and
+     * render the JSON response into a fresh DOCX.
+     */
+    private static String directConvertDocx(Context ctx, Uri sourceUri, String apiKey, String model,
+                                            String mode, String language, File outFile,
+                                            ProgressCallback progress) throws Exception {
+        if (progress != null) progress.onProgress(0, 0, "preparing");
+        DocxExtractor.Doc parsed = DocxExtractor.parse(ctx, sourceUri);
+        if (parsed.blocks.isEmpty()) {
+            throw new Exception("The Word file does not contain readable text");
+        }
+
+        boolean arabic = language != null && language.toLowerCase().startsWith("ar");
+        String langName = arabic ? "Arabic" : "English";
+        String docxLang = arabic ? "ar" : "en";
+
+        // Translation mode overrides the response language to the target,
+        // and modeNote() injects the per-element translation directive.
+        String translateTo = translateTargetFromMode(mode);
+        if (translateTo != null) {
+            langName = bcp47Name(translateTo);
+            docxLang = translateTo;
+        }
+
+        if (progress != null) progress.onProgress(0, 0, "processing");
+
+        String extracted = parsed.plainText();
+        String mNote = modeNote(mode);
+
+        StringBuilder prompt = new StringBuilder();
+        prompt.append("You are processing a Word document for a blind user.\n");
+        prompt.append("Respond strictly in ").append(langName).append(".\n");
+        prompt.append(mNote).append("\n\n");
+        prompt.append("The document text below was extracted from a .docx file. ");
+        prompt.append("Heading levels are marked with leading #, ##, ###; tables are ");
+        prompt.append("shown as rows separated by newline with cells joined by ' | '.\n\n");
+        prompt.append("Return a SINGLE JSON object (no markdown, no code fences) with:\n");
+        prompt.append("{\n");
+        prompt.append("  \"title\": \"...\",\n");
+        prompt.append("  \"summary\": \"1-3 sentences\",\n");
+        prompt.append("  \"sections\": [\n");
+        prompt.append("    { \"type\": \"heading\", \"level\": 1, \"text\": \"...\" },\n");
+        prompt.append("    { \"type\": \"paragraph\", \"text\": \"...\" },\n");
+        prompt.append("    { \"type\": \"table\",\n");
+        prompt.append("      \"cells\": [[\"Header1\",\"Header2\"],[\"row1col1\",\"row1col2\"]] }\n");
+        prompt.append("  ]\n");
+        prompt.append("}\n\n");
+        prompt.append("Rules:\n");
+        prompt.append("- Preserve heading levels exactly as marked in the input.\n");
+        prompt.append("- Preserve table structure exactly: same number of rows and columns.\n");
+        prompt.append("- Do not invent content that is not present in the source.\n");
+        prompt.append("- Output valid JSON only.\n\n");
+        prompt.append("DOCUMENT TEXT (between the tags):\n");
+        prompt.append("<<<BASIR_DOC_BEGIN>>>\n");
+        prompt.append(extracted);
+        prompt.append("\n<<<BASIR_DOC_END>>>\n");
+
+        JSONArray parts = new JSONArray();
+        parts.put(new JSONObject().put("text", prompt.toString()));
+        JSONObject json = GeminiDirectClient.generateJsonWithParts(
+                apiKey, model,
+                "You are Basir, an assistant for blind and low-vision users.",
+                parts);
+
+        if (progress != null) progress.onProgress(0, 0, "finalising");
+
+        DocxBuilder doc = new DocxBuilder(docxLang);
+        String title = json.optString("title", "");
+        if (!title.isEmpty()) doc.title(title);
+        String summary = json.optString("summary", "");
+        if (!summary.isEmpty()) doc.paragraph(summary);
+        renderSectionsInto(doc, json.optJSONArray("sections"), language);
+        doc.writeTo(outFile);
+        if (progress != null) progress.onProgress(0, 0, "done");
         return outFile.getAbsolutePath();
     }
 
