@@ -432,8 +432,21 @@ public final class AiClient {
 
         boolean arabic = language != null && language.toLowerCase().startsWith("ar");
         String langName = arabic ? "Arabic" : "English";
+        String docxLang = arabic ? "ar" : "en";
 
-        DocxBuilder doc = new DocxBuilder(arabic ? "ar" : "en");
+        // v2.8 — document translation. When the caller passes mode
+        // "translate:<bcp47>" (e.g. "translate:fr"), the response language
+        // for the chunked prompts becomes the target language, and the
+        // DocxBuilder is constructed in the target locale (RTL for ar/he,
+        // LTR otherwise). modeNote() picks up the rest — it injects the
+        // "translate every text element" directive into the prompt body.
+        String translateTo = translateTargetFromMode(mode);
+        if (translateTo != null) {
+            langName = bcp47Name(translateTo);
+            docxLang = translateTo;
+        }
+
+        DocxBuilder doc = new DocxBuilder(docxLang);
         // wroteHeader is captured by the renderer lambda below; an array
         // gives us a mutable "ref" without leaking it out of this method.
         final boolean[] wroteHeader = { false };
@@ -639,6 +652,20 @@ public final class AiClient {
     }
 
     private static String modeNote(String mode) {
+        // v2.8 — translation mode comes from the UI as "translate:<lang>".
+        // Detect it BEFORE the regular switch so the source-document
+        // structure is preserved while every text leaf gets translated.
+        if (mode != null && mode.toLowerCase().startsWith("translate:")) {
+            return "TRANSLATION MODE.\n"
+                 + "This document is being TRANSLATED into the response language declared above.\n"
+                 + "Translate EVERY textual element into the response language: the title, all\n"
+                 + "headings, all paragraphs, every list item, every table cell (including header\n"
+                 + "rows), every image description, every caption. Keep the document STRUCTURE\n"
+                 + "exactly as it appears in the source — only the language of the text changes.\n"
+                 + "Do NOT keep the source-language original alongside the translation. Output the\n"
+                 + "TRANSLATION ONLY. Preserve numbers, dates, currencies, and proper nouns\n"
+                 + "according to standard usage in the target language.";
+        }
         switch (mode == null ? "full" : mode.toLowerCase()) {
             case "simple":
                 return "Plain-text version optimized for screen readers; no decorative elements.";
@@ -648,6 +675,45 @@ public final class AiClient {
                 return "Output ONLY extracted text and tables; skip image descriptions.";
             default:
                 return "Include all text, tables, and detailed image descriptions.";
+        }
+    }
+
+    /** v2.8 — extracts the BCP-47 target language code from a mode string
+     *  shaped "translate:<lang>". Returns null for any non-translation mode. */
+    static String translateTargetFromMode(String mode) {
+        if (mode == null) return null;
+        String low = mode.toLowerCase();
+        if (!low.startsWith("translate:")) return null;
+        String tgt = mode.substring("translate:".length()).trim();
+        return tgt.isEmpty() ? null : tgt;
+    }
+
+    /** v2.8 — BCP-47 to human-readable language name used in the system
+     *  prompt. Must match the codes in MainActivity's LANG_CODES array. */
+    static String bcp47Name(String code) {
+        if (code == null) return "English";
+        switch (code.toLowerCase()) {
+            case "ar": return "Arabic";
+            case "en": return "English";
+            case "fr": return "French";
+            case "es": return "Spanish";
+            case "de": return "German";
+            case "it": return "Italian";
+            case "pt": return "Portuguese";
+            case "ru": return "Russian";
+            case "tr": return "Turkish";
+            case "fa": return "Persian";
+            case "ur": return "Urdu";
+            case "hi": return "Hindi";
+            case "zh": return "Chinese";
+            case "ja": return "Japanese";
+            case "ko": return "Korean";
+            case "id": return "Indonesian";
+            case "ms": return "Malay";
+            case "nl": return "Dutch";
+            case "pl": return "Polish";
+            case "sv": return "Swedish";
+            default:   return code;
         }
     }
 

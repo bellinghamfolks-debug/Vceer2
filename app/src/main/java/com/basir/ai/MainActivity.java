@@ -73,6 +73,14 @@ public class MainActivity extends Activity
     private static final int REQ_DOC_PICK       = 1004;
     private static final int REQ_IMAGE_CAPTURE  = 1005;
     private static final int REQ_TASK_FILE_PICK = 1007;
+    /** v2.8 — file picker launched from the translate screen. The resulting
+     *  Uri is routed into the ConversionService with mode
+     *  "translate:&lt;tgtCode&gt;" where tgtCode was captured when the user
+     *  pressed the "Translate a document" button. */
+    private static final int REQ_TRANSLATE_DOC_PICK = 1008;
+    /** v2.8 — held across the file picker round-trip. Reset to null when
+     *  the request completes (success or cancel). */
+    private String pendingTranslateTo;
 
     private SharedPreferences prefs;
     private BasirDb db;
@@ -1554,8 +1562,75 @@ public class MainActivity extends Activity
 
             callAi("translate", text, t("الترجمة", "Translation"), instr);
         });
+
+        // v2.8 — document-translation entry point. Opens the same picker
+        // as document conversion, but routes through ConversionService
+        // with a translation-flavoured mode string so the resulting DOCX
+        // contains the translated content rather than the source text.
+        addOutlineButton(t("ترجمة ملف كامل", "Translate a full file"), v -> {
+            int tgtPos = tgtSpinner.getSelectedItemPosition();
+            if (tgtPos < 0 || tgtPos >= tgtCodes.length) {
+                speak(t("اختر اللغة الهدف أولاً.", "Pick the target language first."));
+                return;
+            }
+            String tgtCode = tgtCodes[tgtPos];
+            prefs.edit().putString("translate_tgt", tgtCode).apply();
+            pendingTranslateTo = tgtCode;
+
+            Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            i.addCategory(Intent.CATEGORY_OPENABLE);
+            i.setType("*/*");
+            String[] types = {
+                "application/pdf",
+                "application/msword",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                "application/vnd.ms-powerpoint",
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                "image/*"
+            };
+            i.putExtra(Intent.EXTRA_MIME_TYPES, types);
+            try {
+                startActivityForResult(i, REQ_TRANSLATE_DOC_PICK);
+                speak(t("اختر الملف لترجمته إلى " + bcp47NameAr(tgtCode) + ".",
+                        "Pick the file to translate into " + bcp47Name(tgtCode) + "."));
+            } catch (Exception e) {
+                pendingTranslateTo = null;
+                speak(t("تعذر فتح منتقي الملفات.", "Could not open the file picker."));
+            }
+        });
         addOutlineButton(t("مسح", "Clear"), v -> input.setText(""));
         addBackButton();
+    }
+
+    // v2.8 — small helpers for the spoken hint above. Internal — the
+    // real BCP-47 lookup lives in AiClient.bcp47Name for the prompt
+    // builder. These two return the Arabic / English language name so
+    // a blind user hears "Pick the file to translate into French".
+    private String bcp47NameAr(String code) {
+        if (code == null) return "";
+        switch (code) {
+            case "ar": return "العربية";
+            case "en": return "الإنجليزية";
+            case "fr": return "الفرنسية";
+            case "es": return "الإسبانية";
+            case "de": return "الألمانية";
+            case "it": return "الإيطالية";
+            case "pt": return "البرتغالية";
+            case "ru": return "الروسية";
+            case "tr": return "التركية";
+            case "fa": return "الفارسية";
+            case "ur": return "الأردية";
+            case "hi": return "الهندية";
+            case "zh": return "الصينية";
+            case "ja": return "اليابانية";
+            case "ko": return "الكورية";
+            case "id": return "الإندونيسية";
+            case "ms": return "الماليزية";
+            case "nl": return "الهولندية";
+            case "pl": return "البولندية";
+            case "sv": return "السويدية";
+            default:   return code;
+        }
     }
 
     private String bcp47Name(String code) {
@@ -1770,6 +1845,51 @@ public class MainActivity extends Activity
         } else {
             startService(svc);
         }
+        showConvertingScreen();
+    }
+
+    /**
+     * v2.8 — document translation entry point. Reuses the convert
+     * pipeline (Files-API upload + chunked generateContent + DocxBuilder)
+     * but passes mode "translate:&lt;tgt&gt;". AiClient.modeNote() detects
+     * the prefix and injects a translation directive into the chunk
+     * prompt; AiClient.directConvertToDocx() also overrides the
+     * response-language to the target so every translated text element
+     * lands in the right language with the right RTL/LTR setup.
+     */
+    private void handleTranslateFile(Uri uri, String tgtCode) {
+        if (ConversionState.get().isRunning()) {
+            speak(t("هناك عملية تحويل قيد التنفيذ بالفعل.",
+                    "A conversion is already in progress."));
+            showConvertingScreen();
+            return;
+        }
+        try {
+            getContentResolver().takePersistableUriPermission(uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        } catch (Exception ignore) {}
+
+        ConversionState.get().clearUploadedFile();
+        ConversionState.get().setSourceDisplayName(resolveDisplayName(uri));
+
+        Intent svc = new Intent(this, ConversionService.class);
+        svc.setData(uri);
+        svc.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        svc.putExtra(ConversionService.EXTRA_SOURCE_URI, uri);
+        svc.putExtra(ConversionService.EXTRA_LANGUAGE, lang);
+        // The mode encoding is "translate:<bcp47>". AiClient parses it
+        // out via translateTargetFromMode() and uses the target both
+        // to override the response language AND to inject the
+        // "translate every text element" rule into the chunk prompts.
+        svc.putExtra(ConversionService.EXTRA_MODE, "translate:" + tgtCode);
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(svc);
+        } else {
+            startService(svc);
+        }
+        speak(t("بدأت ترجمة الملف. هذا قد يستغرق دقائق.",
+                "Document translation started. This may take a few minutes."));
         showConvertingScreen();
     }
 
@@ -3410,6 +3530,20 @@ public class MainActivity extends Activity
         } else if (requestCode == REQ_DOC_PICK && resultCode == RESULT_OK
                 && data != null && data.getData() != null) {
             handleConvertFile(data.getData());
+        } else if (requestCode == REQ_TRANSLATE_DOC_PICK) {
+            // v2.8 — document translation. Route through the same
+            // ConversionService pipeline as a regular conversion, but
+            // with a mode string that the AiClient prompt builder
+            // recognises as "translate to <lang>".
+            String tgt = pendingTranslateTo;
+            pendingTranslateTo = null;
+            if (resultCode != RESULT_OK || data == null || data.getData() == null) {
+                speak(t("تم إلغاء اختيار الملف.", "File selection was cancelled."));
+            } else if (tgt == null || tgt.isEmpty()) {
+                speak(t("لم يتم تحديد اللغة الهدف.", "Target language was not set."));
+            } else {
+                handleTranslateFile(data.getData(), tgt);
+            }
         } else if (requestCode == REQ_TASK_FILE_PICK && resultCode == RESULT_OK
                 && data != null && data.getData() != null) {
             handleTaskFile(data.getData());
