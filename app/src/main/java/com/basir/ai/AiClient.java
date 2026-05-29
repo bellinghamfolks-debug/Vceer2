@@ -114,6 +114,18 @@ public final class AiClient {
 
     // ---------------- public API ----------------
 
+    /**
+     * v2.3.1 — factory that returns the right {@link AiProvider} for the
+     * current preferences. Use this instead of branching on getMode() at
+     * each call site.
+     */
+    public static AiProvider provider(SharedPreferences prefs) {
+        if (MODE_DIRECT.equals(getMode(prefs))) {
+            return new GeminiAiProvider(prefs);
+        }
+        return new ProxyAiProvider(prefs);
+    }
+
     public static String ask(SharedPreferences prefs, String task,
                              String input, String instruction, String language) throws Exception {
         return ask(prefs, task, input, instruction, language, null, null);
@@ -122,17 +134,18 @@ public final class AiClient {
     public static String ask(SharedPreferences prefs, String task,
                              String input, String instruction, String language,
                              String imageBase64, String mimeType) throws Exception {
-        String userMessage = buildUserMessage(task, input, instruction, imageBase64 != null);
-        if (MODE_DIRECT.equals(getMode(prefs))) {
-            String key = prefs.getString("gemini_api_key", "");
-            String model = pickModel(prefs, task);
-            String systemText = systemPrompt(language, instruction);
-            return GeminiDirectClient.generateText(key, model, systemText, userMessage, imageBase64, mimeType);
-        }
-        return proxyAsk(prefs, task, userMessage, instruction, language, imageBase64, mimeType);
+        // v2.3.1 — delegate to the AiProvider abstraction. The provider
+        // owns the message scaffolding (prompt envelope, system text,
+        // model id), so the branching that used to live here is gone.
+        return provider(prefs).ask(task, input, instruction, language,
+                imageBase64, mimeType);
     }
 
-    private static String buildUserMessage(String task, String input, String instruction, boolean hasImage) {
+    /** v2.3.1 — package-private so {@link GeminiAiProvider} can call it.
+     *  Kept here (not duplicated into the provider) because the proxy
+     *  flow also needs the same envelope when a future server upgrade
+     *  starts forwarding the formatted prompt unchanged. */
+    static String buildUserMessage(String task, String input, String instruction, boolean hasImage) {
         String t = task == null ? "ask" : task;
         StringBuilder sb = new StringBuilder();
         sb.append("TASK: ").append(t).append('\n');
@@ -172,10 +185,8 @@ public final class AiClient {
     public static String convertToDocx(Context ctx, SharedPreferences prefs, Uri sourceUri,
                                        String mode, String language, File outFile,
                                        ProgressCallback progress) throws Exception {
-        if (MODE_DIRECT.equals(getMode(prefs))) {
-            return directConvertToDocx(ctx, prefs, sourceUri, mode, language, outFile, progress);
-        }
-        return proxyConvertToDocx(ctx, prefs, sourceUri, mode, language, outFile, progress);
+        // v2.3.1 — same delegation pattern as ask().
+        return provider(prefs).convertToDocx(ctx, sourceUri, mode, language, outFile, progress);
     }
 
     /** Reports incremental conversion progress to the caller. */
@@ -208,7 +219,8 @@ public final class AiClient {
         return u + "/api/convert";
     }
 
-    private static String proxyAsk(SharedPreferences prefs, String task,
+    /** v2.3.1 — package-private so {@link ProxyAiProvider} can call it. */
+    static String proxyAsk(SharedPreferences prefs, String task,
                                    String input, String instruction, String language,
                                    String imageBase64, String mimeType) throws Exception {
         String baseUrl = prefs.getString("ai_server_url", "");
@@ -258,7 +270,8 @@ public final class AiClient {
         }
     }
 
-    private static String proxyConvertToDocx(Context ctx, SharedPreferences prefs, Uri sourceUri,
+    /** v2.3.1 — package-private so {@link ProxyAiProvider} can call it. */
+    static String proxyConvertToDocx(Context ctx, SharedPreferences prefs, Uri sourceUri,
                                              String mode, String language, File outFile,
                                              ProgressCallback progress) throws Exception {
         String baseUrl = prefs.getString("ai_server_url", "");
@@ -336,7 +349,8 @@ public final class AiClient {
     /** Hard upper bound to protect us from runaway loops on malformed responses. */
     private static final int PDF_MAX_BATCHES = 250; // up to ~1000 pages
 
-    private static String directConvertToDocx(Context ctx, SharedPreferences prefs, Uri sourceUri,
+    /** v2.3.1 — package-private so {@link GeminiAiProvider} can call it. */
+    static String directConvertToDocx(Context ctx, SharedPreferences prefs, Uri sourceUri,
                                               String mode, String language, File outFile,
                                               ProgressCallback progress) throws Exception {
         String key = prefs.getString("gemini_api_key", "");
@@ -772,7 +786,8 @@ public final class AiClient {
         return p.toString();
     }
 
-    private static String systemPrompt(String language, String instruction) {
+    /** v2.3.1 — package-private so {@link GeminiAiProvider} can call it. */
+    static String systemPrompt(String language, String instruction) {
         String name = (language != null && language.toLowerCase().startsWith("ar")) ? "Arabic" : "English";
         StringBuilder sb = new StringBuilder();
         sb.append("You are Basir, an assistant for blind and low-vision users.\n");

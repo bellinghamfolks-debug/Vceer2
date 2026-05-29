@@ -47,6 +47,11 @@ jobs:
           test -f app/src/main/java/com/basir/ai/TtsController.java
           test -f app/src/main/java/com/basir/ai/VoiceController.java
           test -f app/src/main/java/com/basir/ai/PermissionController.java
+          # v2.3.1 provider abstraction
+          test -f app/src/main/java/com/basir/ai/AiProvider.java
+          test -f app/src/main/java/com/basir/ai/GeminiAiProvider.java
+          test -f app/src/main/java/com/basir/ai/ProxyAiProvider.java
+          test -f app/src/main/java/com/basir/ai/UserFriendlyErrorMapper.java
           test -f app/src/main/res/values/strings.xml
           test -f app/src/main/res/values/styles.xml
           test -f app/src/main/res/drawable/ic_basir.xml
