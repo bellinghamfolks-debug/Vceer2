@@ -346,8 +346,10 @@ public final class AiClient {
 
     /** Pages per Gemini call. Small so each batch finishes in ~10-20 s. */
     private static final int PDF_PAGES_PER_BATCH = 4;
-    /** Hard upper bound to protect us from runaway loops on malformed responses. */
-    private static final int PDF_MAX_BATCHES = 250; // up to ~1000 pages
+    // PDF_MAX_BATCHES retired in v2.4 — ConversionJob now bounds the chunk
+    // count to totalPages / PDF_PAGES_PER_BATCH explicitly (no runaway loop
+    // is possible because chunks are enumerated up front, not walked via a
+    // self-advancing nextPage cursor).
 
     /** v2.3.1 — package-private so {@link GeminiAiProvider} can call it. */
     static String directConvertToDocx(Context ctx, SharedPreferences prefs, Uri sourceUri,
@@ -429,55 +431,81 @@ public final class AiClient {
         String langName = arabic ? "Arabic" : "English";
 
         DocxBuilder doc = new DocxBuilder(arabic ? "ar" : "en");
-        boolean wroteHeader = false;
-        int nextPage = 1;
-        int batchCounter = 0;
+        // wroteHeader is captured by the renderer lambda below; an array
+        // gives us a mutable "ref" without leaking it out of this method.
+        final boolean[] wroteHeader = { false };
 
-        // 4) Loop in small page-batches. Each batch processes ~4 pages so a
-        //    single Gemini call takes seconds, not minutes — the UI counter
-        //    advances visibly.
-        while (nextPage <= totalPages && batchCounter < PDF_MAX_BATCHES) {
-            if (Thread.currentThread().isInterrupted()) throw new Exception("Cancelled");
-            batchCounter++;
-            int startPage = nextPage;
-            int endPage = Math.min(startPage + PDF_PAGES_PER_BATCH - 1, totalPages);
+        // v2.4 — drive the chunked PDF pipeline through a ConversionJob.
+        // A per-chunk failure (network glitch, JSON parse error, safety
+        // block, timeout) is now recorded on the chunk and the loop
+        // continues; the user gets a DOCX containing all the chunks that
+        // succeeded plus a footer listing the page ranges that didn't.
+        ConversionJob job = new ConversionJob(totalPages, PDF_PAGES_PER_BATCH);
+        final String fLangName = langName;
+        final String fLanguage = language;
+        final String fMode = mode;
+        final int fTotalPages = totalPages;
 
-            if (progress != null) progress.onProgress(startPage - 1, totalPages, "processing");
+        job.runAll(
+                chunk -> {
+                    String chunkPrompt = buildChunkedDocPrompt(fLangName, fMode,
+                            chunk.startPage(), chunk.endPage(),
+                            fTotalPages, !wroteHeader[0]);
+                    try {
+                        return GeminiDirectClient.generateJsonWithFilePart(
+                                key, model,
+                                "You are Basir, an assistant for blind and low-vision users.",
+                                chunkPrompt, filePart);
+                    } catch (Exception batchErr) {
+                        // Re-raise with the page range tacked on so the
+                        // chunk's recorded errorMessage identifies which
+                        // pages failed without us re-parsing it later.
+                        throw new Exception(batchErr.getMessage()
+                                + " (pages " + chunk.startPage() + "-"
+                                + chunk.endPage() + ")");
+                    }
+                },
+                chunk -> {
+                    if (!wroteHeader[0]) {
+                        String title = chunk.parsed().optString("title", "");
+                        if (!title.isEmpty()) doc.title(title);
+                        String summary = chunk.parsed().optString("summary", "");
+                        if (!summary.isEmpty()) doc.paragraph(summary);
+                        wroteHeader[0] = true;
+                    }
+                    JSONArray sections = chunk.parsed().optJSONArray("sections");
+                    renderSectionsInto(doc, sections, fLanguage);
+                },
+                (curPage, totalP, stage) -> {
+                    if (progress != null) progress.onProgress(curPage, totalP, stage);
+                },
+                () -> {
+                    if (Thread.currentThread().isInterrupted()) {
+                        throw new Exception("Cancelled");
+                    }
+                }
+        );
 
-            String chunkPrompt = buildChunkedDocPrompt(langName, mode, startPage, endPage,
-                    totalPages, !wroteHeader);
-
-            JSONObject parsed;
-            try {
-                parsed = GeminiDirectClient.generateJsonWithFilePart(
-                        key, model,
-                        "You are Basir, an assistant for blind and low-vision users.",
-                        chunkPrompt, filePart);
-            } catch (Exception batchErr) {
-                // Surface a friendly message that identifies the failing range
-                // — far more useful than the raw Gemini error.
-                throw new Exception(batchErr.getMessage()
-                        + " (pages " + startPage + "-" + endPage + ")");
+        // v2.4 — partial-result footer. If any chunks failed, the user
+        // gets a clearly labelled section at the end of the DOCX listing
+        // the page ranges that the model couldn't process plus the
+        // technical reason. They can then re-run just those ranges.
+        if (job.failedChunkCount() > 0) {
+            doc.heading(2, arabic
+                    ? "صفحات لم يتمكّن النموذج من معالجتها"
+                    : "Pages the model could not process");
+            doc.paragraph(arabic
+                    ? "هذه الصفحات أُسقطت من النتيجة. باقي المستند صالح. يمكنك إعادة تشغيل التحويل لتجربتها مرّة أخرى."
+                    : "These pages were dropped from the output. The rest of the document is intact. Re-run the conversion to retry them.");
+            for (ConversionChunk fc : job.failedChunks()) {
+                String label = arabic
+                        ? "الصفحات " + fc.startPage() + "–" + fc.endPage()
+                        : "Pages " + fc.startPage() + "–" + fc.endPage();
+                String reason = fc.errorMessage().isEmpty()
+                        ? ""
+                        : " — " + fc.errorMessage();
+                doc.paragraph(label + reason);
             }
-
-            if (!wroteHeader) {
-                String title = parsed.optString("title", "");
-                if (!title.isEmpty()) doc.title(title);
-                String summary = parsed.optString("summary", "");
-                if (!summary.isEmpty()) doc.paragraph(summary);
-                wroteHeader = true;
-            }
-
-            JSONArray sections = parsed.optJSONArray("sections");
-            renderSectionsInto(doc, sections, language);
-
-            int effectiveEnd = parsed.optInt("end_page", endPage);
-            if (effectiveEnd < startPage) effectiveEnd = endPage;
-            if (effectiveEnd > totalPages) effectiveEnd = totalPages;
-
-            if (progress != null) progress.onProgress(effectiveEnd, totalPages, "processing");
-
-            nextPage = effectiveEnd + 1;
         }
 
         if (progress != null) progress.onProgress(totalPages, totalPages, "finalising");

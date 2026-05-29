@@ -52,6 +52,9 @@ jobs:
           test -f app/src/main/java/com/basir/ai/GeminiAiProvider.java
           test -f app/src/main/java/com/basir/ai/ProxyAiProvider.java
           test -f app/src/main/java/com/basir/ai/UserFriendlyErrorMapper.java
+          # v2.4 conversion job + chunks (partial-result fallback)
+          test -f app/src/main/java/com/basir/ai/ConversionChunk.java
+          test -f app/src/main/java/com/basir/ai/ConversionJob.java
           test -f app/src/main/res/values/strings.xml
           test -f app/src/main/res/values/styles.xml
           test -f app/src/main/res/drawable/ic_basir.xml
