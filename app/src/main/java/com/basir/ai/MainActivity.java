@@ -59,7 +59,7 @@ import java.util.concurrent.Executors;
  * Card-based, screen-reader-first UI. Gemini powered (via the secure proxy).
  */
 public class MainActivity extends Activity
-        implements TtsController.Host, VoiceController.Host, BasirScreenHost {
+        implements VoiceController.Host, BasirScreenHost {
 
     public static final String CONTACT_EMAIL = "ubdallahalrashdee@gmail.com";
 
@@ -79,8 +79,11 @@ public class MainActivity extends Activity
     private final ExecutorService aiExecutor = Executors.newSingleThreadExecutor();
 
     // v2.3 — TTS, voice recognition, and permission requests live on
-    // dedicated controllers. MainActivity is the host (implements
-    // TtsController.Host + VoiceController.Host) and owns the lifecycle.
+    // dedicated controllers. MainActivity implements VoiceController.Host
+    // directly (one method, isEnglish()) and delegates TtsController.Host
+    // through the ttsHostCallback field below — that keeps the engine
+    // callback methods (onUtteranceDoneOrError etc.) out of the Activity's
+    // public surface.
     private TtsController ttsController;
     private VoiceController voiceController;
     private PermissionController permissionController;
@@ -190,7 +193,6 @@ public class MainActivity extends Activity
         }
     }
 
-    @Override
     /** Host callback wired into {@link TtsController}. Lives as a field so
      *  the controller doesn't see private MainActivity methods directly. */
     private final TtsController.Host ttsHostCallback = new TtsController.Host() {
@@ -251,7 +253,7 @@ public class MainActivity extends Activity
     // ============================================================
     // Localization
     // ============================================================
-    private boolean isEnglish() { return "en".equals(lang); }
+    @Override public boolean isEnglish() { return "en".equals(lang); }
     @Override public String t(String ar, String en) { return isEnglish() ? en : ar; }
 
     // ============================================================
