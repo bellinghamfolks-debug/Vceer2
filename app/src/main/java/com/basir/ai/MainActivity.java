@@ -1,6 +1,5 @@
 package com.basir.ai;
 
-import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.ContentValues;
@@ -27,8 +26,6 @@ import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.provider.MediaStore;
 import android.provider.OpenableColumns;
-import android.speech.RecognizerIntent;
-import android.speech.tts.TextToSpeech;
 import android.text.InputType;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -61,24 +58,32 @@ import java.util.concurrent.Executors;
  * Basir - main screen.
  * Card-based, screen-reader-first UI. Gemini powered (via the secure proxy).
  */
-public class MainActivity extends Activity implements TextToSpeech.OnInitListener {
+public class MainActivity extends Activity
+        implements TtsController.Host, VoiceController.Host {
 
     public static final String CONTACT_EMAIL = "ubdallahalrashdee@gmail.com";
 
-    private static final int REQ_PERMISSIONS = 1001;
-    private static final int REQ_VOICE = 1002;
-    private static final int REQ_IMAGE_PICK = 1003;
-    private static final int REQ_DOC_PICK = 1004;
-    private static final int REQ_IMAGE_CAPTURE = 1005;
-    private static final int REQ_CAMERA_PERM = 1006;
+    // v2.3 — permission and voice-recogniser request codes now live on the
+    // controller classes that own those flows. REQ_VOICE re-exposed as an
+    // alias so the existing call-sites compile without changes.
+    private static final int REQ_PERMISSIONS    = PermissionController.REQ_CORE_PERMISSIONS;
+    private static final int REQ_CAMERA_PERM    = PermissionController.REQ_CAMERA_PERM;
+    private static final int REQ_VOICE          = VoiceController.REQ_VOICE;
+    private static final int REQ_IMAGE_PICK     = 1003;
+    private static final int REQ_DOC_PICK       = 1004;
+    private static final int REQ_IMAGE_CAPTURE  = 1005;
     private static final int REQ_TASK_FILE_PICK = 1007;
 
     private SharedPreferences prefs;
     private BasirDb db;
     private final ExecutorService aiExecutor = Executors.newSingleThreadExecutor();
 
-    private TextToSpeech tts;
-    private boolean ttsReady = false;
+    // v2.3 — TTS, voice recognition, and permission requests live on
+    // dedicated controllers. MainActivity is the host (implements
+    // TtsController.Host + VoiceController.Host) and owns the lifecycle.
+    private TtsController ttsController;
+    private VoiceController voiceController;
+    private PermissionController permissionController;
 
     // v2.0 — continuous voice conversation. When true, every voice command
     // is treated as a question to Gemini (not a navigation command), the
@@ -125,8 +130,15 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
         prefs = getSharedPreferences("basir_settings", MODE_PRIVATE);
         db = new BasirDb(this);
         loadSettings();
-        tts = new TextToSpeech(this, this);
-        requestCorePermissions();
+        // v2.3 — three controllers replace ~150 lines that used to sit
+        // directly on the Activity. Construction order: PermissionController
+        // first (no other dependencies), TtsController second (kicks off
+        // engine init which fires onTtsReady asynchronously), VoiceController
+        // last (cheap, no init work).
+        permissionController = new PermissionController(this);
+        ttsController = new TtsController(this, ttsHostCallback);
+        voiceController = new VoiceController(this, this);
+        permissionController.requestCorePermissions();
         showHome();
     }
 
@@ -141,43 +153,31 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
     }
 
     @Override
-    public void onInit(int status) {
-        if (status != TextToSpeech.SUCCESS) return;
-        ttsReady = true;
-        applyTtsConfig();
-        // v2.0: continuous voice mode hooks here. When the TTS finishes
-        // speaking an utterance tagged with our "convo-" prefix, AND we're
-        // still in conversation mode, automatically launch the next
-        // recognizer turn so the user never has to touch the screen
-        // between question and answer.
-        try {
-            tts.setOnUtteranceProgressListener(
-                    new android.speech.tts.UtteranceProgressListener() {
-                @Override public void onStart(String utteranceId) {}
-                @Override public void onError(String utteranceId) {
-                    if (utteranceId == null) return;
-                    if (utteranceId.startsWith("convo-") && inConversationMode) {
-                        runOnUiThread(() -> launchConversationListenStep());
-                    } else if (utteranceId.startsWith("walk-") && walkingModeAuto) {
-                        runOnUiThread(() -> launchWalkingCapture());
-                    }
-                }
-                @Override public void onDone(String utteranceId) {
-                    if (utteranceId == null) return;
-                    if (utteranceId.startsWith("convo-") && inConversationMode) {
-                        runOnUiThread(() -> launchConversationListenStep());
-                    } else if (utteranceId.startsWith("walk-") && walkingModeAuto) {
-                        runOnUiThread(() -> launchWalkingCapture());
-                    }
-                }
-            });
-        } catch (Throwable ignore) {}
-        speak(t("مرحبًا بك في بصير الإصدار الثاني. أصبح بإمكانك الآن تحويل ملفات PDF كبيرة، وطرح أسئلة حول مستنداتك، وإجراء محادثة صوتية مستمرة، وقراءة العملات والفواتير، واستخدام وضع المشي للوصف الفوري.", "Welcome to Basir version 2. You can now convert large PDF files, ask questions about your documents, hold a continuous voice conversation, read currency and receipts, and use walking mode for instant scene descriptions."));
-    }
+    /** Host callback wired into {@link TtsController}. Lives as a field so
+     *  the controller doesn't see private MainActivity methods directly. */
+    private final TtsController.Host ttsHostCallback = new TtsController.Host() {
+        @Override public boolean isEnglish()        { return MainActivity.this.isEnglish(); }
+        @Override public boolean isSpeechEnabled()  { return speechEnabled; }
+        @Override public float   getTtsRate()       { return ttsRate; }
+        @Override public void onTtsReady() {
+            runOnUiThread(() -> speak(t(
+                    "مرحبًا بك في بصير الإصدار الثاني. أصبح بإمكانك الآن تحويل ملفات PDF كبيرة، وطرح أسئلة حول مستنداتك، وإجراء محادثة صوتية مستمرة، وقراءة العملات والفواتير، واستخدام وضع المشي للوصف الفوري.",
+                    "Welcome to Basir version 2. You can now convert large PDF files, ask questions about your documents, hold a continuous voice conversation, read currency and receipts, and use walking mode for instant scene descriptions.")));
+        }
+        @Override public void onUtteranceDoneOrError(String utteranceId) {
+            // Engine callback thread — hop to UI before touching state or
+            // launching other Activities.
+            if (utteranceId.startsWith(TtsController.ID_PREFIX_CONVO) && inConversationMode) {
+                runOnUiThread(MainActivity.this::launchConversationListenStep);
+            } else if (utteranceId.startsWith(TtsController.ID_PREFIX_WALK) && walkingModeAuto) {
+                runOnUiThread(MainActivity.this::launchWalkingCapture);
+            }
+        }
+    };
 
     @Override
     protected void onDestroy() {
-        if (tts != null) { tts.stop(); tts.shutdown(); }
+        if (ttsController != null) ttsController.shutdown();
         aiExecutor.shutdownNow();
         super.onDestroy();
     }
@@ -204,28 +204,10 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
         fontStep = prefs.getInt("font_step", 0);
     }
 
+    /** Delegate kept for in-place callers (settings screen, language switch).
+     *  All real work lives in {@link TtsController#applyConfig()}. */
     private void applyTtsConfig() {
-        if (tts == null || !ttsReady) return;
-        Locale locale = isEnglish() ? Locale.US : new Locale("ar", "SA");
-        tts.setLanguage(locale);
-        tts.setSpeechRate(ttsRate);
-    }
-
-    private void requestCorePermissions() {
-        if (Build.VERSION.SDK_INT < 23) return;
-        List<String> need = new ArrayList<>();
-        addIfMissing(need, Manifest.permission.RECORD_AUDIO);
-        addIfMissing(need, Manifest.permission.ACCESS_FINE_LOCATION);
-        addIfMissing(need, Manifest.permission.ACCESS_COARSE_LOCATION);
-        // Android 13+ requires runtime grant to post the conversion progress notification.
-        if (Build.VERSION.SDK_INT >= 33) {
-            addIfMissing(need, "android.permission.POST_NOTIFICATIONS");
-        }
-        if (!need.isEmpty()) requestPermissions(need.toArray(new String[0]), REQ_PERMISSIONS);
-    }
-
-    private void addIfMissing(List<String> list, String perm) {
-        if (checkSelfPermission(perm) != android.content.pm.PackageManager.PERMISSION_GRANTED) list.add(perm);
+        if (ttsController != null) ttsController.applyConfig();
     }
 
     // ============================================================
@@ -2270,15 +2252,12 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
     }
 
     private void speakWalkingThenRecapture(String text) {
-        if (!speechEnabled || tts == null || !ttsReady || text == null) {
+        if (ttsController == null || !ttsController.isReady() || text == null) {
             if (walkingModeAuto) launchWalkingCapture();
             return;
         }
-        // Re-use the conversation utterance listener: when the "walk-..."
-        // utterance finishes, relaunch capture. The same listener also
-        // recognises "convo-..." for voice conversation mode.
-        String id = "walk-" + System.currentTimeMillis();
-        tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, id);
+        ttsController.speakWithId(text,
+                TtsController.ID_PREFIX_WALK + System.currentTimeMillis());
     }
 
     // ============================================================
@@ -2358,7 +2337,7 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
 
     private void endVoiceConversation() {
         inConversationMode = false;
-        try { if (tts != null) tts.stop(); } catch (Throwable ignore) {}
+        if (ttsController != null) ttsController.stop();
         setConversationStatus(t("تم إنهاء المحادثة.", "Conversation ended."));
         speak(t("تم إنهاء المحادثة.", "Conversation ended."));
         showVoiceConversationScreen();
@@ -2367,15 +2346,8 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
     private void launchConversationListenStep() {
         if (!inConversationMode) return;
         setConversationStatus(t("جاري الاستماع...", "Listening..."));
-        try {
-            Intent i = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
-            i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,
-                    RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
-            i.putExtra(RecognizerIntent.EXTRA_LANGUAGE, isEnglish() ? "en-US" : "ar-SA");
-            i.putExtra(RecognizerIntent.EXTRA_PROMPT,
-                    t("تحدث الآن", "Speak now"));
-            startActivityForResult(i, REQ_VOICE);
-        } catch (Exception e) {
+        boolean ok = voiceController.launch(t("تحدث الآن", "Speak now"));
+        if (!ok) {
             inConversationMode = false;
             setConversationStatus(t("التعرف الصوتي غير متاح.",
                                     "Speech recognition is not available."));
@@ -2448,9 +2420,9 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
     /** speak() variant that tags utterances with a "convo-" id, so the TTS
      *  done-listener wakes the next listen step. */
     private void speakConversation(String text) {
-        if (!speechEnabled || tts == null || !ttsReady || text == null) return;
-        String id = "convo-" + System.currentTimeMillis();
-        tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, id);
+        if (ttsController == null) return;
+        ttsController.speakWithId(text,
+                TtsController.ID_PREFIX_CONVO + System.currentTimeMillis());
     }
 
     // ============================================================
@@ -2518,12 +2490,9 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
 
     private String getLastKnownLocation() {
         try {
-            if (Build.VERSION.SDK_INT >= 23 &&
-                    checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) !=
-                            android.content.pm.PackageManager.PERMISSION_GRANTED &&
-                    checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) !=
-                            android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                return t("لم يتم منح إذن الوصول إلى الموقع", "Location permission was not granted");
+            if (!permissionController.hasFineOrCoarseLocation()) {
+                return t("لم يتم منح إذن الوصول إلى الموقع",
+                         "Location permission was not granted");
             }
             LocationManager lm = (LocationManager) getSystemService(LOCATION_SERVICE);
             if (lm == null) return t("الموقع غير متاح حاليًا", "Location is currently unavailable");
@@ -3560,10 +3529,8 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
 
     /** Launches the system camera and stores the photo via MediaStore. */
     private void captureFromCamera() {
-        // Runtime camera permission for Marshmallow+ devices.
-        if (Build.VERSION.SDK_INT >= 23 &&
-                checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[]{ Manifest.permission.CAMERA }, REQ_CAMERA_PERM);
+        if (!permissionController.hasCamera()) {
+            permissionController.requestCamera();
             return;
         }
         try {
@@ -3874,23 +3841,20 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
     // ============================================================
 
     private void startVoiceCommand() {
-        Intent i = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
-        i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
-        i.putExtra(RecognizerIntent.EXTRA_LANGUAGE, isEnglish() ? "en-US" : "ar-SA");
-        i.putExtra(RecognizerIntent.EXTRA_PROMPT,
+        boolean ok = voiceController.launch(
                 t("قل أمرًا أو اطرح سؤالًا.", "Say a command or ask a question."));
-        try { startActivityForResult(i, REQ_VOICE); }
-        catch (Exception e) {
-            speak(t("التعرف الصوتي غير متاح على هذا الجهاز.", "Speech recognition is not available on this device."));
+        if (!ok) {
+            speak(t("التعرف الصوتي غير متاح على هذا الجهاز.",
+                    "Speech recognition is not available on this device."));
         }
     }
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == REQ_VOICE && resultCode == RESULT_OK && data != null) {
-            ArrayList<String> res = data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS);
-            if (res != null && !res.isEmpty()) handleVoiceCommand(res.get(0));
+        if (requestCode == REQ_VOICE && resultCode == RESULT_OK) {
+            String spoken = VoiceController.extractResult(data);
+            if (spoken != null) handleVoiceCommand(spoken);
         } else if (requestCode == REQ_IMAGE_PICK && resultCode == RESULT_OK
                 && data != null && data.getData() != null) {
             handlePickedImage(data.getData());
@@ -3987,8 +3951,7 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
     // ============================================================
 
     private void speak(String s) {
-        if (!speechEnabled || tts == null || !ttsReady || s == null || s.trim().isEmpty()) return;
-        tts.speak(s, TextToSpeech.QUEUE_FLUSH, null, "basir");
+        if (ttsController != null) ttsController.speak(s);
     }
 
     private void vibrate(int ms) {
