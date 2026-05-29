@@ -10,31 +10,31 @@ import java.security.MessageDigest;
 import java.util.HashSet;
 import java.util.Locale;
 import java.util.Set;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 /**
- * Persistent dedup store. Across app restarts the bot remembers which
- * members have been liked so refresh cycles never re-tap them.
+ * Tiny SQLite store that remembers which members have already been "liked"
+ * across app restarts. The original APK only deduplicated by on-screen
+ * coordinates (cleared on every scroll), which guaranteed that the same
+ * profile got liked again the moment it appeared at the same position.
  *
- * v1.13.0 — writes are batched and async:
- *   • markLiked/markInspected update the in-memory cache synchronously
- *     so isLiked() reflects the new entry immediately, then add the
- *     fingerprint to a pending batch.
- *   • Every FLUSH_BATCH_SIZE inserts, the batch is handed off to a
- *     single-thread executor that does a single transactional insert.
- *   • flushNow() drains the pending batch synchronously; called when
- *     the service stops, unbinds, or is destroyed so we never lose a
- *     batch worth of likes on process kill.
+ * Approach:
+ *   1) When we detect a "like" button, we walk up to find the surrounding
+ *      profile card and collect ALL visible text inside it (name, age,
+ *      weight, etc.).
+ *   2) We normalize the text and compute a SHA-1 fingerprint.
+ *   3) We INSERT-OR-IGNORE the fingerprint into the {@code liked} table.
+ *      If the row already existed, the caller skips the click.
  *
- * Two tables — `liked` and `inspected`. Both contain BOTH the strict
- * Arabic-only fingerprints AND the v1.13.0 "loose" (T:hash) IDs;
- * because looseId values are prefixed with "T:" they never collide
- * with strict SHA-1 hex strings.
+ * To keep query latency negligible we also load a Bloom-friendly Set<String>
+ * cache into memory and check that first.
  */
 public final class LikedMembersDb extends SQLiteOpenHelper {
 
     private static final String DB_NAME = "mokafeefah_liked.db";
+    // v1.11: bumped to 2 to add the inspected_members table used by the
+    // "divorced / widowed only" mode — it records every member whose
+    // profile we opened and decided NOT to like, so we don't keep
+    // re-opening the same ineligible profiles on every refresh.
     private static final int    DB_VERSION = 2;
 
     private static final String TABLE = "liked";
@@ -43,15 +43,10 @@ public final class LikedMembersDb extends SQLiteOpenHelper {
 
     private static final String INSPECTED_TABLE = "inspected";
 
-    private static final int FLUSH_BATCH_SIZE = 25;
-
+    /** In-memory mirror of the fingerprint column. Keeps the hot-path fast. */
     private Set<String> cache;
     private Set<String> inspectedCache;
     private final Object cacheLock = new Object();
-
-    private final Set<String> pendingLiked = new HashSet<>();
-    private final Set<String> pendingInspected = new HashSet<>();
-    private final ExecutorService dbExecutor = Executors.newSingleThreadExecutor();
 
     public LikedMembersDb(Context ctx) {
         super(ctx.getApplicationContext(), DB_NAME, null, DB_VERSION);
@@ -84,107 +79,36 @@ public final class LikedMembersDb extends SQLiteOpenHelper {
     }
 
     /**
-     * v1.13.0 — preload both caches on the executor so the first
-     * call to isLiked() doesn't pay the seed-from-disk latency on
-     * the hot path. Called from ClickerService.startBot().
+     * Lookup is O(1) thanks to the in-memory cache. The DB is only touched
+     * lazily, once, to seed the cache.
      */
-    public void warmUp() {
-        dbExecutor.execute(new Runnable() {
-            @Override public void run() {
-                synchronized (cacheLock) {
-                    ensureCacheLocked();
-                    ensureInspectedCacheLocked();
-                }
-            }
-        });
-    }
-
-    /** O(1) memory lookup. */
     public boolean isLiked(String fingerprint) {
         if (fingerprint == null || fingerprint.isEmpty()) return false;
-        synchronized (cacheLock) { return ensureCacheLocked().contains(fingerprint); }
-    }
-
-    public void markLiked(String fingerprint) {
-        if (fingerprint == null || fingerprint.isEmpty()) return;
-        boolean shouldFlush;
-        synchronized (cacheLock) {
-            ensureCacheLocked().add(fingerprint);
-            pendingLiked.add(fingerprint);
-            shouldFlush = pendingLiked.size() + pendingInspected.size() >= FLUSH_BATCH_SIZE;
-            if (shouldFlush) scheduleFlushLocked();
-        }
-    }
-
-    public boolean isInspected(String fingerprint) {
-        if (fingerprint == null || fingerprint.isEmpty()) return false;
-        synchronized (cacheLock) { return ensureInspectedCacheLocked().contains(fingerprint); }
-    }
-
-    public void markInspected(String fingerprint) {
-        if (fingerprint == null || fingerprint.isEmpty()) return;
-        boolean shouldFlush;
-        synchronized (cacheLock) {
-            ensureInspectedCacheLocked().add(fingerprint);
-            pendingInspected.add(fingerprint);
-            shouldFlush = pendingLiked.size() + pendingInspected.size() >= FLUSH_BATCH_SIZE;
-            if (shouldFlush) scheduleFlushLocked();
-        }
+        return ensureCache().contains(fingerprint);
     }
 
     /**
-     * Force-flush any pending writes. Safe to call from any thread —
-     * the work is still dispatched to dbExecutor so we don't block the
-     * accessibility-service main loop on disk I/O.
+     * Record that we just liked this member. Inserts both into the in-memory
+     * cache and the SQLite store. Safe to call from any thread.
      */
-    public void flushNow() {
+    public void markLiked(String fingerprint) {
+        if (fingerprint == null || fingerprint.isEmpty()) return;
         synchronized (cacheLock) {
-            if (pendingLiked.isEmpty() && pendingInspected.isEmpty()) return;
-            scheduleFlushLocked();
+            ensureCacheLocked().add(fingerprint);
         }
-    }
-
-    /** Caller must hold cacheLock. Snapshots the pending sets and clears them. */
-    private void scheduleFlushLocked() {
-        final HashSet<String> likedBatch = new HashSet<>(pendingLiked);
-        final HashSet<String> inspectedBatch = new HashSet<>(pendingInspected);
-        pendingLiked.clear();
-        pendingInspected.clear();
-        dbExecutor.execute(new Runnable() {
-            @Override public void run() { writeBatch(likedBatch, inspectedBatch); }
-        });
-    }
-
-    private void writeBatch(HashSet<String> likedBatch, HashSet<String> inspectedBatch) {
-        if (likedBatch.isEmpty() && inspectedBatch.isEmpty()) return;
         try {
-            SQLiteDatabase db = getWritableDatabase();
-            db.beginTransaction();
-            try {
-                long now = System.currentTimeMillis();
-                ContentValues v = new ContentValues();
-                for (String fp : likedBatch) {
-                    v.clear();
-                    v.put(COL_FP, fp);
-                    v.put(COL_AT, now);
-                    db.insertWithOnConflict(TABLE, null, v, SQLiteDatabase.CONFLICT_IGNORE);
-                }
-                for (String fp : inspectedBatch) {
-                    v.clear();
-                    v.put(COL_FP, fp);
-                    v.put(COL_AT, now);
-                    db.insertWithOnConflict(INSPECTED_TABLE, null, v, SQLiteDatabase.CONFLICT_IGNORE);
-                }
-                db.setTransactionSuccessful();
-            } finally {
-                db.endTransaction();
-            }
+            ContentValues v = new ContentValues();
+            v.put(COL_FP, fingerprint);
+            v.put(COL_AT, System.currentTimeMillis());
+            getWritableDatabase().insertWithOnConflict(
+                    TABLE, null, v, SQLiteDatabase.CONFLICT_IGNORE);
         } catch (Throwable ignore) {
-            // DB full / read-only / corrupted — in-memory cache still
-            // dedups within the current session.
+            // If the DB is full or the disk is read-only, fall back to
+            // in-memory dedup only — better than nothing.
         }
     }
 
+    /** Returns the number of unique members ever liked. */
     public int count() {
         try (Cursor c = getReadableDatabase().rawQuery(
                 "SELECT COUNT(*) FROM " + TABLE, null)) {
@@ -194,35 +118,44 @@ public final class LikedMembersDb extends SQLiteOpenHelper {
         }
     }
 
+    /** Wipes the entire history. Used by the "Clear history" button. */
     public void clearAll() {
+        try {
+            SQLiteDatabase db = getWritableDatabase();
+            db.delete(TABLE, null, null);
+            db.delete(INSPECTED_TABLE, null, null);
+        } catch (Throwable ignore) {}
         synchronized (cacheLock) {
-            pendingLiked.clear();
-            pendingInspected.clear();
             cache = new HashSet<>();
             inspectedCache = new HashSet<>();
         }
-        dbExecutor.execute(new Runnable() {
-            @Override public void run() {
-                try {
-                    SQLiteDatabase db = getWritableDatabase();
-                    db.delete(TABLE, null, null);
-                    db.delete(INSPECTED_TABLE, null, null);
-                } catch (Throwable ignore) {}
-            }
-        });
     }
 
-    private Set<String> ensureCacheLocked() {
-        if (cache != null) return cache;
-        Set<String> seeded = new HashSet<>();
-        try (Cursor c = getReadableDatabase().query(
-                TABLE, new String[]{ COL_FP }, null, null, null, null, null)) {
-            if (c != null) {
-                while (c.moveToNext()) seeded.add(c.getString(0));
-            }
+    // ---------- inspected (filter-mode, profile checked, NOT liked) ----------
+
+    /**
+     * v1.11 — true if we have previously opened this member's profile in
+     * filter mode and decided they didn't qualify (not divorced / widowed).
+     * Used so that on every soft-refresh we don't re-open the same
+     * ineligible profiles over and over.
+     */
+    public boolean isInspected(String fingerprint) {
+        if (fingerprint == null || fingerprint.isEmpty()) return false;
+        synchronized (cacheLock) { return ensureInspectedCacheLocked().contains(fingerprint); }
+    }
+
+    public void markInspected(String fingerprint) {
+        if (fingerprint == null || fingerprint.isEmpty()) return;
+        synchronized (cacheLock) {
+            ensureInspectedCacheLocked().add(fingerprint);
+        }
+        try {
+            ContentValues v = new ContentValues();
+            v.put(COL_FP, fingerprint);
+            v.put(COL_AT, System.currentTimeMillis());
+            getWritableDatabase().insertWithOnConflict(
+                    INSPECTED_TABLE, null, v, SQLiteDatabase.CONFLICT_IGNORE);
         } catch (Throwable ignore) {}
-        cache = seeded;
-        return cache;
     }
 
     private Set<String> ensureInspectedCacheLocked() {
@@ -238,6 +171,33 @@ public final class LikedMembersDb extends SQLiteOpenHelper {
         return inspectedCache;
     }
 
+    // ---------- private helpers ----------
+
+    private Set<String> ensureCache() {
+        synchronized (cacheLock) { return ensureCacheLocked(); }
+    }
+
+    private Set<String> ensureCacheLocked() {
+        if (cache != null) return cache;
+        Set<String> seeded = new HashSet<>();
+        try (Cursor c = getReadableDatabase().query(
+                TABLE, new String[]{ COL_FP }, null, null, null, null, null)) {
+            if (c != null) {
+                while (c.moveToNext()) seeded.add(c.getString(0));
+            }
+        } catch (Throwable ignore) {}
+        cache = seeded;
+        return cache;
+    }
+
+    // ---------- static fingerprint helper ----------
+
+    /**
+     * Compute a stable SHA-1 fingerprint of a profile's visible text.
+     * The text is normalized (Arabic letter forms collapsed, whitespace
+     * squashed) so the same profile produces the same hash regardless of
+     * incidental differences.
+     */
     public static String fingerprint(String text) {
         if (text == null) return null;
         String normalized = normalize(text);
@@ -252,15 +212,15 @@ public final class LikedMembersDb extends SQLiteOpenHelper {
             }
             return hex.toString();
         } catch (Exception e) {
+            // Fallback: use a stable Java hash of the normalized text. Lower
+            // resolution than SHA-1 but still useful for dedup.
             return "h" + Integer.toHexString(normalized.hashCode());
         }
     }
 
     private static String normalize(String s) {
         if (s == null) return "";
-        // v1.12.9 — include U+0640 (Arabic Tatweel) in the strip class so
-        // 'بـحـث' normalises to 'بحث'.
-        String r = s.replaceAll("[ً-ْٰٱـ]", "");
+        String r = s.replaceAll("[ً-ْٰٱ]", "");                    // tashkeel
         r = r.replace((char) 1571, (char) 1575)   // أ → ا
              .replace((char) 1573, (char) 1575)   // إ → ا
              .replace((char) 1570, (char) 1575)   // آ → ا

@@ -4,15 +4,16 @@
     <string name="service_label">بوت ذكي للمكفوفين</string>
     <string name="service_description">يقرأ التطبيق شجرة عناصر الشاشة عبر إذن إمكانية الوصول للبحث عن أزرار يحددها المستخدم بنفسه ونقرها برمجيًا. يعمل بدقة كاملة بدون إحداثيات ولا روت ولا تجاوز حماية أي تطبيق.</string>
 
-    <string name="header_title">مكفوف بوت — v1.13.0</string>
-    <string name="header_subtitle">يقرأ الشاشة وينقر زر الإعجاب تلقائيًا في مودة. يتذكر الأعضاء الذين سبق التفاعل معهم ولا يكررهم.</string>
+    <string name="header_title">مكفوف بوت - بوت ذكي بدون إحداثيات</string>
+    <string name="header_subtitle">يقرأ الشاشة ويبحث عن الأزرار وينقرها تلقائيًا. يتذكّر الأعضاء الذين سبق التفاعل معهم ولا يكررهم.</string>
 
     <string name="section_status">حالة التطبيق</string>
+    <string name="section_config">إعدادات البحث عن الأزرار</string>
     <string name="section_actions">الأزرار الرئيسية</string>
 
     <string name="service_status_label">حالة خدمة إمكانية الوصول</string>
     <string name="service_status_enabled">مفعلة</string>
-    <string name="service_status_disabled">غير مفعلة — اضغط زر فتح إعدادات إمكانية الوصول</string>
+    <string name="service_status_disabled">غير مفعلة - اضغط زر فتح إعدادات إمكانية الوصول</string>
 
     <string name="exec_status_label">حالة التنفيذ</string>
     <string name="exec_status_idle">خامل</string>
@@ -25,7 +26,54 @@
     <string name="last_action_label">آخر إجراء قام به البوت</string>
     <string name="last_action_none">لا يوجد بعد</string>
 
-    <string name="label_dedup_desc">يستخدم البوت قاعدة بيانات محلية لتسجيل الأعضاء الذين تمّ التفاعل معهم. لن يُكرّر البوت أبدًا.</string>
+    <string name="config_hint">يبحث البوت عن هذه النصوص داخل أي تطبيق على الشاشة. عدّل النصوص لتطابق ما يظهر في تطبيقك الهدف.</string>
+
+    <string name="label_like_text">نص زر الإعجاب أو الاهتمام</string>
+    <string name="hint_like_text">مثال: إهتمام أو اهتمام أو إعجاب</string>
+
+    <string name="label_yes_text">نص زر التأكيد - نعم</string>
+    <string name="hint_yes_text">مثال: نعم أو موافق أو تأكيد</string>
+
+    <string name="label_close_text">نص زر الإغلاق - لرسائل النجاح والقيود</string>
+    <string name="hint_close_text">مثال: إغلاق أو حسناً أو موافق</string>
+
+    <string name="label_target_package">اسم حزمة التطبيق الهدف - اختياري</string>
+    <string name="hint_target_package">اتركه فارغًا للعمل في أي تطبيق</string>
+
+    <string name="label_profile_keywords">كلمات تدل على دخول الملف الشخصي بالخطأ - مفصولة بفاصلة</string>
+    <string name="hint_profile_keywords">المؤهل التعليمي، الوزن، الطول</string>
+
+    <string name="label_scan_interval">سرعة فحص الشاشة بالميلي ثانية</string>
+    <string name="hint_scan_interval">مثال: 250 - الأقل أسرع لكن يستهلك بطارية أكثر</string>
+
+    <string name="label_popup_wait">مدة انتظار ظهور النافذة المنبثقة بعد نقرة الإعجاب بالميلي ثانية</string>
+    <string name="hint_popup_wait">مثال: 1500 ميلي ثانية - زدها إذا الإنترنت بطيء</string>
+
+    <string name="label_idle_timeout">إيقاف تلقائي إذا لم يجد البوت أي زر إعجاب أو نعم لمدة (ثانية)</string>
+    <string name="hint_idle_timeout">مثال: 30 - يتوقف بعد 30 ثانية من عدم وجود أزرار</string>
+
+    <string name="label_dedup">تذكُّر الأعضاء بين الجلسات (يمنع التكرار)</string>
+    <string name="label_dedup_desc">يستخدم قاعدة بيانات محلية لتسجيل الأعضاء الذين تمّ التفاعل معهم. لن يُكرّر البوت أبدًا.</string>
+
+    <!-- v1.11 — like mode (filter divorced / widowed only) -->
+    <string name="section_like_mode">وضع الإعجاب</string>
+    <string name="section_like_mode_hint">اختر سلوك البوت عند العثور على عضوة في القائمة. الوضع الافتراضي هو العادي.</string>
+    <string name="label_like_mode_normal">الوضع العادي — إعجاب لكل العضوات</string>
+    <string name="label_like_mode_normal_desc">يضع البوت الإعجاب مباشرة على كل عضوة في القائمة دون فحص الحالة الاجتماعية.</string>
+    <string name="label_like_mode_filter">المطلقات والأرامل فقط</string>
+    <string name="label_like_mode_filter_desc">يدخل البوت إلى ملف كل عضوة، ويتحقق من الحالة الاجتماعية، ولا يضع الإعجاب إلا إذا كانت مطلقة أو أرملة. الأعضاء الذين سبق فحصهم لا يُعاد فتحهم.</string>
+
+    <!-- v1.11 — refresh continuation mode -->
+    <string name="section_refresh_mode">طريقة المتابعة بعد التحديث</string>
+    <string name="section_refresh_mode_hint">عند تحديث صفحة المتواجدون الآن تلقائيًا، ماذا يفعل البوت؟</string>
+    <string name="label_refresh_mode_restart">البدء من البداية</string>
+    <string name="label_refresh_mode_restart_desc">يعود البوت إلى أول قائمة المتواجدون الآن من جديد بعد كل تحديث.</string>
+    <string name="label_refresh_mode_continue">الاستمرار من حيث توقفت</string>
+    <string name="label_refresh_mode_continue_desc">يكمل البوت من موقعه الأخير بعد التحديث، ويتخطى الأعضاء الذين سبق التفاعل معهم تلقائيًا (يتطلب تفعيل تذكُّر الأعضاء).</string>
+
+    <string name="btn_show_advanced">إظهار الإعدادات المتقدمة</string>
+    <string name="btn_hide_advanced">إخفاء الإعدادات المتقدمة</string>
+    <string name="advanced_section_hint">هذه إعدادات للحالات الخاصة. الافتراضيات تعمل في 95٪ من الحالات — لا تغيّرها إلا إذا كنت تعرف ما تفعل.</string>
 
     <string name="btn_start">بدء التشغيل</string>
     <string name="btn_stop">إيقاف التشغيل</string>
@@ -33,12 +81,13 @@
     <string name="btn_reset">استعادة الإعدادات الافتراضية</string>
     <string name="btn_clear_history">مسح سجل الأعضاء المحفوظ</string>
 
-    <string name="msg_started">بدأ البوت العمل — افتح تطبيق مودة الآن</string>
+    <string name="msg_started">بدأ البوت العمل - افتح التطبيق الهدف الآن</string>
     <string name="msg_stopped">تم إيقاف البوت</string>
     <string name="msg_already_running">البوت يعمل حاليًا. اضغط إيقاف قبل التشغيل من جديد.</string>
+    <string name="msg_invalid_input">أحد الحقول فارغ أو غير صالح. يرجى مراجعة الإعدادات.</string>
     <string name="msg_service_off">يجب تفعيل خدمة إمكانية الوصول أولًا. اضغط زر فتح إعدادات إمكانية الوصول.</string>
-    <string name="msg_reset_done">الإعدادات في v1.13.0 ثابتة ومُجرّبة — لا توجد قيم قابلة للتعديل</string>
-    <string name="msg_auto_stopped">إيقاف تلقائي — راجع آخر إجراء لمعرفة السبب</string>
+    <string name="msg_reset_done">تمت استعادة الإعدادات الافتراضية</string>
+    <string name="msg_auto_stopped">إيقاف تلقائي - لم يجد البوت أي أزرار لفترة طويلة</string>
     <string name="msg_history_cleared">تم مسح سجل الأعضاء. سيُعاد التفاعل مع أي عضو سبق التفاعل معه.</string>
 
     <string name="action_back">رجوع تلقائي من ملف شخصي</string>
@@ -53,6 +102,7 @@
     <string name="action_rewind_to_top">جارٍ إرجاع القائمة إلى أعلى</string>
     <string name="action_rewind_done">تم إرجاع القائمة إلى أعلى — يبدأ البحث</string>
     <string name="action_soft_refresh">تحديث صفحة البحث للحفاظ على السرعة</string>
+    <string name="action_nav_online">جارٍ الانتقال إلى المتواجدون الآن</string>
     <string name="action_load_more">تم نقر زر تحميل المزيد</string>
     <string name="action_inspect_open">جارٍ فتح ملف العضو لفحص الحالة الاجتماعية</string>
     <string name="action_inspect_loading">في انتظار تحميل بيانات الملف الشخصي</string>
@@ -60,12 +110,60 @@
     <string name="action_inspect_eligible">حالة اجتماعية مطابقة (مطلقة/أرملة) — وضع إعجاب</string>
     <string name="action_inspect_not_eligible">حالة اجتماعية لا تنطبق — رجوع للقائمة</string>
     <string name="action_inspect_liked">تم وضع الإعجاب على ملف مطلقة/أرملة</string>
-    <string name="action_three_dots_tap">نقر على زر ثلاث نقاط</string>
-    <string name="action_search_tap">نقر على زر بحث</string>
-    <string name="action_nav_online">جارٍ الانتقال إلى المتواجدون الآن</string>
 
     <string name="stop_reason_manual">توقفت — أوقفت يدويًا</string>
     <string name="stop_reason_idle">توقفت — لم يُعثر على أي زر طوال مدة الإيقاف التلقائي</string>
     <string name="stop_reason_no_progress">توقفت — لم تظهر أعضاء جدد لمدة 3 دقائق</string>
     <string name="stop_reason_end_of_list">توقفت — التطبيق المستهدف يقول لا يوجد المزيد من الأعضاء</string>
+
+    <string name="btn_share_diagnostic">مشاركة آخر ملف تشخيص</string>
+    <string name="msg_no_diagnostic">لا يوجد ملف تشخيص بعد. شغّل البوت حتى يتوقف تلقائيًا أولاً.</string>
+    <string name="msg_share_failed">تعذّر فتح نافذة المشاركة</string>
+    <string name="share_diagnostic_title">مشاركة ملف التشخيص</string>
+
+    <!-- v1.12 — saved coordinates -->
+    <string name="section_coords">إحداثيات الأزرار غير المقروءة</string>
+    <string name="section_coords_hint">بعض الأزرار في مودة لا يقرأها قارئ الشاشة (مثل ثلاث نقاط). سجّل موقعها بالضغط مرة واحدة، ثم يستطيع البوت نقرها مستقبلًا. الإحداثيات تُحفظ على الجهاز فقط.</string>
+    <string name="btn_record_coord">تسجيل إحداثية جديدة</string>
+    <string name="btn_clear_coords">حذف كل الإحداثيات</string>
+    <string name="record_coord_hint">انقر على المكان الذي تريد تسجيله</string>
+    <string name="dialog_name_coord_title">اسم الإحداثية</string>
+    <string name="dialog_name_coord_hint">مثال: ثلاث نقاط</string>
+    <string name="dialog_name_coord_position">الموضع: س = %1$d، ص = %2$d</string>
+    <string name="cancel">إلغاء</string>
+    <string name="msg_coord_saved">تم حفظ الإحداثية: %1$s</string>
+    <string name="msg_coord_canceled">تم إلغاء التسجيل</string>
+    <string name="msg_coord_name_required">يجب إدخال اسم للإحداثية</string>
+    <string name="msg_no_coords">لا توجد إحداثيات محفوظة بعد</string>
+    <string name="msg_coords_cleared">تم حذف جميع الإحداثيات</string>
+    <string name="msg_tap_done">تم النقر على %1$s</string>
+    <string name="msg_tap_failed">تعذّر النقر — هل خدمة إمكانية الوصول مفعلة؟</string>
+    <string name="confirm_clear_coords_title">حذف الإحداثيات</string>
+    <string name="confirm_clear_coords_msg">سيتم حذف كل الإحداثيات المحفوظة. لا يمكن التراجع. هل تريد المتابعة؟</string>
+    <string name="confirm_delete_coord">حذف هذه الإحداثية؟</string>
+    <string name="btn_test_coord">اختبار فوري</string>
+    <string name="btn_test_coord_delayed">اختبار بعد 15 ثانية</string>
+    <string name="msg_tap_delayed">سيتم النقر خلال 15 ثانية — انتقل إلى مودة الآن</string>
+    <string name="btn_edit_coord">تعديل يدوي</string>
+    <string name="dialog_edit_coord_title">تعديل إحداثية</string>
+    <string name="dialog_edit_coord_x_hint">الإحداثي س (الأفقي)</string>
+    <string name="dialog_edit_coord_y_hint">الإحداثي ص (العمودي)</string>
+    <string name="msg_coord_updated">تم تحديث الإحداثية: %1$s</string>
+    <string name="msg_invalid_xy">يجب إدخال أرقام صحيحة للإحداثيات</string>
+    <string name="btn_delete_coord">حذف</string>
+    <string name="coord_xy_format">س = %1$d  ·  ص = %2$d</string>
+    <string name="save_coord">حفظ</string>
+    <string name="btn_seed_defaults">استعادة إحداثيات مودة الافتراضية</string>
+    <string name="msg_seed_added">تم إضافة %1$d إحداثية افتراضية لمودة</string>
+    <string name="msg_seed_already">إحداثيات مودة الافتراضية موجودة بالفعل</string>
+
+    <!-- v1.12 — find-members mode (online vs. three-dots) -->
+    <string name="section_find_mode">طريقة العثور على الأعضاء</string>
+    <string name="section_find_mode_hint">يحدد كيف يصل البوت إلى قائمة الأعضاء بعد كل تجديد (كل 80 إعجابًا).</string>
+    <string name="label_find_mode_online">المتواجدون الآن (الوضع الحالي)</string>
+    <string name="label_find_mode_online_desc">يضغط البوت تبويب الأعضاء ثم المتواجدون الآن، وهو السلوك الافتراضي.</string>
+    <string name="label_find_mode_three_dots">ثلاث نقاط ← بحث ← بحث (الوضع الجديد)</string>
+    <string name="label_find_mode_three_dots_desc">يستخدم البوت إحداثيات زر ثلاث نقاط المحفوظة، ثم يضغط بحث مرتين. مفيد عندما لا تظهر تبويبة المتواجدون الآن.</string>
+    <string name="action_three_dots_tap">نقر على زر ثلاث نقاط</string>
+    <string name="action_search_tap">نقر على زر بحث</string>
 </resources>
