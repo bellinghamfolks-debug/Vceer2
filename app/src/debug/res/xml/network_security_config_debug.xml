@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  v2.2.5 — Debug network security config.
+
+  Allows cleartext traffic and trusts user-installed CA certificates so a
+  developer can run the app against a local proxy or a tool like Charles /
+  mitmproxy without code changes. Used only when the build variant is
+  "debug" (release builds use res/xml/network_security_config.xml).
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

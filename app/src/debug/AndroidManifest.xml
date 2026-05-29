@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  v2.2.5 — Debug-only overrides.
+
+  Permits cleartext (http://) traffic for debug builds only, so a developer
+  can point the app at a local proxy running at http://192.168.x.x:port
+  during testing. Release builds use the main manifest, which is HTTPS-only
+  to protect the user's Gemini API key and personal memory from passive
+  network observers.
+
+  The merger overlays this on top of the main AndroidManifest.xml at build
+  time when the build variant is "debug".
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <application
+        android:usesCleartextTraffic="true"
+        android:networkSecurityConfig="@xml/network_security_config_debug"
+        tools:replace="android:usesCleartextTraffic,android:networkSecurityConfig" />
+</manifest>

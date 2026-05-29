@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  v2.2.5 — Network security policy.
+
+  Release builds: HTTPS only. Any plaintext HTTP call (e.g. to a misconfigured
+  Gemini proxy) is refused by the platform before it leaves the device.
+  This protects the user's API key, document content, and personal memory
+  from passive network observers.
+
+  Debug builds: cleartext allowed so developers can point the app at a local
+  proxy running on http://192.168.x.x:port without touching the manifest.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+    <debug-overrides>
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </debug-overrides>
+</network-security-config>

@@ -1,7 +1,3 @@
 <resources>
     <string name="app_name">Basir</string>
-
-    <string name="ocr_service_label">Read text from any app</string>
-    <string name="ocr_service_summary">Tap the accessibility shortcut to read every text on the screen, in any app.</string>
-    <string name="ocr_service_description">When enabled, the accessibility shortcut button appears in the navigation bar. Tap it any time in any app, and Basir takes a screenshot, extracts the text — even text inside images — and reads it aloud. Very useful for chats, receipts, images with text, web pages, and captchas.</string>
 </resources>
