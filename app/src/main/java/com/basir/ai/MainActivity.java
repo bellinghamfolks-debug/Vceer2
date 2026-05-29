@@ -2111,7 +2111,7 @@ public class MainActivity extends Activity
             // from success (which uses a single short pulse) without looking.
             if (vibrationEnabled) { vibrate(120); }
             resetScreen(t("تعذّر إكمال التحويل", "Conversion could not be completed"), msg);
-            addPlainText(t("جرّب جودة "سريع"، أو وضع "النص فقط"، أو قسّم الملف إلى أجزاء أصغر.", "Try "Fast" quality, "Text only" output mode, or split the file into smaller parts."));
+            addPlainText(t("جرّب جودة \"سريع\"، أو وضع \"النص فقط\"، أو قسّم الملف إلى أجزاء أصغر.", "Try \"Fast\" quality, \"Text only\" output mode, or split the file into smaller parts."));
             addOutlineButton(t("إعادة المحاولة", "Try again"), v -> showConvertScreen());
             addBackButton();
         } else if (status == ConversionState.Status.CANCELLED) {
