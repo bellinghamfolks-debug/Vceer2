@@ -50,6 +50,10 @@ public final class ConversionState {
     private String uploadedFileUri;   // full URI for fileData.fileUri
     private String uploadedFileMime;  // e.g. "application/pdf"
     private String sourceDisplayName; // user-visible name of the original
+    // v2.8.1 — the EXTRA_MODE value the caller passed in (e.g. "full",
+    // "translate:fr"). Stored here so the success branch can derive a
+    // meaningful output filename even after the Activity is recreated.
+    private String requestedMode;
 
     private ConversionState() {}
 
@@ -83,6 +87,13 @@ public final class ConversionState {
     /** Called by the picker when the user selects a source file. */
     public void setSourceDisplayName(String displayName) {
         synchronized (this) { this.sourceDisplayName = displayName; }
+    }
+
+    /** v2.8.1 — remembered across the lifetime of one conversion job. */
+    public synchronized String requestedMode() { return requestedMode; }
+
+    public void setRequestedMode(String mode) {
+        synchronized (this) { this.requestedMode = mode; }
     }
 
     /** Wipe the uploaded-file reference. The file is left on Gemini's side
