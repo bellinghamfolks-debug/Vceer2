@@ -1452,6 +1452,21 @@ public class MainActivity extends Activity
                         "or markdown — this is read aloud by TTS.",
                         "Read the currency or receipt in this image."));
 
+        // v2.9 — dedicated math extraction entry. Routes through the same
+        // image pipeline as the other describe-* cards, but with the
+        // mathExtractionInstruction prompt that teaches Gemini Arabic /
+        // English mathematical vocabulary and asks for SPOKEN math (so
+        // TalkBack reads "x squared plus five x" instead of "x 2 + 5 x")
+        // with a [LaTeX: ...] trailer for verifiability. The Pro model is
+        // used by default because math accuracy matters more than speed.
+        addCard(t("تحليل ورقة رياضيات", "Analyze a math sheet"),
+                t("التقط صورة لمعادلات أو سبورة أو صفحة كتاب رياضيات — يستخرج بصير كل المعادلات بصيغة منطوقة قابلة للقراءة بقارئ الشاشة، مع الحفاظ على LaTeX للمراجعة.",
+                  "Take a photo of equations, a whiteboard, or a math textbook page — Basir extracts every equation in spoken form for the screen reader, with the LaTeX preserved for verification."),
+                v -> pickImageForAi("math_extract",
+                        t("تحليل رياضيات", "Math analysis"),
+                        AiClient.mathExtractionInstruction(isEnglish()),
+                        "Extract every mathematical expression from this image with the format described."));
+
         addOutlineButton(t("وصف نصي للمشهد", "Text description of a scene"),
                 v -> showTextTaskScreen("scene_text",
                         t("وصف المشهد", "Scene description"),
