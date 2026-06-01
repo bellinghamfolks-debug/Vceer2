@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>$(DEVELOPMENT_LANGUAGE)</string>
+    <key>CFBundleDisplayName</key>
+    <string>بصير</string>
+    <key>CFBundleExecutable</key>
+    <string>$(EXECUTABLE_NAME)</string>
+    <key>CFBundleIdentifier</key>
+    <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>Basir</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+
+    <key>LSRequiresIPhoneOS</key>
+    <true/>
+    <key>UILaunchScreen</key>
+    <dict/>
+
+    <key>UISupportedInterfaceOrientations</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+    </array>
+
+    <key>CFBundleLocalizations</key>
+    <array>
+        <string>ar</string>
+        <string>en</string>
+    </array>
+
+    <!-- Privacy usage descriptions — REQUIRED by iOS before runtime
+         permission prompts can appear. Apple rejects apps that access
+         these resources without giving the user a meaningful reason. -->
+    <key>NSCameraUsageDescription</key>
+    <string>يستخدم بصير الكاميرا لالتقاط الصور التي تختار تحليلها أو وصفها (Basir uses the camera to capture photos you choose to analyse or describe).</string>
+
+    <key>NSMicrophoneUsageDescription</key>
+    <string>يستخدم بصير الميكروفون للإملاء الصوتي والمحادثة الصوتية (Basir uses the microphone for voice dictation and continuous voice conversation).</string>
+
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>يستخدم بصير التعرّف الصوتي لتحويل كلامك إلى نص يصل لـ Gemini للمعالجة (Basir uses speech recognition to convert your spoken input into text sent to Gemini).</string>
+
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>يستخدم بصير موقعك التقريبي في وضع الطوارئ فقط، عند ضغطك الصريح على "أرسل موقعي" (Basir uses your approximate location only in Emergency mode, when you explicitly tap "Send my location").</string>
+
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>يحتاج بصير الوصول للصور التي تختارها لتحليلها (Basir needs access to photos you select for analysis).</string>
+
+    <key>NSPhotoLibraryAddUsageDescription</key>
+    <string>يحتاج بصير لحفظ المستندات المُحوَّلة في مكتبة الصور إذا اخترت ذلك (Basir needs to save converted documents to your photo library if you choose to).</string>
+
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <!-- HTTPS only. Same posture as Android's
+             usesCleartextTraffic="false" in release builds. -->
+        <key>NSAllowsArbitraryLoads</key>
+        <false/>
+    </dict>
+</dict>
+</plist>

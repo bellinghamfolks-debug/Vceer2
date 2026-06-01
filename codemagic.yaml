@@ -1,0 +1,242 @@
+# Codemagic CI/CD for Basir.
+#
+# Why Codemagic for this repo
+# ───────────────────────────
+# Building an iOS app needs macOS + Xcode. The developer's primary
+# machine is Linux/Windows, so we use Codemagic's hosted macOS
+# instances. The free tier (500 build minutes/month at the time of
+# writing) is plenty for a project this size: a clean build runs in
+# ~3-5 minutes.
+#
+# How to use this file
+# ────────────────────
+# 1. Push this repo to GitHub (already done).
+# 2. Go to codemagic.io → sign in with GitHub.
+# 3. "Add application" → select bellinghamfolks-debug/Vceer2.
+# 4. Codemagic detects codemagic.yaml and shows the workflows below.
+# 5. Trigger the `ios-simulator-build` workflow manually for the first
+#    build (or push to a watched branch).
+# 6. To enable code-signed device builds, add an Apple Developer
+#    account in Codemagic → Teams → Integrations and uncomment the
+#    `ios-device-build` workflow.
+#
+# What this file does NOT do (yet)
+# ────────────────────────────────
+# - The Android workflow stays on GitHub Actions (.github/workflows/
+#   build-apk.yml). Codemagic could build Android too, but the existing
+#   Actions setup works and is free.
+# - App Store / TestFlight publishing is set up but disabled by default
+#   (needs Apple Developer credentials uploaded to Codemagic first).
+
+workflows:
+
+  ios-simulator-build:
+    name: Basir iOS — simulator build (no Apple Developer account needed)
+    instance_type: mac_mini_m2
+    max_build_duration: 30
+    environment:
+      xcode: 15.4
+      vars:
+        XCODE_PROJECT_DIR: "ios"
+
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: "claude/**"
+          include: true
+        - pattern: "main"
+          include: true
+        - pattern: "master"
+          include: true
+
+    scripts:
+      - name: Install XcodeGen
+        # XcodeGen creates the .xcodeproj from ios/project.yml so we
+        # never commit a binary Xcode project to git.
+        script: |
+          brew install xcodegen
+          xcodegen --version
+
+      - name: Generate Xcode project
+        script: |
+          cd $XCODE_PROJECT_DIR
+          xcodegen generate
+          ls -la Basir.xcodeproj/
+
+      - name: Build for iOS Simulator
+        # Unsigned build for an iPhone 15 simulator. Catches compile
+        # errors, missing imports, Swift version mismatches — the same
+        # role the Android `assembleDebug` task plays for the APK.
+        script: |
+          cd $XCODE_PROJECT_DIR
+          xcodebuild build \
+            -project Basir.xcodeproj \
+            -scheme Basir \
+            -sdk iphonesimulator \
+            -destination 'platform=iOS Simulator,name=iPhone 15,OS=latest' \
+            -configuration Debug \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            ONLY_ACTIVE_ARCH=YES \
+            | xcpretty || exit 1
+
+      - name: Verify .app bundle was produced
+        script: |
+          cd $XCODE_PROJECT_DIR
+          APP_PATH="build/Build/Products/Debug-iphonesimulator/Basir.app"
+          if [ ! -d "$APP_PATH" ]; then
+            echo "❌ Build did not produce $APP_PATH"
+            exit 1
+          fi
+          echo "✅ Built $APP_PATH"
+          du -sh "$APP_PATH"
+
+    artifacts:
+      - ios/build/Build/Products/Debug-iphonesimulator/Basir.app
+      - ios/build/Build/Products/Debug-iphonesimulator/Basir.app.dSYM
+
+    publishing:
+      email:
+        recipients:
+          - ubdallahalrashdee@gmail.com
+        notify:
+          success: false
+          failure: true
+
+  # ---------------------------------------------------------------------
+  # Device-ready unsigned IPA. Boots the .app into an IPA wrapper that
+  # can be inspected and (with proper signing later) installed.
+  # Useful as a smoke test that "everything that needs to compile for
+  # arm64-on-device, does."
+  # ---------------------------------------------------------------------
+  ios-unsigned-ipa:
+    name: Basir iOS — unsigned IPA (manual trigger)
+    instance_type: mac_mini_m2
+    max_build_duration: 30
+    environment:
+      xcode: 15.4
+      vars:
+        XCODE_PROJECT_DIR: "ios"
+
+    scripts:
+      - name: Install XcodeGen
+        script: brew install xcodegen
+
+      - name: Generate Xcode project
+        script: |
+          cd $XCODE_PROJECT_DIR
+          xcodegen generate
+
+      - name: Archive (unsigned, for inspection only)
+        script: |
+          cd $XCODE_PROJECT_DIR
+          xcodebuild archive \
+            -project Basir.xcodeproj \
+            -scheme Basir \
+            -configuration Release \
+            -archivePath build/Basir.xcarchive \
+            -destination 'generic/platform=iOS' \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            | xcpretty || exit 1
+
+      - name: Wrap .app into unsigned .ipa
+        # An unsigned IPA cannot install on a real iPhone. It is a
+        # diagnostic artifact that proves the Release build links for
+        # arm64 device. Once we have an Apple Developer cert it'll
+        # produce a real installable IPA via the next workflow.
+        script: |
+          cd $XCODE_PROJECT_DIR/build
+          mkdir -p Payload
+          cp -r Basir.xcarchive/Products/Applications/Basir.app Payload/
+          zip -r Basir-unsigned.ipa Payload
+          du -sh Basir-unsigned.ipa
+          rm -rf Payload
+
+    artifacts:
+      - ios/build/Basir-unsigned.ipa
+      - ios/build/Basir.xcarchive
+
+    publishing:
+      email:
+        recipients:
+          - ubdallahalrashdee@gmail.com
+        notify:
+          success: true
+          failure: true
+
+  # ---------------------------------------------------------------------
+  # Real distribution build. DISABLED until you upload an Apple
+  # Developer account to Codemagic. To enable:
+  #
+  # 1. Codemagic → Teams → Integrations → Developer Portal → Connect.
+  # 2. Codemagic → App settings → Code signing identities → upload
+  #    your iOS Distribution certificate (.p12) and provisioning
+  #    profile, OR enable automatic code signing (Codemagic creates
+  #    them via the API).
+  # 3. Remove the `when` block below to make this workflow active.
+  # 4. Push to the `release/ios` branch to trigger a TestFlight build.
+  # ---------------------------------------------------------------------
+  # ios-app-store-build:
+  #   name: Basir iOS — App Store / TestFlight (signed)
+  #   instance_type: mac_mini_m2
+  #   max_build_duration: 60
+  #   integrations:
+  #     app_store_connect: Basir App Store Connect API
+  #   environment:
+  #     xcode: 15.4
+  #     ios_signing:
+  #       distribution_type: app_store
+  #       bundle_identifier: com.basir.ai
+  #     vars:
+  #       APP_STORE_APPLE_ID: "1234567890"   # fill in after first upload
+  #       XCODE_PROJECT_DIR: "ios"
+  #
+  #   triggering:
+  #     events:
+  #       - push
+  #     branch_patterns:
+  #       - pattern: "release/ios"
+  #         include: true
+  #
+  #   scripts:
+  #     - name: Install XcodeGen
+  #       script: brew install xcodegen
+  #
+  #     - name: Generate Xcode project
+  #       script: |
+  #         cd $XCODE_PROJECT_DIR
+  #         xcodegen generate
+  #
+  #     - name: Set build number to commit count
+  #       script: |
+  #         cd $XCODE_PROJECT_DIR
+  #         BUILD_NUMBER=$(git rev-list HEAD --count)
+  #         agvtool new-version -all $BUILD_NUMBER
+  #
+  #     - name: Fetch signing files
+  #       script: xcode-project use-profiles
+  #
+  #     - name: Archive and sign
+  #       script: |
+  #         cd $XCODE_PROJECT_DIR
+  #         xcode-project build-ipa \
+  #           --project Basir.xcodeproj \
+  #           --scheme Basir
+  #
+  #   artifacts:
+  #     - ios/build/ios/ipa/*.ipa
+  #     - ios/build/Basir.xcarchive
+  #
+  #   publishing:
+  #     app_store_connect:
+  #       auth: integration
+  #       submit_to_testflight: true
+  #       beta_groups:
+  #         - "Basir Internal Testers"
+  #     email:
+  #       recipients:
+  #         - ubdallahalrashdee@gmail.com
