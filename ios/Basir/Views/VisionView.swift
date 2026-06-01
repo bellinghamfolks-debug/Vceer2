@@ -81,6 +81,20 @@ struct VisionView: View {
                         )
                     }
                     .buttonStyle(.plain)
+
+                    NavigationLink {
+                        WalkingModeView()
+                    } label: {
+                        BasirCard(
+                            icon: "figure.walk",
+                            title: L10n.t("وضع المشي", "Walking mode"),
+                            description: L10n.t(
+                                "التقط ما أمامك بضغطة واحدة، واستمع إلى وصف موجز، ثم كرر للمشهد التالي.",
+                                "Capture what is ahead in one tap, hear a brief description, then repeat for the next scene."
+                            )
+                        )
+                    }
+                    .buttonStyle(.plain)
                 }
                 .padding(20)
             }

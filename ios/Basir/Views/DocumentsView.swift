@@ -18,8 +18,8 @@ struct DocumentsView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     SectionHeader(L10n.t("المستندات والتحويل",
                                           "Documents and conversion"))
-                    Button {
-                        showSoon = true
+                    NavigationLink {
+                        DocumentConvertView()
                     } label: {
                         BasirCard(
                             icon: "doc.richtext.fill",
@@ -28,6 +28,21 @@ struct DocumentsView: View {
                             description: L10n.t(
                                 "حوّل ملفات PDF و PowerPoint و Word إلى نص منظم، مع وصف للصور والجداول.",
                                 "Convert PDF, PowerPoint, and Word files into structured text with image and table descriptions."
+                            )
+                        )
+                    }
+                    .buttonStyle(.plain)
+
+                    NavigationLink {
+                        VoiceConversationView()
+                    } label: {
+                        BasirCard(
+                            icon: "waveform.and.mic",
+                            title: L10n.t("محادثة صوتية مستمرة",
+                                          "Continuous voice conversation"),
+                            description: L10n.t(
+                                "تحدّث مع بصير بسلاسة — استمع للإجابة وسيستعدّ تلقائياً للسؤال التالي.",
+                                "Talk with Basir smoothly — listen to the answer and Basir gets ready for the next question."
                             )
                         )
                     }

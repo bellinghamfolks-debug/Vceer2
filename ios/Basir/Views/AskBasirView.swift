@@ -48,6 +48,16 @@ struct AskBasirView: View {
                 }
                 .disabled(isLoading || question.trimmingCharacters(in: .whitespaces).isEmpty)
 
+                Button {
+                    Task { await dictate() }
+                } label: {
+                    Label(L10n.t("إملاء صوتي", "Voice dictation"),
+                          systemImage: "mic.fill")
+                        .frame(maxWidth: .infinity, minHeight: 48)
+                }
+                .buttonStyle(.bordered)
+                .disabled(isLoading)
+
                 if !answer.isEmpty {
                     Divider().padding(.vertical, 8)
                     Text(L10n.t("إجابة بصير", "Basir's answer"))
@@ -101,6 +111,25 @@ struct AskBasirView: View {
                                   argument: L10n.t("اكتمل التحليل.", "Analysis complete."))
         } catch {
             errorMessage = UserFriendlyErrorMapper.map(error)
+        }
+    }
+
+    /// One-shot voice dictation. Fills the question field with the
+    /// recognised text so the user can review before sending.
+    private func dictate() async {
+        let auth = await SpeechRecognizer.shared.requestAuthorization()
+        guard auth == .granted else {
+            errorMessage = L10n.t(
+                "يجب السماح بإذن الميكروفون والتعرّف الصوتي من إعدادات iOS.",
+                "Microphone and speech-recognition permission are required in iOS Settings."
+            )
+            return
+        }
+        SpeechRecognizer.shared.startDictation(
+            language: BasirSettings.shared.language
+        ) { final in
+            question = final
+            inputFocused = true
         }
     }
 }

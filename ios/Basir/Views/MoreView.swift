@@ -9,6 +9,54 @@ struct MoreView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    SectionHeader(L10n.t("مساعدة سريعة", "Quick help"))
+
+                    NavigationLink {
+                        EmergencyView()
+                    } label: {
+                        BasirCard(
+                            icon: "sos.circle.fill",
+                            title: L10n.t("الطوارئ والمساعدة",
+                                          "Emergency and help"),
+                            description: L10n.t(
+                                "أرسل موقعك التقريبي أو اطلب المساعدة من جهة طوارئ محفوظة.",
+                                "Share your approximate location or request help from a saved emergency contact."
+                            )
+                        )
+                    }
+                    .buttonStyle(.plain)
+
+                    SectionHeader(L10n.t("محفوظاتي", "My data"))
+
+                    NavigationLink {
+                        MemoryView()
+                    } label: {
+                        BasirCard(
+                            icon: "person.crop.rectangle.stack.fill",
+                            title: L10n.t("محفوظاتي الخاصة",
+                                          "My saved items"),
+                            description: L10n.t(
+                                "احفظ معلومات مهمة عن الأشخاص والمنتجات والأدوية والأماكن.",
+                                "Save important information about people, products, medications, and places."
+                            )
+                        )
+                    }
+                    .buttonStyle(.plain)
+
+                    NavigationLink {
+                        ArchiveView()
+                    } label: {
+                        BasirCard(
+                            icon: "tray.full.fill",
+                            title: L10n.t("أرشيف النتائج", "Results archive"),
+                            description: L10n.t(
+                                "نتائج التحليل المحفوظة محلياً على جهازك.",
+                                "Analysis results saved locally on your device."
+                            )
+                        )
+                    }
+                    .buttonStyle(.plain)
+
                     SectionHeader(L10n.t("التطبيق", "App"))
 
                     NavigationLink {

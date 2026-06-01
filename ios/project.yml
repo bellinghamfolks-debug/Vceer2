@@ -43,6 +43,9 @@ targets:
         excludes:
           - Info.plist
 
+    dependencies:
+      - target: BasirShare
+
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.basir.ai
@@ -52,9 +55,6 @@ targets:
         SUPPORTS_MACCATALYST: NO
         ENABLE_PREVIEWS: YES
         SWIFT_EMIT_LOC_STRINGS: YES
-        # Codemagic / xcodebuild fills these in via env vars when
-        # signing is enabled. Leaving them blank keeps unsigned simulator
-        # builds working in CI.
         DEVELOPMENT_TEAM: ""
         CODE_SIGN_STYLE: Automatic
 
@@ -67,3 +67,30 @@ targets:
           SWIFT_OPTIMIZATION_LEVEL: -O
           SWIFT_COMPILATION_MODE: wholemodule
           ENABLE_BITCODE: NO
+
+  # Share Extension target — receives ACTION_SEND-equivalent payloads
+  # from other iOS apps via the iOS share sheet. See
+  # Basir/ShareExtension/ShareViewController.swift.
+  BasirShare:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "17.0"
+
+    info:
+      path: ShareExtension/Info.plist
+
+    sources:
+      - path: ShareExtension
+
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.basir.ai.share
+        PRODUCT_NAME: BasirShare
+        TARGETED_DEVICE_FAMILY: "1,2"
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+        # The Share Extension needs the SAME app group as the host app
+        # so it can hand files off. Configure the group in Xcode →
+        # Capabilities → App Groups → "group.com.basir.shared" on BOTH
+        # targets after the first generate.
+        DEVELOPMENT_TEAM: ""
+        CODE_SIGN_STYLE: Automatic
