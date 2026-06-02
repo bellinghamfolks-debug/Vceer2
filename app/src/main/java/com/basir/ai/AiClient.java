@@ -107,6 +107,14 @@ public final class AiClient {
      * tuned via the model picker UI.
      */
     public static String pickModel(SharedPreferences prefs, String task) {
+        // v2.9.3 — math extraction is bound to Pro regardless of any user
+        // preset. Vision-to-LaTeX needs the better visual fidelity Pro
+        // offers; Flash misreads sub/superscripts, Greek letters, and
+        // handwritten symbols often enough that "match user's quality
+        // preset" hurts more than it helps for this one task.
+        if ("math_extract".equals(task)) {
+            return modelForQuality(prefs, QUALITY_BEST);
+        }
         boolean quick = "ask".equals(task) || "translate".equals(task)
                     || "reply".equals(task) || "quick".equals(task) || "health".equals(task);
         String preset = quick
@@ -1123,6 +1131,94 @@ public final class AiClient {
      *   shape. Without examples Gemini will often hand back LaTeX-only
      *   or English-only output even in Arabic mode.
      */
+    /** v3.0 — JSON-mode prompt for the structured math extraction
+     *  path. Asks Gemini for LaTeX ONLY (no spoken form, no markdown).
+     *  Spoken form is rendered on-device via {@link LatexToSpeech}. */
+    static String mathExtractionJsonPrompt(boolean english) {
+        StringBuilder p = new StringBuilder();
+        p.append("Extract every mathematical expression from this image as LaTeX.\n\n");
+        p.append("Return a JSON object with this exact shape:\n");
+        p.append("{\n");
+        p.append("  \"items\": [\n");
+        p.append("    {\"latex\": \"<LaTeX>\", \"context\": \"<optional label>\", \"block\": true|false},\n");
+        p.append("    ...\n");
+        p.append("  ],\n");
+        p.append("  \"non_math_text\": \"<prose around the equations, source language, may be empty>\"\n");
+        p.append("}\n\n");
+        p.append("Rules:\n");
+        p.append("- latex: STANDARD LaTeX only. Do NOT include spoken form,\n");
+        p.append("  do NOT wrap in [LaTeX: ...], do NOT add $...$ or \\(...\\).\n");
+        p.append("- context: optional short label like \"Problem 1\", \"Step 2\",\n");
+        p.append("  \"definition\", \"theorem\". Empty string when none applies.\n");
+        p.append("- block: true if the expression is on its own centered line\n");
+        p.append("  (display math); false if it appears inline in prose.\n");
+        p.append("- non_math_text: the prose around the equations in the SOURCE\n");
+        p.append("  language. Empty string if the image is pure equations.\n\n");
+        p.append("LaTeX conventions to use:\n");
+        p.append("  Greek letters:   \\alpha \\beta \\gamma \\delta \\epsilon \\zeta\n");
+        p.append("                   \\eta \\theta \\iota \\kappa \\lambda \\mu \\nu\n");
+        p.append("                   \\xi \\pi \\rho \\sigma \\tau \\phi \\chi \\psi \\omega\n");
+        p.append("  Capitals:        \\Gamma \\Delta \\Theta \\Lambda \\Pi \\Sigma \\Phi \\Omega\n");
+        p.append("  Powers:          x^2, x^{n+1}, e^{i\\pi}\n");
+        p.append("  Subscripts:      x_1, a_{ij}, T_{n+1}\n");
+        p.append("  Fractions:       \\frac{a}{b}, \\dfrac{n+1}{n}\n");
+        p.append("  Roots:           \\sqrt{x}, \\sqrt[3]{8}\n");
+        p.append("  Integrals:       \\int, \\int_0^\\pi, \\iint, \\oint\n");
+        p.append("  Sums/products:   \\sum_{i=1}^n, \\prod_{k=1}^\\infty\n");
+        p.append("  Limits:          \\lim_{x \\to 0}, \\lim_{n \\to \\infty}\n");
+        p.append("  Functions:       \\sin \\cos \\tan \\log \\ln \\exp \\max \\min\n");
+        p.append("  Comparisons:     \\leq \\geq \\neq \\approx \\equiv \\to \\Rightarrow\n");
+        p.append("  Set / logic:     \\in \\notin \\subset \\cup \\cap \\forall \\exists\n");
+        p.append("  Operators:       \\times \\cdot \\div \\pm \\infty \\partial \\nabla\n");
+        p.append("  Matrices:        \\begin{pmatrix} 1 & 2 \\\\ 3 & 4 \\end{pmatrix}\n");
+        p.append("  Vectors:         \\vec{v}, \\overline{AB}\n\n");
+        p.append("Precision rules:\n");
+        p.append("- Transcribe what you see. Do NOT normalise notation (no\n");
+        p.append("  silent x -> \\cdot, no expanding f to f(x) unless visible).\n");
+        p.append("- Preserve source language symbols. Arabic math variables\n");
+        p.append("  (س ص ع جا جتا ظا نها) are LITERAL Arabic characters —\n");
+        p.append("  emit them as Arabic in the LaTeX string, not transliterated.\n");
+        p.append("- For genuinely illegible characters, use ? as a placeholder.\n");
+        p.append("- Do NOT skip any equation. Accuracy over speed.");
+        if (english) {
+            p.append("\n\nThe \"context\" field, when present, should be in English.");
+        } else {
+            p.append("\n\nThe \"context\" field, when present, should be in Arabic\n");
+            p.append("(e.g. \"المسألة 1\", \"تعريف\", \"خطوة 2\", \"نظرية\").");
+        }
+        return p.toString();
+    }
+
+    /** v3.0 — response schema for the math extraction JSON path. Forces
+     *  the Gemini API's responseMimeType=application/json mode to emit
+     *  the exact shape mathExtractionJsonPrompt asks for. Without this
+     *  the model occasionally adds extra commentary or wraps the JSON
+     *  in markdown fences. */
+    static JSONObject mathExtractionResponseSchema() throws Exception {
+        JSONObject schema = new JSONObject();
+        schema.put("type", "object");
+        JSONObject props = new JSONObject();
+
+        JSONObject items = new JSONObject();
+        items.put("type", "array");
+        JSONObject itemSchema = new JSONObject();
+        itemSchema.put("type", "object");
+        JSONObject itemProps = new JSONObject();
+        itemProps.put("latex",   new JSONObject().put("type", "string"));
+        itemProps.put("context", new JSONObject().put("type", "string"));
+        itemProps.put("block",   new JSONObject().put("type", "boolean"));
+        itemSchema.put("properties", itemProps);
+        itemSchema.put("required", new JSONArray().put("latex"));
+        items.put("items", itemSchema);
+        props.put("items", items);
+
+        props.put("non_math_text", new JSONObject().put("type", "string"));
+
+        schema.put("properties", props);
+        schema.put("required", new JSONArray().put("items"));
+        return schema;
+    }
+
     static String mathExtractionInstruction(boolean english) {
         StringBuilder p = new StringBuilder();
         p.append("MATH EXTRACTION — high precision.\n\n");

@@ -3567,10 +3567,14 @@ public class MainActivity extends Activity
         aiExecutor.execute(() -> {
             try {
                 String mime = AiClient.detectMime(MainActivity.this, uri);
-                // v2.7 — scene/image-task uploads downscale to ~1600 px
-                // JPEG before they hit Gemini's vision tokeniser.
-                ImageCompressor.Encoded enc = ImageCompressor.encodeForAi(
-                        MainActivity.this, uri, mime, 6 * 1024 * 1024);
+                // v2.9.3 — math extraction needs higher-fidelity image
+                // (2400-px + JPEG 92) so sub/superscripts, integral hooks,
+                // and Greek-letter accents don't dissolve in the JPEG
+                // round-trip. Every other image task stays at the v2.7
+                // 1600-px + JPEG-85 size.
+                ImageCompressor.Encoded enc = "math_extract".equals(pendingTask)
+                        ? ImageCompressor.encodeForMath(MainActivity.this, uri, mime, 6 * 1024 * 1024)
+                        : ImageCompressor.encodeForAi(MainActivity.this, uri, mime, 6 * 1024 * 1024);
                 String b64 = AiClient.encodeBase64(enc.bytes);
                 String answer = AiClient.ask(prefs, pendingTask, pendingPrompt,
                         pendingInstruction, lang, b64, enc.mimeType);

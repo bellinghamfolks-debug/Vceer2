@@ -50,6 +50,14 @@ public final class ImageCompressor {
      *  leaves room for orientations and tiling without flooding the wire. */
     public static final int DEFAULT_MAX_LONG_EDGE_PX = 1600;
 
+    /** v2.9.3 — math notation needs higher fidelity than scene
+     *  description. Subscripts, superscripts, integral hooks, and Greek
+     *  letter accents live in single-pixel pen strokes; aggressive
+     *  down-scale + JPEG-85 routinely drops them. 2400-px + JPEG-92
+     *  keeps the file under ~600 KB while preserving small marks. */
+    public static final int MATH_MAX_LONG_EDGE_PX = 2400;
+    public static final int MATH_JPEG_QUALITY     = 92;
+
     /** JPEG quality. 85 is the standard "indistinguishable from original
      *  at viewing distance" point; Gemini's vision tokeniser cannot tell
      *  85 from 100. Lower numbers buy bandwidth at the cost of fine OCR
@@ -89,6 +97,29 @@ public final class ImageCompressor {
         if (mimeType != null && mimeType.startsWith("image/")) {
             try {
                 byte[] bytes = compressForAi(ctx, uri);
+                return new Encoded(bytes, "image/jpeg");
+            } catch (Throwable ignore) {
+                // fall through to raw bytes
+            }
+        }
+        byte[] bytes = AiClient.readUriBytes(ctx, uri, fallbackMaxBytes);
+        return new Encoded(bytes, mimeType);
+    }
+
+    /**
+     * v2.9.3 — high-fidelity variant of {@link #encodeForAi} for the
+     * math extraction flow. Uses {@link #MATH_MAX_LONG_EDGE_PX} and
+     * {@link #MATH_JPEG_QUALITY} so subscripts, superscripts, integral
+     * hooks, and Greek-letter accents survive the JPEG round-trip.
+     * Same failure-fallback shape — any compression error transparently
+     * yields the raw bytes.
+     */
+    public static Encoded encodeForMath(Context ctx, Uri uri, String mimeType,
+                                        int fallbackMaxBytes) throws Exception {
+        if (mimeType != null && mimeType.startsWith("image/")) {
+            try {
+                byte[] bytes = compress(ctx, uri,
+                        MATH_MAX_LONG_EDGE_PX, MATH_JPEG_QUALITY);
                 return new Encoded(bytes, "image/jpeg");
             } catch (Throwable ignore) {
                 // fall through to raw bytes

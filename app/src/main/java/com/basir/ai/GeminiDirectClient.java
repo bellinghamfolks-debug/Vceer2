@@ -79,6 +79,56 @@ public final class GeminiDirectClient {
     }
 
     /**
+     * v3.0 — vision call that forces JSON output via the Gemini
+     * responseMimeType + responseSchema mechanism. Used by the math
+     * extraction flow: schema constrains the model to emit only LaTeX,
+     * and the on-device {@link LatexToSpeech} parser handles the
+     * spoken-form rendering deterministically.
+     *
+     * Why a separate method rather than overloading generateText:
+     *   - signature carries the schema, max-output, and forces JSON
+     *     mime in one place
+     *   - the returned JSONObject is already parsed (no extractText
+     *     round-trip through a text response)
+     */
+    public static JSONObject generateJsonWithImage(String apiKey, String model,
+                                                    String systemText, String userText,
+                                                    String imageBase64, String mimeType,
+                                                    JSONObject responseSchema,
+                                                    int maxOutputTokens) throws Exception {
+        if (apiKey == null || apiKey.trim().isEmpty()) {
+            throw new Exception("Gemini API key is empty");
+        }
+        JSONObject body = baseBody(systemText);
+        JSONObject gen = body.getJSONObject("generationConfig");
+        gen.put("responseMimeType", "application/json");
+        if (responseSchema != null) gen.put("responseSchema", responseSchema);
+        gen.put("maxOutputTokens", maxOutputTokens);
+        // Math extraction wants deterministic output; lower the
+        // temperature so the model picks the most likely LaTeX
+        // transcription rather than exploring alternatives.
+        gen.put("temperature", 0.1);
+
+        JSONArray parts = new JSONArray();
+        parts.put(new JSONObject().put("text", userText == null ? "" : userText));
+        if (imageBase64 != null && !imageBase64.isEmpty()) {
+            JSONObject inline = new JSONObject();
+            inline.put("mimeType", (mimeType == null || mimeType.isEmpty()) ? "image/jpeg" : mimeType);
+            inline.put("data", imageBase64);
+            parts.put(new JSONObject().put("inlineData", inline));
+        }
+        body.put("contents", new JSONArray().put(
+                new JSONObject().put("role", "user").put("parts", parts)));
+
+        JSONObject resp = postJsonWithRetry(generateEndpoint(model, apiKey), body);
+        String raw = extractText(resp);
+        // The model returned JSON as text; parse it. parseJsonLenient is
+        // tolerant of trailing whitespace / fence markers some prompts
+        // can elicit even in JSON mode.
+        return parseJsonLenient(raw);
+    }
+
+    /**
      * Send a binary file (PDF, image, audio, etc.) along with a prompt.
      * Returns plain text.
      */
