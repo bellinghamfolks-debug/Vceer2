@@ -1131,6 +1131,88 @@ public final class AiClient {
      *   shape. Without examples Gemini will often hand back LaTeX-only
      *   or English-only output even in Arabic mode.
      */
+    /**
+     * v3.1 — live walking guidance prompt.
+     *
+     * Designed for a blind user holding the phone forward at chest
+     * height. Every 2 seconds {@link LiveWalkingController} sends one
+     * JPEG frame to Gemini Flash with this prompt. The returned JSON
+     * is split locally into: vibration pattern (hazard.level), spoken
+     * warning (hazard.description), path summary (path), ambient
+     * context (scene).
+     *
+     * The "recentSummaries" argument is the last 3 frames' results
+     * formatted as a multi-line text. Including it lets Gemini reply
+     * with deltas instead of re-narrating the corridor every frame.
+     *
+     * Why the prompt is so terse: every extra rule the model has to
+     * "remember" risks ignoring another. We keep the schema strict
+     * (handled via responseSchema) and the rules short.
+     */
+    static String liveWalkingPrompt(boolean arabic, String recentSummaries) {
+        StringBuilder p = new StringBuilder();
+        p.append("You are guiding a BLIND PERSON walking forward.\n");
+        p.append("The image is what the phone's back camera sees ");
+        p.append("at chest height, pointed in the walking direction.\n\n");
+        p.append("Return JSON:\n");
+        p.append("{\n");
+        p.append("  \"hazard\": { \"level\": \"stop|caution|none\", \"description\": \"...\" },\n");
+        p.append("  \"path\": \"...\",\n");
+        p.append("  \"scene\": \"...\"\n");
+        p.append("}\n\n");
+        p.append("Levels:\n");
+        p.append("  stop    — imminent danger: closed door, curb edge, stairs ");
+        p.append("down, traffic, drop. Force a halt.\n");
+        p.append("  caution — needs attention: person ~2 m ahead, obstacle, ");
+        p.append("narrow passage, low overhead.\n");
+        p.append("  none    — clear path.\n\n");
+        p.append("Field rules:\n");
+        p.append("- hazard.description: ONE short sentence ");
+        p.append("(≤ 12 words). Address the user directly. ");
+        p.append("Give distance in steps when you can: ");
+        p.append("'curb two steps ahead, stop' / 'person approaching from the right'.\n");
+        p.append("- path: 5–7 words describing what is directly ahead. ");
+        p.append("Empty string if nothing notable changed.\n");
+        p.append("- scene: 10 words max for ambient context ");
+        p.append("(corridor, room type, lighting). Empty most frames.\n\n");
+        p.append("DO NOT repeat content from these previous frames:\n");
+        p.append(recentSummaries).append("\n\n");
+        p.append("Respond ");
+        p.append(arabic ? "in Arabic" : "in English");
+        p.append(". Use natural walking-assistant tone. ");
+        p.append("Never narrate the photo composition; describe the WORLD.");
+        return p.toString();
+    }
+
+    /** v3.1 — response schema for the live walking JSON path. Forces
+     *  the three top-level fields the controller maps to vibration +
+     *  speech. */
+    static JSONObject liveWalkingSchema() throws Exception {
+        JSONObject schema = new JSONObject();
+        schema.put("type", "object");
+        JSONObject props = new JSONObject();
+
+        JSONObject hazard = new JSONObject();
+        hazard.put("type", "object");
+        JSONObject hazardProps = new JSONObject();
+        hazardProps.put("level",
+                new JSONObject().put("type", "string"));
+        hazardProps.put("description",
+                new JSONObject().put("type", "string"));
+        hazard.put("properties", hazardProps);
+        hazard.put("required", new JSONArray()
+                .put("level").put("description"));
+        props.put("hazard", hazard);
+
+        props.put("path",  new JSONObject().put("type", "string"));
+        props.put("scene", new JSONObject().put("type", "string"));
+
+        schema.put("properties", props);
+        schema.put("required", new JSONArray()
+                .put("hazard").put("path").put("scene"));
+        return schema;
+    }
+
     /** v3.0 — JSON-mode prompt for the structured math extraction
      *  path. Asks Gemini for LaTeX ONLY (no spoken form, no markdown).
      *  Spoken form is rendered on-device via {@link LatexToSpeech}. */

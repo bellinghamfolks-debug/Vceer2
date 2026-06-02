@@ -66,6 +66,8 @@ jobs:
           test -f app/src/main/java/com/basir/ai/DocxExtractor.java
           # v3.0 LaTeX-to-speech on-device parser
           test -f app/src/main/java/com/basir/ai/LatexToSpeech.java
+          # v3.1 live walking mode controller
+          test -f app/src/main/java/com/basir/ai/LiveWalkingController.java
           test -f app/src/main/res/values/strings.xml
           test -f app/src/main/res/values/styles.xml
           test -f app/src/main/res/drawable/ic_basir.xml

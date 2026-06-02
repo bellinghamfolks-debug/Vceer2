@@ -340,6 +340,13 @@ public class MainActivity extends Activity
     @Override
     protected void onPause() {
         ConversionState.get().removeListener(conversionListener);
+        // v3.1 — release the camera the moment the user backgrounds the
+        // app so a forgotten live-walking session doesn't keep the
+        // camera held + Gemini API metering running.
+        if (liveWalking != null) {
+            liveWalking.stop();
+            liveWalking = null;
+        }
         super.onPause();
     }
 
@@ -1221,6 +1228,18 @@ public class MainActivity extends Activity
                 t("وضع المشي", "Walking mode"),
                 t("التقط ما أمامك بضغطة واحدة، واستمع إلى وصف موجز، ثم كرر للمشهد التالي.", "Capture what is ahead in one tap, hear a brief description, then repeat for the next scene."),
                 v -> showWalkingModeScreen());
+
+        // v3.1 — live walking mode: continuous Camera2 capture every 2
+        // seconds with priority-based speech + haptic warnings tuned for
+        // a blind walker. Separate card to keep the mental model clear:
+        // tap-to-capture for "I want a single check", live mode for "I'm
+        // walking and want continuous guidance".
+        addRichCard("🟢", null,
+                t("بث مباشر — إرشاد مكفوفين",
+                  "Live mode — blind guidance"),
+                t("بصير يفحص ما أمامك كل ثانيتين تلقائياً، يحذّر فوراً من الأخطار باهتزاز، ويتكلّم فقط عند تغيّر المشهد.",
+                  "Basir scans what is ahead every two seconds automatically, warns of hazards with vibration, and speaks only when the scene changes."),
+                v -> showLiveWalkingScreen());
     }
 
     private void renderDocumentsTab() {
@@ -2570,6 +2589,125 @@ public class MainActivity extends Activity
         root.addView(autoToggle, fullWidth());
 
         addBackButton();
+    }
+
+    // ─── v3.1 — Live walking mode ───────────────────────────────────
+
+    /** Lifecycle owner of the live walking session. Held across the
+     *  showLiveWalkingScreen lifetime; null when no session is
+     *  active. onPause / onDestroy stop it deterministically. */
+    private LiveWalkingController liveWalking;
+
+    private TextView liveWalkingStatusText;
+    private TextView liveWalkingLastLineText;
+
+    private void showLiveWalkingScreen() {
+        resetScreen(t("بث مباشر — إرشاد مكفوفين",
+                       "Live mode — blind guidance"),
+                t("اتجِه بالكاميرا للأمام عند المشي. أبدأ، وسأفحص ما أمامك تلقائياً كل ثانيتين، وأحذّر فوراً من أي خطر باهتزاز.",
+                  "Point the camera forward as you walk. Tap Start and I will scan ahead automatically every two seconds, warning of hazards immediately with vibration."));
+
+        if (!permissionController.hasCamera()) {
+            addPlainText(t(
+                    "يجب السماح بإذن الكاميرا لاستخدام البث المباشر.",
+                    "Camera permission is required for live mode."));
+            addPrimaryButton(t("طلب إذن الكاميرا", "Grant camera permission"),
+                    v -> permissionController.requestCamera());
+            addBackButton();
+            return;
+        }
+
+        addPlainText(t(
+                "تنبيه: هذه أداة مساعدة، لا تُغني عن العصا أو الكلب المرشد. لا تستخدمها أثناء عبور الشارع وحدك.",
+                "Note: this is an aid, not a substitute for a cane or guide dog. Do not use it to cross streets unattended."));
+
+        // Live status indicators
+        liveWalkingStatusText = new TextView(this);
+        liveWalkingStatusText.setTextSize(textSize(16));
+        liveWalkingStatusText.setTextColor(colorTextSec());
+        liveWalkingStatusText.setText(t("جاهز للبدء.", "Ready to start."));
+        liveWalkingStatusText.setAccessibilityLiveRegion(
+                View.ACCESSIBILITY_LIVE_REGION_POLITE);
+        LinearLayout.LayoutParams sp = fullWidth();
+        sp.setMargins(0, dp(12), 0, dp(6));
+        root.addView(liveWalkingStatusText, sp);
+
+        liveWalkingLastLineText = new TextView(this);
+        liveWalkingLastLineText.setTextSize(textSize(18));
+        liveWalkingLastLineText.setTypeface(null, Typeface.BOLD);
+        liveWalkingLastLineText.setTextColor(colorText());
+        liveWalkingLastLineText.setText("");
+        liveWalkingLastLineText.setAccessibilityLiveRegion(
+                View.ACCESSIBILITY_LIVE_REGION_ASSERTIVE);
+        LinearLayout.LayoutParams lp = fullWidth();
+        lp.setMargins(0, 0, 0, dp(12));
+        root.addView(liveWalkingLastLineText, lp);
+
+        addPrimaryButton(t("بدء البث المباشر", "Start live mode"),
+                v -> startLiveWalking());
+        addOutlineButton(t("إيقاف", "Stop"),
+                v -> stopLiveWalking());
+        addBackButton();
+    }
+
+    private void startLiveWalking() {
+        if (liveWalking != null && liveWalking.isRunning()) {
+            speak(t("البث المباشر يعمل بالفعل.",
+                     "Live mode is already running."));
+            return;
+        }
+        boolean arabic = !isEnglish();
+        liveWalking = new LiveWalkingController(this, prefs, arabic,
+                new LiveWalkingController.Listener() {
+                    @Override public void onStatusText(String text) {
+                        if (liveWalkingStatusText != null) {
+                            liveWalkingStatusText.setText(text);
+                        }
+                    }
+                    @Override public void onSpoken(String text) {
+                        if (text == null || text.trim().isEmpty()) return;
+                        if (liveWalkingLastLineText != null) {
+                            liveWalkingLastLineText.setText(text);
+                        }
+                        speak(text);
+                        log("walking_live", text);
+                    }
+                    @Override public void onHazard(String level, String description) {
+                        // The vibration is fired inside the controller
+                        // to keep haptic latency low. Here we just
+                        // mirror it into the UI label colour as an
+                        // extra cue for sighted helpers nearby.
+                        if (liveWalkingStatusText == null) return;
+                        if ("stop".equalsIgnoreCase(level)) {
+                            liveWalkingStatusText.setTextColor(0xFFD62828);  // red
+                        } else if ("caution".equalsIgnoreCase(level)) {
+                            liveWalkingStatusText.setTextColor(0xFFEE9B00);  // amber
+                        } else {
+                            liveWalkingStatusText.setTextColor(colorTextSec());
+                        }
+                    }
+                    @Override public void onError(String message) {
+                        if (liveWalkingStatusText != null) {
+                            liveWalkingStatusText.setText(
+                                    t("خطأ: ", "Error: ") + message);
+                            liveWalkingStatusText.setTextColor(0xFFD62828);
+                        }
+                        speak(t("توقف البث المباشر بسبب خطأ.",
+                                 "Live mode stopped due to an error."));
+                    }
+                });
+        liveWalking.start();
+    }
+
+    private void stopLiveWalking() {
+        if (liveWalking != null) {
+            liveWalking.stop();
+            liveWalking = null;
+        }
+        if (liveWalkingStatusText != null) {
+            liveWalkingStatusText.setText(t("متوقف.", "Stopped."));
+            liveWalkingStatusText.setTextColor(colorTextSec());
+        }
     }
 
     private void launchWalkingCapture() {
