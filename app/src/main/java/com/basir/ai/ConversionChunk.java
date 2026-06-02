@@ -66,4 +66,12 @@ public final class ConversionChunk {
         this.status = Status.FAILED;
         this.errorMessage = errorMessage == null ? "" : errorMessage;
     }
+
+    /** v2.9.2 — re-mark a previously-failed chunk as PENDING so a retry
+     *  pass picks it up again. Successful chunks aren't reset because
+     *  ConversionJob.runAll skips them based on isSucceeded(). */
+    void markPendingForRetry() {
+        this.status = Status.PENDING;
+        this.errorMessage = "";
+    }
 }

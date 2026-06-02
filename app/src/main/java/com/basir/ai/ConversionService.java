@@ -32,6 +32,11 @@ public class ConversionService extends Service {
     public static final String EXTRA_SOURCE_URI = "source_uri";
     public static final String EXTRA_LANGUAGE   = "language";
     public static final String EXTRA_MODE       = "mode";
+    /** v2.9.2 — when true, AiClient.directConvertToDocx reuses the
+     *  uploaded file URI + chunk snapshot already in ConversionState
+     *  instead of re-uploading the source. Set by MainActivity's
+     *  retryFailedChunks(). */
+    public static final String EXTRA_RESUME     = "resume";
 
     public static final String ACTION_CANCEL = "com.basir.ai.action.CANCEL_CONVERSION";
 
@@ -70,11 +75,18 @@ public class ConversionService extends Service {
                 arabic ? "جاري تجهيز الملف..." : "Preparing file...",
                 0, 0, true));
 
-        final Uri sourceUri = intent.getParcelableExtra(EXTRA_SOURCE_URI);
+        final boolean resume = intent.getBooleanExtra(EXTRA_RESUME, false);
+        // For resume runs the original source Uri is no longer needed —
+        // the file lives on Gemini's side already (uploadedFileUri in
+        // ConversionState). For first-pass runs we still take it from
+        // the intent. AiClient.directConvertToDocx branches on
+        // ConversionState.hasRetainedSnapshot() to decide which path
+        // to use, so passing a null sourceUri on resume is correct.
+        final Uri sourceUri = resume ? null : intent.getParcelableExtra(EXTRA_SOURCE_URI);
         final String lang = intent.getStringExtra(EXTRA_LANGUAGE);
         final String mode = intent.getStringExtra(EXTRA_MODE);
 
-        if (sourceUri == null) {
+        if (sourceUri == null && !resume) {
             ConversionState.get().fail(arabic
                     ? "لم يتم تحديد ملف للتحويل."
                     : "No file was provided for conversion.");

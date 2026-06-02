@@ -118,6 +118,19 @@ public final class ConversionJob {
         int finalEffectiveEnd = 0;
         for (ConversionChunk chunk : chunks) {
             cancel.throwIfCancelled();
+            // v2.9.2 — on a retry pass the job is pre-loaded with chunks
+            // whose status is already SUCCEEDED (from the previous run).
+            // Skip the Gemini round-trip for those — but still call the
+            // renderer so the DocxBuilder accumulates their sections into
+            // the freshly rebuilt output.
+            if (chunk.isSucceeded()) {
+                renderer.render(chunk);
+                if (chunk.effectiveEnd() > finalEffectiveEnd) {
+                    finalEffectiveEnd = chunk.effectiveEnd();
+                }
+                progress.onProgress(chunk.effectiveEnd(), totalPages, "processing");
+                continue;
+            }
             chunk.markRunning();
             progress.onProgress(chunk.startPage() - 1, totalPages, "processing");
 

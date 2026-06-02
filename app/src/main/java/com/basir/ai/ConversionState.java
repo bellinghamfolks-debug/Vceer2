@@ -96,6 +96,87 @@ public final class ConversionState {
         synchronized (this) { this.requestedMode = mode; }
     }
 
+    // ─────────────────────────────────────────────────────────────────
+    // v2.9.2 — retry-from-where-failed.
+    //
+    // After a conversion finishes with some failed chunks, the
+    // pipeline stashes a snapshot of each chunk's outcome here. The
+    // result screen reads it: if any chunks failed AND the Gemini
+    // Files-API upload is still alive (within its 48-hour window),
+    // a "retry failed pages" button appears. Tapping it starts a
+    // new ConversionService run with EXTRA_RESUME=true, which:
+    //   1. Reuses the existing uploadedFileUri (no re-upload).
+    //   2. Pre-fills the ConversionJob's succeeded chunks from this
+    //      snapshot (their parsed JSON, no Gemini call needed).
+    //   3. Only re-runs the chunks marked failed.
+    //   4. Re-renders the full DOCX from the combined results.
+    // ─────────────────────────────────────────────────────────────────
+
+    /** One chunk's outcome captured for a possible retry. */
+    public static final class ChunkSnap {
+        public final boolean succeeded;
+        /** When succeeded: the parsed Gemini JSON, stringified so it can
+         *  travel as plain state. Null when failed. */
+        public final String parsedJsonText;
+        public final int effectiveEnd;
+        /** When failed: the user-readable error that filled the partial-
+         *  result footer. Null when succeeded. */
+        public final String errorMessage;
+
+        public ChunkSnap(boolean succeeded, String parsedJsonText,
+                          int effectiveEnd, String errorMessage) {
+            this.succeeded = succeeded;
+            this.parsedJsonText = parsedJsonText;
+            this.effectiveEnd = effectiveEnd;
+            this.errorMessage = errorMessage == null ? "" : errorMessage;
+        }
+    }
+
+    private java.util.List<ChunkSnap> retainedSnapshot;
+    private String retainedTitle;
+    private String retainedSummary;
+    private int retainedTotalPages;
+
+    public synchronized boolean hasRetainedSnapshot() {
+        return retainedSnapshot != null && !retainedSnapshot.isEmpty()
+                && hasUploadedFile();
+    }
+
+    public synchronized java.util.List<ChunkSnap> retainedSnapshot() {
+        return retainedSnapshot;
+    }
+
+    public synchronized String retainedTitle() { return retainedTitle; }
+    public synchronized String retainedSummary() { return retainedSummary; }
+    public synchronized int retainedTotalPages() { return retainedTotalPages; }
+
+    public synchronized int retainedFailedCount() {
+        if (retainedSnapshot == null) return 0;
+        int n = 0;
+        for (ChunkSnap s : retainedSnapshot) if (!s.succeeded) n++;
+        return n;
+    }
+
+    public void setRetainedSnapshot(java.util.List<ChunkSnap> snap,
+                                     String title, String summary,
+                                     int totalPages) {
+        synchronized (this) {
+            this.retainedSnapshot = snap;
+            this.retainedTitle = title;
+            this.retainedSummary = summary;
+            this.retainedTotalPages = totalPages;
+        }
+    }
+
+    public void clearRetainedSnapshot() {
+        synchronized (this) {
+            this.retainedSnapshot = null;
+            this.retainedTitle = null;
+            this.retainedSummary = null;
+            this.retainedTotalPages = 0;
+        }
+    }
+
     /** Wipe the uploaded-file reference. The file is left on Gemini's side
      *  to auto-expire — we only forget about it locally. */
     public void clearUploadedFile() {

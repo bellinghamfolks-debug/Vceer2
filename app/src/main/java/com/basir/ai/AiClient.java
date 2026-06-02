@@ -397,48 +397,54 @@ public final class AiClient {
 
         // ===== PDF chunked conversion =====
 
-        // 1) Determine the REAL total page count up front, using Android's
-        //    built-in PdfRenderer. This fixes the "shows 1 of 12 forever"
-        //    bug: the UI knows the total before any Gemini call.
-        int totalPages = countPdfPages(ctx, sourceUri);
-        if (totalPages <= 0) totalPages = 1;
-        if (progress != null) progress.onProgress(0, totalPages, "preparing");
+        // v2.9.2 — resume path. If we have a retained snapshot from a
+        // previous partially-failed run AND the upload is still alive on
+        // Gemini's side (within its 48-hour window), reuse everything:
+        // skip the file upload, restore totalPages from the saved state,
+        // and pre-fill the ConversionJob with the chunks that already
+        // succeeded. Only the failed chunks call Gemini again.
+        final boolean isResume = ConversionState.get().hasRetainedSnapshot();
+        int totalPages;
+        String uploadedUri, uploadedMime;
 
-        // 2) Read the PDF bytes once.
-        byte[] bytes = readUriBytesRaw(ctx, sourceUri, 200 * 1024 * 1024);
-        if (progress != null) progress.onProgress(0, totalPages, "uploading");
+        if (isResume) {
+            totalPages = ConversionState.get().retainedTotalPages();
+            uploadedUri  = ConversionState.get().uploadedFileUri();
+            uploadedMime = ConversionState.get().uploadedFileMime();
+            if (progress != null) progress.onProgress(0, totalPages, "preparing");
+        } else {
+            // 1) Determine the REAL total page count up front, using Android's
+            //    built-in PdfRenderer. This fixes the "shows 1 of 12 forever"
+            //    bug: the UI knows the total before any Gemini call.
+            totalPages = countPdfPages(ctx, sourceUri);
+            if (totalPages <= 0) totalPages = 1;
+            if (progress != null) progress.onProgress(0, totalPages, "preparing");
 
-        // 3) v2.0 root-cause fix: ALWAYS upload via the Files API for batched
-        //    conversion, regardless of file size. Previously we used
-        //    fileDataOrInlinePart, which embedded the entire PDF as base64
-        //    inside every batch request whenever the file was under
-        //    INLINE_MAX_BYTES (18 MB). A typical 5 MB scanned PDF therefore
-        //    re-uploaded itself in EVERY one of the 60 possible batches,
-        //    exhausting the per-minute token quota and the network
-        //    connection after batch 3-5 — the "stops at page 40-50" bug
-        //    the user has been hitting since v1.0.
-        //
-        //    Uploading once and referencing the file by URI shrinks each
-        //    batch from megabytes to a few hundred bytes and lets the
-        //    pipeline finish documents of hundreds of pages.
-        GeminiDirectClient.UploadedFile uploaded;
-        try {
-            uploaded = GeminiDirectClient.uploadFile(
-                    key, bytes, "application/pdf", "basir-doc");
-            // Quick state poll so the first batch never hits "FILE not ACTIVE".
-            GeminiDirectClient.waitForFileActive(key, uploaded.name, 30_000L);
-        } catch (Exception uploadErr) {
-            throw new Exception("Upload failed: " + uploadErr.getMessage());
+            // 2) Read the PDF bytes once.
+            byte[] bytes = readUriBytesRaw(ctx, sourceUri, 200 * 1024 * 1024);
+            if (progress != null) progress.onProgress(0, totalPages, "uploading");
+
+            // 3) ALWAYS upload via the Files API for batched conversion.
+            //    Uploading once and referencing the file by URI shrinks each
+            //    batch from megabytes to a few hundred bytes and lets the
+            //    pipeline finish documents of hundreds of pages.
+            GeminiDirectClient.UploadedFile uploaded;
+            try {
+                uploaded = GeminiDirectClient.uploadFile(
+                        key, bytes, "application/pdf", "basir-doc");
+                GeminiDirectClient.waitForFileActive(key, uploaded.name, 30_000L);
+            } catch (Exception uploadErr) {
+                throw new Exception("Upload failed: " + uploadErr.getMessage());
+            }
+            ConversionState.get().setUploadedFile(uploaded.name, uploaded.uri, uploaded.mimeType);
+            uploadedUri  = uploaded.uri;
+            uploadedMime = uploaded.mimeType;
         }
-
-        // Remember the uploaded file so the v2.0 Document Q&A feature can ask
-        // follow-up questions about it without re-uploading anything.
-        ConversionState.get().setUploadedFile(uploaded.name, uploaded.uri, uploaded.mimeType);
 
         JSONObject filePart = new JSONObject().put("fileData",
                 new JSONObject()
-                        .put("fileUri", uploaded.uri)
-                        .put("mimeType", uploaded.mimeType));
+                        .put("fileUri", uploadedUri)
+                        .put("mimeType", uploadedMime));
 
         boolean arabic = language != null && language.toLowerCase().startsWith("ar");
         String langName = arabic ? "Arabic" : "English";
@@ -467,6 +473,38 @@ public final class AiClient {
         // continues; the user gets a DOCX containing all the chunks that
         // succeeded plus a footer listing the page ranges that didn't.
         ConversionJob job = new ConversionJob(totalPages, PDF_PAGES_PER_BATCH);
+
+        // v2.9.2 — resume pre-fill. For every chunk that previously
+        // succeeded, restore its parsed JSON so runAll() skips the
+        // Gemini round-trip and just replays the chunk into the
+        // DocxBuilder. Failed chunks stay PENDING and will be retried.
+        if (isResume) {
+            java.util.List<ConversionState.ChunkSnap> snap =
+                    ConversionState.get().retainedSnapshot();
+            int n = Math.min(snap.size(), job.chunks().size());
+            for (int i = 0; i < n; i++) {
+                ConversionState.ChunkSnap s = snap.get(i);
+                if (s.succeeded && s.parsedJsonText != null) {
+                    try {
+                        JSONObject parsed = new JSONObject(s.parsedJsonText);
+                        job.chunks().get(i).markSucceeded(parsed, s.effectiveEnd);
+                    } catch (Exception ignore) {
+                        // Corrupt cached JSON — treat as failed so the
+                        // retry pass calls Gemini again for this chunk.
+                    }
+                }
+                // failed snap entries: leave chunk PENDING (default)
+            }
+            // On resume, the previous run already wrote the title and
+            // summary into a DOCX; we are rebuilding from scratch, so
+            // re-emit them now from the retained state.
+            String savedTitle = ConversionState.get().retainedTitle();
+            String savedSummary = ConversionState.get().retainedSummary();
+            if (savedTitle != null && !savedTitle.isEmpty()) doc.title(savedTitle);
+            if (savedSummary != null && !savedSummary.isEmpty()) doc.paragraph(savedSummary);
+            wroteHeader[0] = true;
+        }
+
         final String fLangName = langName;
         final String fLanguage = language;
         final String fMode = mode;
@@ -532,6 +570,37 @@ public final class AiClient {
                         : " — " + fc.errorMessage();
                 doc.paragraph(label + reason);
             }
+        }
+
+        // v2.9.2 — capture a snapshot of every chunk so the result
+        // screen can offer "retry failed pages" without re-uploading
+        // the source. If everything succeeded, wipe any previous
+        // snapshot so the button doesn't appear stale.
+        if (job.failedChunkCount() > 0) {
+            java.util.List<ConversionState.ChunkSnap> snapOut =
+                    new java.util.ArrayList<>(job.chunks().size());
+            String capturedTitle = "";
+            String capturedSummary = "";
+            for (ConversionChunk c : job.chunks()) {
+                if (c.isSucceeded()) {
+                    String parsedText = c.parsed() == null ? null : c.parsed().toString();
+                    snapOut.add(new ConversionState.ChunkSnap(
+                            true, parsedText, c.effectiveEnd(), null));
+                    // The first succeeded chunk carries the title /
+                    // summary the model produced for the whole document.
+                    if (capturedTitle.isEmpty() && c.parsed() != null) {
+                        capturedTitle = c.parsed().optString("title", "");
+                        capturedSummary = c.parsed().optString("summary", "");
+                    }
+                } else {
+                    snapOut.add(new ConversionState.ChunkSnap(
+                            false, null, 0, c.errorMessage()));
+                }
+            }
+            ConversionState.get().setRetainedSnapshot(
+                    snapOut, capturedTitle, capturedSummary, totalPages);
+        } else {
+            ConversionState.get().clearRetainedSnapshot();
         }
 
         if (progress != null) progress.onProgress(totalPages, totalPages, "finalising");
@@ -745,11 +814,28 @@ public final class AiClient {
               + "- Output valid JSON only, no other prose.";
     }
 
+    /** v2.9.2 — strip the math flag suffix ("|math") so the rest of the
+     *  switch can match the primary mode value. The flag is consumed by
+     *  hasMathFlag(); both helpers must agree. */
+    static String stripMathFlag(String mode) {
+        if (mode == null) return null;
+        int pipe = mode.indexOf('|');
+        return pipe < 0 ? mode : mode.substring(0, pipe);
+    }
+
+    /** v2.9.2 — true if the mode string carries the "|math" suffix that
+     *  the convert screen's math toggle injects. */
+    static boolean hasMathFlag(String mode) {
+        return mode != null && mode.toLowerCase().contains("|math");
+    }
+
     private static String modeNote(String mode) {
+        boolean math = hasMathFlag(mode);
+        String primary = stripMathFlag(mode);
         // v2.8 — translation mode comes from the UI as "translate:<lang>".
         // Detect it BEFORE the regular switch so the source-document
         // structure is preserved while every text leaf gets translated.
-        if (mode != null && mode.toLowerCase().startsWith("translate:")) {
+        if (primary != null && primary.toLowerCase().startsWith("translate:")) {
             return "TRANSLATION MODE.\n"
                  + "This document is being TRANSLATED into the response language declared above.\n"
                  + "Translate EVERY textual element into the response language: the title, all\n"
@@ -758,27 +844,45 @@ public final class AiClient {
                  + "exactly as it appears in the source — only the language of the text changes.\n"
                  + "Do NOT keep the source-language original alongside the translation. Output the\n"
                  + "TRANSLATION ONLY. Preserve numbers, dates, currencies, and proper nouns\n"
-                 + "according to standard usage in the target language.";
+                 + "according to standard usage in the target language."
+                 + (math ? mathFlagDirective() : "");
         }
-        switch (mode == null ? "full" : mode.toLowerCase()) {
+        String base;
+        switch (primary == null ? "full" : primary.toLowerCase()) {
             case "simple":
-                return "Plain-text version optimized for screen readers; no decorative elements.";
+                base = "Plain-text version optimized for screen readers; no decorative elements."; break;
             case "descriptions_only":
-                return "Output ONLY image descriptions, one per heading.";
+                base = "Output ONLY image descriptions, one per heading."; break;
             case "text_only":
-                return "Output ONLY extracted text and tables; skip image descriptions.";
+                base = "Output ONLY extracted text and tables; skip image descriptions."; break;
             default:
-                return "Include all text, tables, and detailed image descriptions.";
+                base = "Include all text, tables, and detailed image descriptions."; break;
         }
+        return math ? base + mathFlagDirective() : base;
+    }
+
+    /** v2.9.2 — short version of the math directive appended only when the
+     *  user toggled math on at the convert screen. Kept terse so output
+     *  bloat stays bounded (the v2.9.0 long version is reserved for the
+     *  dedicated math image extraction path in MainActivity). */
+    private static String mathFlagDirective() {
+        return "\n\nMATH MODE (user opted in for this document): render every\n"
+             + "mathematical expression as: SPOKEN form in the response language\n"
+             + "followed by [LaTeX: ...]. Examples: 'x squared plus five [LaTeX: x^2 + 5]'\n"
+             + "or 'س تربيع زائد خمسة [LaTeX: x^2 + 5]'. Apply this ONLY to actual\n"
+             + "mathematical expressions — not to plain numbers, dates, prices, or\n"
+             + "page numbers in ordinary prose.";
     }
 
     /** v2.8 — extracts the BCP-47 target language code from a mode string
-     *  shaped "translate:<lang>". Returns null for any non-translation mode. */
+     *  shaped "translate:<lang>". v2.9.2 — strips the math flag first so
+     *  "translate:fr|math" is recognised. Returns null for non-translate. */
     static String translateTargetFromMode(String mode) {
         if (mode == null) return null;
-        String low = mode.toLowerCase();
+        String stripped = stripMathFlag(mode);
+        String low = stripped.toLowerCase();
         if (!low.startsWith("translate:")) return null;
-        String tgt = mode.substring("translate:".length()).trim();
+        String tgt = stripped.substring("translate:".length()).trim();
         return tgt.isEmpty() ? null : tgt;
     }
 

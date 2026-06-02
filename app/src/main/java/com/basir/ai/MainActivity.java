@@ -1813,6 +1813,23 @@ public class MainActivity extends Activity
             speak(outputModeSpoken(picked));
         });
 
+        // ----- Math toggle (v2.9.2) -----
+        // When ON, the prompt builders inject the v2.9 math-extraction
+        // directive (SPOKEN form + [LaTeX: ...] trailer) into every
+        // chunk. When OFF (default), document conversion treats the
+        // source as plain text — ordinary numbers, dates, prices, and
+        // page numbers stay as-is. Most documents do not need math
+        // mode; turning it on for a non-math document used to bloat
+        // each chunk's output past maxOutputTokens, which is what
+        // v2.9.1 fixed by removing the default-on directive.
+        addSection(t("الرياضيات", "Mathematics"));
+        addSwitchRow(
+                t("تضمين معادلات رياضية (للمستندات الرياضية فقط)",
+                  "Include math equations (math documents only)"),
+                prefs.getBoolean("convert_include_math", false),
+                checked -> prefs.edit().putBoolean("convert_include_math", checked).apply()
+        );
+
         addPrimaryButton(t("اختر ملفًا للتحويل", "Choose a file to convert"), v -> {
             if (!AiClient.isConfigured(prefs)) {
                 speak(t("يجب إعداد Gemini أولًا.", "Gemini must be set up first."));
@@ -1879,6 +1896,43 @@ public class MainActivity extends Activity
 
     /** Resolve the user-visible name of a content URI ("contract.pdf").
      *  Returns the last path segment as a fallback. */
+    /**
+     * v2.9.2 — relaunch the conversion service with EXTRA_RESUME=true.
+     * Reuses the uploaded file URI and the saved chunk results in
+     * ConversionState. ConversionService and AiClient downstream
+     * recognise the flag and skip both the file upload and the
+     * already-succeeded chunks. Only the failed page ranges call
+     * Gemini again.
+     */
+    private void retryFailedChunks() {
+        if (!ConversionState.get().hasRetainedSnapshot()) {
+            speak(t("لا توجد محاولة سابقة لإعادتها.",
+                    "There is no previous attempt to retry."));
+            return;
+        }
+        if (ConversionState.get().isRunning()) {
+            speak(t("هناك عملية تحويل قيد التنفيذ بالفعل.",
+                    "A conversion is already in progress."));
+            showConvertingScreen();
+            return;
+        }
+        Intent svc = new Intent(this, ConversionService.class);
+        svc.putExtra(ConversionService.EXTRA_RESUME, true);
+        // Carry the language + mode forward so ConversionService doesn't
+        // need to recover them from anywhere else.
+        svc.putExtra(ConversionService.EXTRA_LANGUAGE,
+                isEnglish() ? "en" : "ar");
+        String mode = ConversionState.get().requestedMode();
+        if (mode != null) svc.putExtra(ConversionService.EXTRA_MODE, mode);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(svc);
+        } else {
+            startService(svc);
+        }
+        speak(t("بدأت إعادة المحاولة.", "Retry started."));
+        showConvertingScreen();
+    }
+
     private String resolveDisplayName(Uri uri) {
         if (uri == null) return null;
         try (android.database.Cursor c = getContentResolver().query(uri,
@@ -1958,9 +2012,21 @@ public class MainActivity extends Activity
         // upload — the Document Q&A entry on the home screen will hide
         // itself until this conversion completes successfully.
         ConversionState.get().clearUploadedFile();
+        // v2.9.2 — a brand-new file means the previous run's retry
+        // snapshot is irrelevant.
+        ConversionState.get().clearRetainedSnapshot();
         ConversionState.get().setSourceDisplayName(resolveDisplayName(uri));
 
         String outputMode = prefs.getString("convert_output_mode", "full");
+        // v2.9.2 — math toggle. If the user enabled "include math
+        // equations" on the convert screen, append "|math" to the
+        // mode string. The downstream prompt builders strip the flag
+        // and append the math directive ONLY when present. Default
+        // (off) is the v2.9.1 behaviour: no math noise on ordinary
+        // documents.
+        if (prefs.getBoolean("convert_include_math", false)) {
+            outputMode = outputMode + "|math";
+        }
         // v2.8.1 — remember the mode on the global state so the success
         // branch can pick a meaningful output filename even after the
         // Activity has been killed and recreated mid-conversion.
@@ -2001,6 +2067,9 @@ public class MainActivity extends Activity
         } catch (Exception ignore) {}
 
         ConversionState.get().clearUploadedFile();
+        // v2.9.2 — a brand-new file means the previous run's retry
+        // snapshot is irrelevant.
+        ConversionState.get().clearRetainedSnapshot();
         ConversionState.get().setSourceDisplayName(resolveDisplayName(uri));
         String mode = "translate:" + tgtCode;
         ConversionState.get().setRequestedMode(mode);
@@ -2252,6 +2321,22 @@ public class MainActivity extends Activity
         addPlainText(t("اسم الملف:", "File name:") + displayName);
         addPlainText(t("الموقع: مجلد التنزيلات / Basir",
                        "Location: Downloads / Basir"));
+
+        // v2.9.2 — retry-failed-pages. If the previous run dropped any
+        // chunks (partial-result footer in the DOCX), surface a top-of-
+        // screen Retry CTA so the user can re-process only the missing
+        // pages without re-uploading the source. The uploaded file lives
+        // on Gemini's side for 48 hours; we only need to send the
+        // missing chunk prompts again.
+        int failedCount = ConversionState.get().retainedFailedCount();
+        if (failedCount > 0 && ConversionState.get().hasUploadedFile()) {
+            addPlainText(t(
+                    "بعض الصفحات (" + failedCount + " دفعة) لم تكتمل في المحاولة السابقة. اضغط إعادة المحاولة لإكمال الصفحات الفاشلة فقط، بدون إعادة رفع الملف.",
+                    "Some pages (" + failedCount + " batch" + (failedCount == 1 ? "" : "es") + ") did not complete in the previous run. Tap Retry to re-process only the failed pages — no re-upload needed."
+            ));
+            addPrimaryButton(t("إعادة محاولة الصفحات الفاشلة",
+                                "Retry failed pages"), v -> retryFailedChunks());
+        }
 
         final String mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
