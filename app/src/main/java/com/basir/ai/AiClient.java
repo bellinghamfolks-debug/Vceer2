@@ -686,14 +686,6 @@ public final class AiClient {
         prompt.append("- Preserve heading levels exactly as marked in the input.\n");
         prompt.append("- Preserve table structure exactly: same number of rows and columns.\n");
         prompt.append("- Do not invent content that is not present in the source.\n");
-        prompt.append("- v2.9 MATH: if any mathematical expression appears in the text\n");
-        prompt.append("  (equation, fraction, integral, sum, Greek letter, super/subscript,\n");
-        prompt.append("  matrix, limit, derivative, set or logic symbol), render EACH\n");
-        prompt.append("  expression inside its paragraph as: SPOKEN form in the response\n");
-        prompt.append("  language, followed by [LaTeX: ...]. Example in Arabic:\n");
-        prompt.append("  'س تربيع زائد خمسة س ناقص ستة يساوي صفر [LaTeX: x^2 + 5x - 6 = 0]'.\n");
-        prompt.append("  Use standard Arabic math vocabulary: تكامل, مجموع, مشتقة, الجذر\n");
-        prompt.append("  التربيعي لـ, تربيع, تكعيب, باي, ألفا, جا (sin), جتا (cos), نها (lim).\n");
         prompt.append("- Output valid JSON only.\n\n");
         prompt.append("DOCUMENT TEXT (between the tags):\n");
         prompt.append("<<<BASIR_DOC_BEGIN>>>\n");
@@ -750,15 +742,6 @@ public final class AiClient {
               + "  need the real cell data so the converted Word file is itself a navigable table.\n"
               + "- Insert page_marker for each PDF page.\n"
               + "- Never identify real people by face.\n"
-              + "- v2.9 — MATH: if the page contains any mathematical expression (equations,\n"
-              + "  fractions, integrals, sums, Greek letters, sub/superscripts, matrices, limits,\n"
-              + "  derivatives, set or logic notation, geometric / statistical notation), render\n"
-              + "  EACH expression INSIDE its paragraph as: SPOKEN form in the response language,\n"
-              + "  followed immediately by [LaTeX: ...]. Do not skip, paraphrase, or summarise any\n"
-              + "  equation. Examples: 'x squared plus five x minus six equals zero [LaTeX: x^2 + 5x - 6 = 0]'\n"
-              + "  or in Arabic: 'س تربيع زائد خمسة س ناقص ستة يساوي صفر [LaTeX: x^2 + 5x - 6 = 0]'.\n"
-              + "  Use the standard Arabic math vocabulary: تكامل, مجموع, مشتقة, الجذر التربيعي لـ,\n"
-              + "  تربيع, تكعيب, باي, ألفا, بيتا, جا (sin), جتا (cos), ظا (tan), نها (lim).\n"
               + "- Output valid JSON only, no other prose.";
     }
 
@@ -990,16 +973,6 @@ public final class AiClient {
         p.append("  exactly. Empty cells become empty strings. NEVER output a 'table_description' or\n");
         p.append("  a summary-only entry — emit the real cells so the Word file becomes a navigable table.\n");
         p.append("- Never identify real people by face.\n");
-        p.append("- v2.9 — MATH: if a page contains any mathematical expression (equation, inequality,\n");
-        p.append("  fraction, power, root, integral, summation, limit, derivative, Greek letter, matrix,\n");
-        p.append("  vector, sub/super-script, set or logic symbol, geometric or statistical notation),\n");
-        p.append("  render EACH expression inside its paragraph as: SPOKEN form in the response language,\n");
-        p.append("  immediately followed by [LaTeX: ...]. Do not skip, paraphrase, or summarise any\n");
-        p.append("  equation. For Arabic use the standard math vocabulary: تكامل (∫), مجموع (∑), مشتقة,\n");
-        p.append("  الجذر التربيعي لـ (√), تربيع (²), تكعيب (³), باي (π), ألفا (α), بيتا (β), جا (sin),\n");
-        p.append("  جتا (cos), ظا (tan), نها (lim), زائد (+), ناقص (−), يساوي (=), يساوي ما لا نهاية (∞).\n");
-        p.append("  Example: 'x squared plus five x minus six equals zero [LaTeX: x^2 + 5x - 6 = 0]' or\n");
-        p.append("  in Arabic: 'س تربيع زائد خمسة س ناقص ستة يساوي صفر [LaTeX: x^2 + 5x - 6 = 0]'.\n");
         p.append("- Output valid JSON only, no other prose.");
         return p.toString();
     }
