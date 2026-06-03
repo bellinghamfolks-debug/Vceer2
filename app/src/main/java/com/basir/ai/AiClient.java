@@ -854,6 +854,21 @@ public final class AiClient {
               + "  exactly as it appears in the source. If a cell is empty in the source, leave it as\n"
               + "  an empty string. NEVER output a 'table_description' or a 'summary'-only entry — we\n"
               + "  need the real cell data so the converted Word file is itself a navigable table.\n"
+              + "- v3.1.2 SCHEDULE / TIMETABLE tables (lecture schedules, exam schedules,\n"
+              + "  shift rosters, anything with TIME on one axis and DAYS or PERIODS on the other):\n"
+              + "  set an extra field \"row_header\": true on the table section so the converter\n"
+              + "  shades the FIRST COLUMN like a header too. A blind reader then hears\n"
+              + "  \"row: 08:00 – 09:00, column Monday: Math, Room 101\" instead of just a flat grid.\n"
+              + "  For schedule tables: keep time ranges as ONE cell (\"08:00 – 09:00\", not split).\n"
+              + "  For cells that combine subject + room + instructor, join them with \" — \" so\n"
+              + "  each row stays one line per column. Empty time slots become empty strings.\n"
+              + "- v3.1.2 MERGED CELLS: if the source has a cell that visually spans multiple\n"
+              + "  columns or rows (e.g. a 2-hour lecture covering 08:00-09:00 and 09:00-10:00),\n"
+              + "  copy the same value into EACH cell it covers. Never emit nested structures or\n"
+              + "  skip the duplicates; the screen-reader user will still get the full information.\n"
+              + "- v3.1.2 COLUMN COUNT: every row MUST have the SAME number of cells as the\n"
+              + "  header row. If a source row visibly skips a column, emit \"\" for the missing\n"
+              + "  cell — never shift later cells leftward.\n"
               + "- Insert page_marker for each PDF page.\n"
               + "- Never identify real people by face.\n"
               + "- Output valid JSON only, no other prose.";
@@ -1020,6 +1035,36 @@ public final class AiClient {
         return out;
     }
 
+    /**
+     * v3.1.2 — schedule-detection heuristic for table row-header
+     * shading. Returns true when the first column (excluding the
+     * header row) is dominated by time-like patterns: "HH:MM",
+     * "HH:MM – HH:MM", "8-9 AM", "Period 1", numeric ranges, etc.
+     * When true, the converter shades the first column too, so a
+     * blind reader hears row labels announced as headers rather
+     * than treated as ordinary content.
+     */
+    private static boolean looksLikeScheduleFirstColumn(
+            java.util.List<java.util.List<String>> rows) {
+        if (rows == null || rows.size() < 3) return false;
+        java.util.regex.Pattern timePat = java.util.regex.Pattern.compile(
+                "(?i)\\b(?:\\d{1,2}\\s*[:.-]\\s*\\d{1,2}|period\\s*\\d+|"
+                        + "حصة\\s*\\d+|الحصة\\s*\\d+|الفترة\\s*\\d+)\\b");
+        int timeRows = 0, totalRows = 0;
+        // Skip row 0 (the header row).
+        for (int i = 1; i < rows.size(); i++) {
+            java.util.List<String> row = rows.get(i);
+            if (row == null || row.isEmpty()) continue;
+            String first = row.get(0);
+            if (first == null) first = "";
+            first = first.trim();
+            if (first.isEmpty()) continue;
+            totalRows++;
+            if (timePat.matcher(first).find()) timeRows++;
+        }
+        return totalRows >= 3 && timeRows * 2 >= totalRows;
+    }
+
     /** First decimal integer in {@code s}, or -1 if none. */
     private static int extractFirstInt(String s) {
         if (s == null) return -1;
@@ -1098,7 +1143,14 @@ public final class AiClient {
                         }
                     }
                     if (!tableCells.isEmpty()) {
-                        doc.table(tableCells);
+                        // v3.1.2 — schedule-style tables (lecture timetables,
+                        // exam schedules) also want the FIRST COLUMN shaded as
+                        // a header. The model is asked to set row_header=true
+                        // for those; we also auto-detect time patterns in the
+                        // first column when the model forgot.
+                        boolean rowHeader = sec.optBoolean("row_header", false)
+                                || looksLikeScheduleFirstColumn(tableCells);
+                        doc.table(tableCells, /*headerRow*/ true, rowHeader);
                     } else {
                         // Model returned a 'table' entry without cells — fall
                         // back to whatever summary text it included, so we at
@@ -1197,6 +1249,14 @@ public final class AiClient {
         p.append("  values in a 2-D array. The first row MUST be the header row. Preserve column order\n");
         p.append("  exactly. Empty cells become empty strings. NEVER output a 'table_description' or\n");
         p.append("  a summary-only entry — emit the real cells so the Word file becomes a navigable table.\n");
+        p.append("- v3.1.2 SCHEDULE / TIMETABLE tables (lecture timetables, exam schedules, shift\n");
+        p.append("  rosters): set \"row_header\": true so the FIRST COLUMN (the time column) is also\n");
+        p.append("  shaded as a header. Keep time ranges intact: \"08:00 – 09:00\" stays ONE cell, never\n");
+        p.append("  split. Cells with subject + room + instructor join with \" — \". Empty slots become \"\".\n");
+        p.append("- v3.1.2 MERGED CELLS in the source (e.g. a 2-hour lecture spanning two time slots):\n");
+        p.append("  duplicate the value into EACH covered cell. Never emit nested structures.\n");
+        p.append("- v3.1.2 EVERY row MUST have the SAME cell count as the header row. If a row\n");
+        p.append("  visibly skips a column, emit \"\" for the missing cell — never shift cells leftward.\n");
         p.append("- Never identify real people by face.\n");
         p.append("- Output valid JSON only, no other prose.");
         return p.toString();

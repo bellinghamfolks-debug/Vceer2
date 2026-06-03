@@ -35,14 +35,25 @@ public final class DocxBuilder {
         // v2.2 — table support. Non-null only when type == TABLE.
         // Each inner list is one row; first row is rendered as a header.
         final List<List<String>> cells;
+        // v3.1.2 — header flags. headerRow defaults true (matches v2.2
+        // behaviour). headerCol turns ON the "first column is also a
+        // header" rendering for schedule-style tables.
+        final boolean headerRow;
+        final boolean headerCol;
         Block(BlockType type, int level, String text) {
-            this(type, level, text, null);
+            this(type, level, text, null, true, false);
         }
         Block(BlockType type, int level, String text, List<List<String>> cells) {
+            this(type, level, text, cells, true, false);
+        }
+        Block(BlockType type, int level, String text, List<List<String>> cells,
+              boolean headerRow, boolean headerCol) {
             this.type = type;
             this.level = level;
             this.text = text == null ? "" : text;
             this.cells = cells;
+            this.headerRow = headerRow;
+            this.headerCol = headerCol;
         }
     }
 
@@ -82,6 +93,23 @@ public final class DocxBuilder {
      *              Rows of unequal length are padded to the max width.
      */
     public DocxBuilder table(List<List<String>> cells) {
+        return table(cells, /*headerRow*/ true, /*headerCol*/ false);
+    }
+
+    /**
+     * v3.1.2 — table overload with explicit header flags.
+     *
+     * @param cells       2-D row-major grid. Jagged rows are padded with "".
+     * @param headerRow   when true (default), the first row is bold-shaded
+     *                    and repeats on every page break.
+     * @param headerCol   when true, the first column is ALSO bold-shaded.
+     *                    Used for schedule / timetable layouts where the
+     *                    left edge holds time labels. A blind reader's
+     *                    Word screen-reader treats the first column as a
+     *                    row header and announces it before each cell.
+     */
+    public DocxBuilder table(List<List<String>> cells,
+                              boolean headerRow, boolean headerCol) {
         if (cells == null || cells.isEmpty()) return this;
         int maxCols = 0;
         for (List<String> row : cells) {
@@ -97,7 +125,7 @@ public final class DocxBuilder {
             while (r.size() < maxCols) r.add("");
             padded.add(r);
         }
-        blocks.add(new Block(BlockType.TABLE, 0, "", padded));
+        blocks.add(new Block(BlockType.TABLE, 0, "", padded, headerRow, headerCol));
         return this;
     }
 
@@ -151,7 +179,7 @@ public final class DocxBuilder {
                     sb.append(paragraphXml(b.text, "Heading" + b.level, hSize));
                     break;
                 case TABLE:
-                    sb.append(tableXml(b.cells));
+                    sb.append(tableXml(b.cells, b.headerRow, b.headerCol));
                     break;
                 default:
                     sb.append(paragraphXml(b.text, "Normal", 22));
@@ -173,7 +201,8 @@ public final class DocxBuilder {
      * NVDA, JAWS) all read this as a proper table structure — the user
      * can navigate row-by-row with screen-reader shortcuts.
      */
-    private String tableXml(List<List<String>> rows) {
+    private String tableXml(List<List<String>> rows,
+                             boolean headerRow, boolean headerCol) {
         if (rows == null || rows.isEmpty()) return "";
         StringBuilder sb = new StringBuilder();
         sb.append("<w:tbl>");
@@ -191,32 +220,57 @@ public final class DocxBuilder {
           .append("</w:tblBorders>");
         sb.append("</w:tblPr>");
 
-        // tblGrid: evenly distribute columns.
+        // tblGrid: when headerCol is set (schedule-style table) the
+        // first column carries short labels (time, day) and looks cramped
+        // if it gets an equal share of A4's 9000-twip usable width. Give
+        // it ~14% and split the remaining width evenly across data cols.
         int cols = rows.get(0).size();
         sb.append("<w:tblGrid>");
-        int colWidth = 9000 / Math.max(1, cols);   // twips, ~A4 usable width
+        int firstColWidth;
+        int dataColWidth;
+        if (headerCol && cols > 1) {
+            firstColWidth = (int)(9000 * 0.14);
+            dataColWidth  = (9000 - firstColWidth) / (cols - 1);
+        } else {
+            firstColWidth = 9000 / Math.max(1, cols);
+            dataColWidth  = firstColWidth;
+        }
         for (int i = 0; i < cols; i++) {
-            sb.append("<w:gridCol w:w=\"").append(colWidth).append("\"/>");
+            sb.append("<w:gridCol w:w=\"")
+              .append(i == 0 ? firstColWidth : dataColWidth)
+              .append("\"/>");
         }
         sb.append("</w:tblGrid>");
 
         for (int r = 0; r < rows.size(); r++) {
             List<String> row = rows.get(r);
-            boolean isHeader = (r == 0);
+            boolean inHeaderRow = headerRow && r == 0;
             sb.append("<w:tr>");
-            if (isHeader) {
+            if (inHeaderRow) {
                 // Repeat header row on each page break.
                 sb.append("<w:trPr><w:tblHeader/></w:trPr>");
             }
             for (int c = 0; c < row.size(); c++) {
                 String cell = row.get(c);
                 if (cell == null || cell.isEmpty()) cell = " ";
+                boolean inHeaderCol = headerCol && c == 0;
+                boolean isCorner    = inHeaderRow && inHeaderCol;
+                boolean isBold      = inHeaderRow || inHeaderCol;
+                // Three-way fill scheme so a sighted reader can scan the
+                // table at a glance; the bold flag carries the same info
+                // for screen readers that ignore <w:shd>.
+                String fill = null;
+                if (isCorner)         fill = "C9D6EC";
+                else if (inHeaderRow) fill = "E8EEF7";
+                else if (inHeaderCol) fill = "F0F3F9";
                 sb.append("<w:tc>");
                 sb.append("<w:tcPr>");
-                sb.append("<w:tcW w:w=\"").append(colWidth).append("\" w:type=\"dxa\"/>");
-                if (isHeader) {
-                    // Light gray fill on the header row for visual scan.
-                    sb.append("<w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"E8EEF7\"/>");
+                sb.append("<w:tcW w:w=\"")
+                  .append(c == 0 ? firstColWidth : dataColWidth)
+                  .append("\" w:type=\"dxa\"/>");
+                if (fill != null) {
+                    sb.append("<w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"")
+                      .append(fill).append("\"/>");
                 }
                 sb.append("</w:tcPr>");
                 sb.append("<w:p>");
@@ -225,7 +279,7 @@ public final class DocxBuilder {
                 sb.append("</w:pPr>");
                 sb.append("<w:r><w:rPr>");
                 if (rtl) sb.append("<w:rtl/>");
-                if (isHeader) sb.append("<w:b/><w:bCs/>");
+                if (isBold) sb.append("<w:b/><w:bCs/>");
                 sb.append("<w:sz w:val=\"22\"/><w:szCs w:val=\"22\"/>");
                 sb.append("<w:lang w:val=\"").append(langTag)
                   .append("\" w:bidi=\"").append(langTag).append("\"/>");
