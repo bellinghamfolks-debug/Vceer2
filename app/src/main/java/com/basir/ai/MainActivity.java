@@ -2208,6 +2208,11 @@ public class MainActivity extends Activity
             }
         } else if (status == ConversionState.Status.FAILED) {
             final String msg = safeError(state.error());
+            // v3.1.1 — capture snapshot availability BEFORE state.clear()
+            // so we can offer the right retry CTA. clear() leaves the
+            // retained snapshot alone (only resets transient running
+            // state), but we read it now to be safe.
+            final boolean canResumeFromSnapshot = state.hasRetainedSnapshot();
             state.clear();
             log("convert_error", msg);
             // v2.2.4 — double-pulse haptic so the user can tell failure apart
@@ -2215,7 +2220,25 @@ public class MainActivity extends Activity
             if (vibrationEnabled) { vibrate(120); }
             resetScreen(t("تعذّر إكمال التحويل", "Conversion could not be completed"), msg);
             addPlainText(t("جرّب جودة \"سريع\"، أو وضع \"النص فقط\"، أو قسّم الملف إلى أجزاء أصغر.", "Try \"Fast\" quality, \"Text only\" output mode, or split the file into smaller parts."));
-            addOutlineButton(t("إعادة المحاولة", "Try again"), v -> showConvertScreen());
+            if (canResumeFromSnapshot) {
+                // v3.1.1 — a retained snapshot means the previous run
+                // got some chunks through before the failure. Offer to
+                // resume from where it stopped without re-uploading the
+                // file. Without this, the user's only option was
+                // "Try again" -> file picker -> re-upload (the bug the
+                // user reported).
+                addPlainText(t(
+                        "محاولة سابقة لهذا الملف لا تزال محفوظة على Gemini. يمكنك إكمال الصفحات الفاشلة دون رفع الملف مرّة أخرى.",
+                        "A previous attempt for this file is still cached on Gemini. You can finish the failed pages without re-uploading the file."));
+                addPrimaryButton(t("إكمال الصفحات الفاشلة (بدون رفع)",
+                                    "Continue failed pages (no re-upload)"),
+                        v -> retryFailedChunks());
+                addOutlineButton(t("بدء تحويل جديد", "Start a new conversion"),
+                        v -> showConvertScreen());
+            } else {
+                addPrimaryButton(t("إعادة المحاولة", "Try again"),
+                        v -> showConvertScreen());
+            }
             addBackButton();
         } else if (status == ConversionState.Status.CANCELLED) {
             state.clear();
@@ -2643,6 +2666,22 @@ public class MainActivity extends Activity
         lp.setMargins(0, 0, 0, dp(12));
         root.addView(liveWalkingLastLineText, lp);
 
+        // v3.1.1 — GPS hint toggle. When ON, the controller fetches
+        // one location reading at start and passes a neighbourhood /
+        // city label into every Gemini prompt as background context
+        // (helps the model recognise street signs and landmarks
+        // against the right place). Permission is requested lazily
+        // the moment the switch is flipped on for the first time.
+        addSwitchRow(t("استخدام الموقع لتحسين الإرشاد",
+                        "Use GPS to improve guidance"),
+                prefs.getBoolean("live_walking_use_gps", false),
+                checked -> {
+                    prefs.edit().putBoolean("live_walking_use_gps", checked).apply();
+                    if (checked && !permissionController.hasFineOrCoarseLocation()) {
+                        permissionController.requestLocation();
+                    }
+                });
+
         addPrimaryButton(t("بدء البث المباشر", "Start live mode"),
                 v -> startLiveWalking());
         addOutlineButton(t("إيقاف", "Stop"),
@@ -2657,7 +2696,12 @@ public class MainActivity extends Activity
             return;
         }
         boolean arabic = !isEnglish();
-        liveWalking = new LiveWalkingController(this, prefs, arabic,
+        // v3.1.1 — opt-in GPS hint per the toggle on the live walking
+        // screen. Only honoured if the user has also granted location
+        // permission; otherwise it's a silent no-op.
+        boolean useGps = prefs.getBoolean("live_walking_use_gps", false)
+                && permissionController.hasFineOrCoarseLocation();
+        liveWalking = new LiveWalkingController(this, prefs, arabic, useGps,
                 new LiveWalkingController.Listener() {
                     @Override public void onStatusText(String text) {
                         if (liveWalkingStatusText != null) {

@@ -15,6 +15,10 @@ import android.media.Image;
 import android.media.ImageReader;
 import android.os.Build;
 import android.os.Handler;
+import android.location.Address;
+import android.location.Geocoder;
+import android.location.Location;
+import android.location.LocationManager;
 import android.os.HandlerThread;
 import android.os.Looper;
 import android.os.VibrationEffect;
@@ -124,6 +128,14 @@ public final class LiveWalkingController {
     private final SharedPreferences prefs;
     private final Listener listener;
     private final boolean arabic;
+    /** v3.1.1 — when true, the controller fetches one location reading
+     *  at start() and includes a "you are near X" hint in each prompt
+     *  so Gemini can interpret visual cues (street signs, landmarks,
+     *  shop names) against the right city / neighborhood. */
+    private final boolean useGps;
+    /** Reverse-geocoded label like "Near King Fahd Road, Riyadh". Null
+     *  when GPS is off, denied, or the fetch failed. */
+    private volatile String locationLabel;
 
     // ───── State ─────
 
@@ -148,12 +160,23 @@ public final class LiveWalkingController {
     public LiveWalkingController(Context ctx,
                                   SharedPreferences prefs,
                                   boolean arabic,
+                                  boolean useGps,
                                   Listener listener) {
         this.appCtx = ctx.getApplicationContext();
         this.prefs = prefs;
         this.arabic = arabic;
+        this.useGps = useGps;
         this.listener = listener;
         this.mainHandler = new Handler(Looper.getMainLooper());
+    }
+
+    /** Back-compat constructor (default no-GPS) for callers that haven't
+     *  been updated yet. */
+    public LiveWalkingController(Context ctx,
+                                  SharedPreferences prefs,
+                                  boolean arabic,
+                                  Listener listener) {
+        this(ctx, prefs, arabic, false, listener);
     }
 
     // ───── Public API ─────
@@ -180,6 +203,11 @@ public final class LiveWalkingController {
         bgThread.start();
         bgHandler = new Handler(bgThread.getLooper());
         aiExec = Executors.newSingleThreadExecutor();
+        // v3.1.1 — kick off a one-shot location fetch in parallel with
+        // the camera open. We do NOT wait on it: the first frame is
+        // sent without a location hint; from the second frame onward
+        // (if GPS resolved) the hint is included.
+        if (useGps) bgHandler.post(this::fetchLocationOnce);
         postStatus(arabic ? "جاري فتح الكاميرا..." : "Opening camera...");
         bgHandler.post(this::openCamera);
     }
@@ -375,7 +403,8 @@ public final class LiveWalkingController {
                 // Flash forced — navigation latency beats Pro fidelity.
                 String model = AiClient.modelForQuality(prefs, AiClient.QUALITY_BALANCED);
                 String prompt = AiClient.liveWalkingPrompt(arabic,
-                        snapshotRecentSummariesAsText());
+                        snapshotRecentSummariesAsText(),
+                        locationLabel);  // null when GPS off / unresolved
                 JSONObject schema = AiClient.liveWalkingSchema();
                 JSONObject response = GeminiDirectClient.generateJsonWithImage(
                         key, model,
@@ -391,6 +420,101 @@ public final class LiveWalkingController {
                 scheduleNextCapture(CAPTURE_INTERVAL_MS);
             }
         });
+    }
+
+    /**
+     * v3.1.1 — best-effort one-shot location resolution on the
+     * background handler. Uses LocationManager.getLastKnownLocation
+     * (no continuous listening; we don't want a battery drain) and
+     * Geocoder.getFromLocation for a human-readable label.
+     *
+     * Failure modes are silent: if permission is missing, no provider
+     * has a cached fix, the Geocoder throws, or we hit an IOException,
+     * locationLabel stays null and the prompt simply omits the hint.
+     * Blind walking guidance must never block on a slow GPS provider.
+     */
+    private void fetchLocationOnce() {
+        try {
+            if (!hasLocationPermission()) return;
+            LocationManager lm = (LocationManager)
+                    appCtx.getSystemService(Context.LOCATION_SERVICE);
+            if (lm == null) return;
+            Location best = null;
+            try {
+                Location gps = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER);
+                Location net = lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
+                if (gps != null && net != null) {
+                    best = gps.getTime() > net.getTime() ? gps : net;
+                } else {
+                    best = gps != null ? gps : net;
+                }
+            } catch (SecurityException ignore) {
+                return;
+            }
+            if (best == null) return;
+
+            String label = reverseGeocode(best);
+            if (label != null && !label.isEmpty()) {
+                locationLabel = label;
+                postStatus(arabic
+                        ? "تم تحديد الموقع: " + label
+                        : "Location set: " + label);
+            } else {
+                // Even bare coordinates help Gemini disambiguate
+                // (knows whether you're in Riyadh vs Cairo etc).
+                locationLabel = String.format(java.util.Locale.US,
+                        "%.4f,%.4f", best.getLatitude(), best.getLongitude());
+            }
+        } catch (Throwable ignore) {
+            // Defensive: location is a nice-to-have, never a blocker.
+        }
+    }
+
+    private boolean hasLocationPermission() {
+        return appCtx.checkSelfPermission(
+                android.Manifest.permission.ACCESS_FINE_LOCATION)
+                == android.content.pm.PackageManager.PERMISSION_GRANTED
+            || appCtx.checkSelfPermission(
+                android.Manifest.permission.ACCESS_COARSE_LOCATION)
+                == android.content.pm.PackageManager.PERMISSION_GRANTED;
+    }
+
+    private String reverseGeocode(Location loc) {
+        if (!Geocoder.isPresent()) return null;
+        try {
+            Geocoder gc = new Geocoder(appCtx,
+                    arabic ? new java.util.Locale("ar", "SA")
+                           : java.util.Locale.US);
+            java.util.List<Address> list = gc.getFromLocation(
+                    loc.getLatitude(), loc.getLongitude(), 1);
+            if (list == null || list.isEmpty()) return null;
+            Address a = list.get(0);
+            // Build a "<thoroughfare>, <locality>, <country>" label —
+            // skipping segments the geocoder didn't resolve. Streets +
+            // neighborhood are the most useful disambiguators; country
+            // ensures the city is unambiguous.
+            StringBuilder sb = new StringBuilder();
+            String street = a.getThoroughfare();
+            String subLoc = a.getSubLocality();
+            String loc1 = a.getLocality();
+            String country = a.getCountryName();
+            if (street != null && !street.isEmpty()) sb.append(street);
+            if (subLoc != null && !subLoc.isEmpty()) {
+                if (sb.length() > 0) sb.append(", ");
+                sb.append(subLoc);
+            }
+            if (loc1 != null && !loc1.isEmpty()) {
+                if (sb.length() > 0) sb.append(", ");
+                sb.append(loc1);
+            }
+            if (country != null && !country.isEmpty()) {
+                if (sb.length() > 0) sb.append(", ");
+                sb.append(country);
+            }
+            return sb.toString();
+        } catch (Throwable ignore) {
+            return null;
+        }
     }
 
     private String snapshotRecentSummariesAsText() {

@@ -368,25 +368,53 @@ public final class AiClient {
                                               ProgressCallback progress) throws Exception {
         String key = SecurePrefs.getGeminiKey(prefs);
         String model = pickModel(prefs, "convert");
-        String mimeType = ctx.getContentResolver().getType(sourceUri);
-        if (mimeType == null) mimeType = "application/octet-stream";
+
+        // v3.1.1 — detect a resume call BEFORE any sourceUri operation,
+        // because the retry path passes sourceUri=null on purpose (the
+        // file is already on Gemini's side). Without this guard,
+        // getContentResolver().getType(null) used to throw NPE and the
+        // user saw "Conversion could not be completed: NullPointerException"
+        // with only a Back button — the bug they reported.
+        boolean isResumeAtStart = (sourceUri == null)
+                && ConversionState.get().hasRetainedSnapshot();
+
+        String mimeType;
+        if (isResumeAtStart) {
+            // Use the mime the previous run cached when it uploaded the
+            // file. Retry is currently scoped to the PDF chunked flow
+            // (the only path that builds a snapshot), so this is
+            // virtually always application/pdf.
+            mimeType = ConversionState.get().uploadedFileMime();
+            if (mimeType == null || mimeType.isEmpty()) mimeType = "application/pdf";
+        } else {
+            if (sourceUri == null) {
+                throw new Exception("No source file was provided.");
+            }
+            mimeType = ctx.getContentResolver().getType(sourceUri);
+            if (mimeType == null) mimeType = "application/octet-stream";
+        }
 
         boolean isPdf  = mimeType.contains("pdf");
         boolean isPptx = mimeType.contains("presentation");
-        // v2.8.3 — DOCX needs its own path because Gemini's Files API
-        // rejects "application/vnd.openxmlformats-...wordprocessingml.document"
-        // (HTTP 400 Unsupported MIME type). We extract the text on-device
-        // first, then send PLAIN TEXT to Gemini, then render the JSON
-        // response into a fresh DOCX. Translation works end-to-end.
         boolean isDocx = mimeType.contains("wordprocessingml")
                 || mimeType.equals("application/msword");
 
         if (progress != null) progress.onProgress(0, 0, "preparing");
 
         if (isPptx) {
+            if (isResumeAtStart) {
+                throw new Exception(
+                        "Resume is not supported for PowerPoint files. "
+                                + "Start a new conversion from the file picker.");
+            }
             return directConvertPptx(ctx, sourceUri, key, model, mode, language, outFile, progress);
         }
         if (isDocx) {
+            if (isResumeAtStart) {
+                throw new Exception(
+                        "Resume is not supported for Word files. "
+                                + "Start a new conversion from the file picker.");
+            }
             return directConvertDocx(ctx, sourceUri, key, model, mode, language, outFile, progress);
         }
         if (!isPdf) {
@@ -545,8 +573,17 @@ public final class AiClient {
                         if (!summary.isEmpty()) doc.paragraph(summary);
                         wroteHeader[0] = true;
                     }
+                    // v3.1.1 — drop sections whose page_marker / context
+                    // falls OUTSIDE this chunk's requested range. Gemini
+                    // occasionally echoes content from earlier pages in a
+                    // later batch's response (the "page 3 reappears at
+                    // pages 17-20" bug the user reported). Sections
+                    // without page hints are kept (we trust the model
+                    // when it doesn't volunteer a contradicting marker).
                     JSONArray sections = chunk.parsed().optJSONArray("sections");
-                    renderSectionsInto(doc, sections, fLanguage);
+                    JSONArray filtered = filterSectionsByPage(
+                            sections, chunk.startPage(), chunk.endPage());
+                    renderSectionsInto(doc, filtered, fLanguage);
                 },
                 (curPage, totalP, stage) -> {
                     if (progress != null) progress.onProgress(curPage, totalP, stage);
@@ -923,6 +960,76 @@ public final class AiClient {
         }
     }
 
+    /**
+     * v3.1.1 — drop sections that report a page number OUTSIDE the
+     * chunk's requested range. The model has been observed to echo
+     * earlier-page content in later chunks (e.g. page 3 sections
+     * reappearing in the batch covering pages 17–20), producing
+     * "the same paragraph appears 10 times every 20 pages" output.
+     *
+     * Algorithm
+     *   - If the chunk has NO page_markers, return the sections
+     *     unchanged. We trust the model when it doesn't volunteer
+     *     a contradicting marker.
+     *   - Otherwise, walk the sections in order tracking the
+     *     "current page" from the most recent page_marker.label or
+     *     section.context. Drop anything whose tracked page falls
+     *     outside [startPage, endPage].
+     */
+    private static JSONArray filterSectionsByPage(JSONArray sections,
+                                                   int startPage, int endPage) {
+        if (sections == null || sections.length() == 0) return new JSONArray();
+        boolean hasMarkers = false;
+        for (int i = 0; i < sections.length(); i++) {
+            JSONObject sec = sections.optJSONObject(i);
+            if (sec != null && "page_marker".equals(sec.optString("type"))) {
+                hasMarkers = true;
+                break;
+            }
+        }
+        if (!hasMarkers) return sections;
+
+        JSONArray out = new JSONArray();
+        int currentPage = startPage;
+        for (int i = 0; i < sections.length(); i++) {
+            JSONObject sec = sections.optJSONObject(i);
+            if (sec == null) continue;
+            String type = sec.optString("type", "");
+
+            if ("page_marker".equals(type)) {
+                int n = extractFirstInt(sec.optString("label", ""));
+                if (n > 0) currentPage = n;
+                if (currentPage >= startPage && currentPage <= endPage) {
+                    out.put(sec);
+                }
+                continue;
+            }
+
+            // Image and table sections often carry a "context" string
+            // like "Page 5" — honour it for tracking purposes.
+            String contextHint = sec.optString("context", "");
+            if (!contextHint.isEmpty()) {
+                int n = extractFirstInt(contextHint);
+                if (n > 0) currentPage = n;
+            }
+
+            if (currentPage >= startPage && currentPage <= endPage) {
+                out.put(sec);
+            }
+        }
+        return out;
+    }
+
+    /** First decimal integer in {@code s}, or -1 if none. */
+    private static int extractFirstInt(String s) {
+        if (s == null) return -1;
+        java.util.regex.Matcher m =
+                java.util.regex.Pattern.compile("\\d+").matcher(s);
+        if (!m.find()) return -1;
+        try { return Integer.parseInt(m.group()); }
+        catch (NumberFormatException e) { return -1; }
+    }
+
     private static void renderDocxFromJson(JSONObject parsed, String language, File outFile) throws Exception {
         boolean arabic = language != null && language.toLowerCase().startsWith("ar");
         DocxBuilder doc = new DocxBuilder(arabic ? "ar" : "en");
@@ -1055,7 +1162,13 @@ public final class AiClient {
         p.append("- Process ONLY pages ").append(startPage).append(" to ").append(endPage)
                 .append(" of the attached PDF.\n");
         p.append("- Do NOT skip any page in that range. If a page is blank or empty, still emit a page_marker for it.\n");
-        p.append("- Do NOT include content from pages outside the requested range.\n");
+        p.append("- CRITICAL: NEVER include any content from pages outside the requested range.\n");
+        p.append("  • Do not echo paragraphs, headings, image descriptions, or tables you may have seen on pages ")
+                .append("1 to ").append(startPage - 1).append(" of this PDF, or on pages ").append(endPage + 1).append(" onward.\n");
+        p.append("  • Insert a page_marker {\"type\":\"page_marker\",\"label\":\"Page X\"} BEFORE the sections of every page X in [")
+                .append(startPage).append(",").append(endPage).append("] so range membership is unambiguous.\n");
+        p.append("  • If a paragraph spans across the boundary, only emit its portion that lies inside the range.\n");
+        p.append("  • Do not repeat the same paragraph more than once.\n");
         p.append("- Include the field \"end_page\" with the last page you actually processed.\n");
         if (!isFirstBatch) {
             p.append("- This is a continuation batch: do NOT repeat the document title or summary.\n");
@@ -1149,7 +1262,8 @@ public final class AiClient {
      * "remember" risks ignoring another. We keep the schema strict
      * (handled via responseSchema) and the rules short.
      */
-    static String liveWalkingPrompt(boolean arabic, String recentSummaries) {
+    static String liveWalkingPrompt(boolean arabic, String recentSummaries,
+                                     String locationContext) {
         StringBuilder p = new StringBuilder();
         p.append("You are guiding a BLIND PERSON walking forward.\n");
         p.append("The image is what the phone's back camera sees ");
@@ -1177,6 +1291,15 @@ public final class AiClient {
         p.append("(corridor, room type, lighting). Empty most frames.\n\n");
         p.append("DO NOT repeat content from these previous frames:\n");
         p.append(recentSummaries).append("\n\n");
+        if (locationContext != null && !locationContext.trim().isEmpty()) {
+            // v3.1.1 — GPS context. Helps the model disambiguate
+            // street signs, shop names, and landmarks against the
+            // right city/neighborhood. NOT a navigation aid in the
+            // turn-by-turn sense — just background world knowledge.
+            p.append("Approximate user location (use ONLY to better recognise ");
+            p.append("signs, landmarks, or neighbourhood-typical features in the image): ");
+            p.append(locationContext.trim()).append("\n\n");
+        }
         p.append("Respond ");
         p.append(arabic ? "in Arabic" : "in English");
         p.append(". Use natural walking-assistant tone. ");

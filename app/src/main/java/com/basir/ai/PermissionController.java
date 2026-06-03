@@ -68,6 +68,17 @@ public final class PermissionController {
                 REQ_CAMERA_PERM);
     }
 
+    /** v3.1.1 — lazy location prompt used by the live walking GPS
+     *  toggle. Asks for fine + coarse; either is enough for the
+     *  reverse-geocoded neighborhood hint we use. */
+    public void requestLocation() {
+        if (Build.VERSION.SDK_INT < 23) return;
+        activity.requestPermissions(new String[]{
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+        }, REQ_CAMERA_PERM + 1);  // same family of REQ codes
+    }
+
     public boolean hasMicrophone() {
         return checkSelf(Manifest.permission.RECORD_AUDIO);
     }
