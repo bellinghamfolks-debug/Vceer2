@@ -14,6 +14,12 @@
         android:maxSdkVersion="28" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- v3.2 — required on Android 14 (API 34) to keep the camera open
+         inside a foreground service while the screen is off / app is
+         backgrounded, which is exactly what the live walking session
+         does for a blind user with the phone in a chest pocket. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
@@ -58,5 +64,9 @@
             android:name=".ConversionService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+        <service
+            android:name=".LiveWalkingService"
+            android:exported="false"
+            android:foregroundServiceType="camera" />
     </application>
 </manifest>

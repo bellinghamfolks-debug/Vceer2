@@ -2,8 +2,11 @@ package com.basir.ai;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.ComponentName;
 import android.content.ContentValues;
+import android.content.Context;
 import android.content.Intent;
+import android.content.ServiceConnection;
 import android.content.SharedPreferences;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
@@ -19,6 +22,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.Handler;
+import android.os.IBinder;
 import android.os.Looper;
 import android.os.ParcelFileDescriptor;
 import android.os.StrictMode;
@@ -335,18 +339,22 @@ public class MainActivity extends Activity
     protected void onResume() {
         super.onResume();
         ConversionState.get().addListener(conversionListener);
+        // v3.2 — attach UI listener to the live walking service iff a
+        // session is still running. No-op when nothing is running.
+        rebindWalkingIfRunning();
     }
 
     @Override
     protected void onPause() {
         ConversionState.get().removeListener(conversionListener);
-        // v3.1 — release the camera the moment the user backgrounds the
-        // app so a forgotten live-walking session doesn't keep the
-        // camera held + Gemini API metering running.
-        if (liveWalking != null) {
-            liveWalking.stop();
-            liveWalking = null;
-        }
+        // v3.2 — DO NOT stop the live walking session on pause. The
+        // whole point of the foreground-service refactor was so a
+        // blind user can walk with the screen locked / app
+        // backgrounded. We only detach the UI listener; the service
+        // keeps its camera + notification + wake lock until the user
+        // explicitly stops it from the notification or from the
+        // walking screen.
+        unbindWalkingIfBound();
         super.onPause();
     }
 
@@ -2616,13 +2624,78 @@ public class MainActivity extends Activity
 
     // ─── v3.1 — Live walking mode ───────────────────────────────────
 
-    /** Lifecycle owner of the live walking session. Held across the
-     *  showLiveWalkingScreen lifetime; null when no session is
-     *  active. onPause / onDestroy stop it deterministically. */
-    private LiveWalkingController liveWalking;
+    /** v3.2 — live walking is now owned by a foreground Service so it
+     *  survives the Activity going away (screen lock, app
+     *  backgrounded). The Activity only holds a binder reference
+     *  while it's in the foreground; on pause we unbind, the service
+     *  keeps running, and on resume we rebind to repaint the UI. */
+    private LiveWalkingService walkingService;
+    private boolean walkingBound = false;
 
     private TextView liveWalkingStatusText;
     private TextView liveWalkingLastLineText;
+
+    private final ServiceConnection walkingConn = new ServiceConnection() {
+        @Override public void onServiceConnected(ComponentName name, IBinder binder) {
+            walkingService = ((LiveWalkingService.LocalBinder) binder).getService();
+            walkingBound = true;
+            walkingService.setListener(walkingListener);
+            // Repaint with the in-flight state so a freshly-bound
+            // Activity (post-rotation, post-resume) isn't blank.
+            String s = walkingService.getLastStatus();
+            String sp = walkingService.getLastSpoken();
+            String lvl = walkingService.getLastHazardLevel();
+            String desc = walkingService.getLastHazardDesc();
+            if (s != null && !s.isEmpty()) walkingListener.onStatusText(s);
+            if (sp != null && !sp.isEmpty() && liveWalkingLastLineText != null) {
+                liveWalkingLastLineText.setText(sp);
+            }
+            walkingListener.onHazard(lvl, desc);
+        }
+        @Override public void onServiceDisconnected(ComponentName name) {
+            walkingBound = false;
+            walkingService = null;
+        }
+    };
+
+    private final LiveWalkingController.Listener walkingListener =
+            new LiveWalkingController.Listener() {
+        @Override public void onStatusText(String text) {
+            if (liveWalkingStatusText != null) {
+                liveWalkingStatusText.setText(text);
+            }
+        }
+        @Override public void onSpoken(String text) {
+            if (text == null || text.trim().isEmpty()) return;
+            if (liveWalkingLastLineText != null) {
+                liveWalkingLastLineText.setText(text);
+            }
+            speak(text);
+            log("walking_live", text);
+        }
+        @Override public void onHazard(String level, String description) {
+            // Vibration fires inside the controller for low haptic
+            // latency; here we mirror the level into the UI label
+            // colour as a cue for sighted helpers nearby.
+            if (liveWalkingStatusText == null) return;
+            if ("stop".equalsIgnoreCase(level)) {
+                liveWalkingStatusText.setTextColor(0xFFD62828);  // red
+            } else if ("caution".equalsIgnoreCase(level)) {
+                liveWalkingStatusText.setTextColor(0xFFEE9B00);  // amber
+            } else {
+                liveWalkingStatusText.setTextColor(colorTextSec());
+            }
+        }
+        @Override public void onError(String message) {
+            if (liveWalkingStatusText != null) {
+                liveWalkingStatusText.setText(
+                        t("خطأ: ", "Error: ") + message);
+                liveWalkingStatusText.setTextColor(0xFFD62828);
+            }
+            speak(t("توقف البث المباشر بسبب خطأ.",
+                     "Live mode stopped due to an error."));
+        }
+    };
 
     private void showLiveWalkingScreen() {
         resetScreen(t("بث مباشر — إرشاد مكفوفين",
@@ -2690,7 +2763,7 @@ public class MainActivity extends Activity
     }
 
     private void startLiveWalking() {
-        if (liveWalking != null && liveWalking.isRunning()) {
+        if (walkingService != null && walkingService.isRunning()) {
             speak(t("البث المباشر يعمل بالفعل.",
                      "Live mode is already running."));
             return;
@@ -2701,57 +2774,55 @@ public class MainActivity extends Activity
         // permission; otherwise it's a silent no-op.
         boolean useGps = prefs.getBoolean("live_walking_use_gps", false)
                 && permissionController.hasFineOrCoarseLocation();
-        liveWalking = new LiveWalkingController(this, prefs, arabic, useGps,
-                new LiveWalkingController.Listener() {
-                    @Override public void onStatusText(String text) {
-                        if (liveWalkingStatusText != null) {
-                            liveWalkingStatusText.setText(text);
-                        }
-                    }
-                    @Override public void onSpoken(String text) {
-                        if (text == null || text.trim().isEmpty()) return;
-                        if (liveWalkingLastLineText != null) {
-                            liveWalkingLastLineText.setText(text);
-                        }
-                        speak(text);
-                        log("walking_live", text);
-                    }
-                    @Override public void onHazard(String level, String description) {
-                        // The vibration is fired inside the controller
-                        // to keep haptic latency low. Here we just
-                        // mirror it into the UI label colour as an
-                        // extra cue for sighted helpers nearby.
-                        if (liveWalkingStatusText == null) return;
-                        if ("stop".equalsIgnoreCase(level)) {
-                            liveWalkingStatusText.setTextColor(0xFFD62828);  // red
-                        } else if ("caution".equalsIgnoreCase(level)) {
-                            liveWalkingStatusText.setTextColor(0xFFEE9B00);  // amber
-                        } else {
-                            liveWalkingStatusText.setTextColor(colorTextSec());
-                        }
-                    }
-                    @Override public void onError(String message) {
-                        if (liveWalkingStatusText != null) {
-                            liveWalkingStatusText.setText(
-                                    t("خطأ: ", "Error: ") + message);
-                            liveWalkingStatusText.setTextColor(0xFFD62828);
-                        }
-                        speak(t("توقف البث المباشر بسبب خطأ.",
-                                 "Live mode stopped due to an error."));
-                    }
-                });
-        liveWalking.start();
+        Intent startSvc = LiveWalkingService.startIntent(this, arabic, useGps);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(startSvc);
+        } else {
+            startService(startSvc);
+        }
+        // Bind so the live UI label / spoken-line label can update
+        // while the Activity is visible. The session itself lives in
+        // the service and survives unbind.
+        bindService(new Intent(this, LiveWalkingService.class),
+                walkingConn, Context.BIND_AUTO_CREATE);
     }
 
     private void stopLiveWalking() {
-        if (liveWalking != null) {
-            liveWalking.stop();
-            liveWalking = null;
-        }
+        // Tell the service to stop the controller and self-terminate.
+        // We send a stop intent (rather than calling stopService) so
+        // the service can release the wake lock + camera before
+        // tearing down its notification.
+        startService(LiveWalkingService.stopIntent(this));
+        unbindWalkingIfBound();
+        walkingService = null;
         if (liveWalkingStatusText != null) {
             liveWalkingStatusText.setText(t("متوقف.", "Stopped."));
             liveWalkingStatusText.setTextColor(colorTextSec());
         }
+    }
+
+    private void unbindWalkingIfBound() {
+        if (!walkingBound) return;
+        try {
+            if (walkingService != null) walkingService.setListener(null);
+            unbindService(walkingConn);
+        } catch (Throwable ignore) {}
+        walkingBound = false;
+    }
+
+    /** Re-bind to a still-running walking service after the Activity
+     *  came back to the foreground, so the live UI labels update
+     *  again. Returns silently if the service isn't running. */
+    private void rebindWalkingIfRunning() {
+        if (walkingBound) return;
+        try {
+            // BIND_AUTO_CREATE would start the service if it isn't
+            // running; we want a pure attach. Using a plain bind
+            // returns false (no callback) when nothing is bindable,
+            // which is the right behaviour for "no active session".
+            bindService(new Intent(this, LiveWalkingService.class),
+                    walkingConn, 0);
+        } catch (Throwable ignore) {}
     }
 
     private void launchWalkingCapture() {

@@ -157,6 +157,15 @@ public final class LiveWalkingController {
     private String lastHazardLevel = "none";
     private long lastSceneSpokenAt = 0L;
 
+    /** v3.2 — rolling window of the last spoken path lines for the
+     *  Levenshtein-based repetition filter. We compare the incoming
+     *  path against each entry; if it's ≥75% similar to any of them
+     *  we suppress it. Capped to {@link #PATH_HISTORY_SIZE} so the
+     *  similarity check stays O(window × len). */
+    private final Deque<String> recentSpokenPaths = new ArrayDeque<>();
+    private static final int PATH_HISTORY_SIZE = 3;
+    private static final double PATH_SIMILARITY_THRESHOLD = 0.75;
+
     public LiveWalkingController(Context ctx,
                                   SharedPreferences prefs,
                                   boolean arabic,
@@ -241,6 +250,7 @@ public final class LiveWalkingController {
             }
         } finally {
             recentSummaries.clear();
+            recentSpokenPaths.clear();
             lastSpokenPath = "";
             lastHazardLevel = "none";
             lastSceneSpokenAt = 0L;
@@ -278,15 +288,41 @@ public final class LiveWalkingController {
     }
 
     private String pickBackCameraId() throws CameraAccessException {
+        // v3.2 — prefer the WIDEST back camera (smallest focal length).
+        // On foldables and recent Pixel / Samsung / Xiaomi the camera
+        // list typically exposes a "main" (~24-28mm equiv.) AND an
+        // "ultra-wide" (~13-16mm equiv.). For walking guidance we want
+        // the ultra-wide: the same step on the path occupies a larger
+        // share of the frame on a main camera, but the ultra-wide also
+        // shows the OBSTACLE TO THE LEFT or the CURB JUST OUT OF FRAME
+        // that a narrow lens crops out. Larger field of view = earlier
+        // warning of side-approaching hazards.
+        String widestId = null;
+        float widestFocal = Float.MAX_VALUE;
         for (String id : cameraMgr.getCameraIdList()) {
             CameraCharacteristics ch = cameraMgr.getCameraCharacteristics(id);
             Integer facing = ch.get(CameraCharacteristics.LENS_FACING);
-            if (facing != null && facing == CameraCharacteristics.LENS_FACING_BACK) {
-                return id;
+            if (facing == null || facing != CameraCharacteristics.LENS_FACING_BACK) {
+                continue;
+            }
+            float focal = Float.MAX_VALUE;
+            try {
+                float[] focals = ch.get(
+                        CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS);
+                if (focals != null && focals.length > 0) {
+                    focal = focals[0];
+                    for (float f : focals) if (f < focal) focal = f;
+                }
+            } catch (Throwable ignore) {}
+            if (focal < widestFocal) {
+                widestFocal = focal;
+                widestId = id;
             }
         }
-        // Fall back to whatever camera the device exposes (front-only
-        // tablets) so the feature degrades instead of failing outright.
+        if (widestId != null) return widestId;
+        // No camera advertised LENS_FACING_BACK — fall back to whatever
+        // the device exposes (front-only tablets) so the feature
+        // degrades instead of failing outright.
         String[] ids = cameraMgr.getCameraIdList();
         return ids.length > 0 ? ids[0] : null;
     }
@@ -352,6 +388,15 @@ public final class LiveWalkingController {
             CaptureRequest.Builder req = cameraDevice.createCaptureRequest(
                     CameraDevice.TEMPLATE_STILL_CAPTURE);
             req.addTarget(imageReader.getSurface());
+            // v3.2 — On Xiaomi (MIUI), Huawei (EMUI) and some older
+            // One UI builds, AE/AF mode settings are silently ignored
+            // unless CONTROL_MODE is explicitly set to AUTO. The
+            // symptom is dark or persistently-blurry JPEGs because
+            // the sensor stays in CONTROL_MODE_OFF and AE/AF never
+            // converge. TEMPLATE_STILL_CAPTURE on those OEMs starts
+            // in OFF; setting AUTO unblocks the AE/AF below.
+            req.set(CaptureRequest.CONTROL_MODE,
+                    CaptureRequest.CONTROL_MODE_AUTO);
             req.set(CaptureRequest.CONTROL_AF_MODE,
                     CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
             req.set(CaptureRequest.CONTROL_AE_MODE,
@@ -549,15 +594,28 @@ public final class LiveWalkingController {
         vibrateForLevel(level);
 
         // ── Priority-based speech ──
+        // CRITICAL: hazard lines (stop / caution) ALWAYS speak — they
+        // bypass the Levenshtein dedup below. A repeated warning about
+        // the same staircase is not "noise," it's the user still
+        // walking toward it.
         String toSpeak = null;
         boolean hazardActive = ("stop".equalsIgnoreCase(level)
                 || "caution".equalsIgnoreCase(level))
                 && !hazardDesc.isEmpty();
         if (hazardActive) {
             toSpeak = hazardDesc;
-        } else if (!path.isEmpty() && !path.equalsIgnoreCase(lastSpokenPath)) {
+        } else if (!path.isEmpty() && !path.equalsIgnoreCase(lastSpokenPath)
+                && !isNearDuplicatePath(path)) {
+            // v3.2 — Levenshtein-based dedup: Gemini sometimes emits a
+            // slight rephrasing of the same corridor description on the
+            // very next frame ("a clear path ahead" → "the path ahead
+            // is clear"). The exact-string check above only catches
+            // identical re-emissions; this similarity check catches
+            // close rephrasings so the user isn't hearing essentially
+            // the same line every 2 seconds.
             toSpeak = path;
             lastSpokenPath = path;
+            recordSpokenPath(path);
         } else if (!scene.isEmpty()
                 && System.currentTimeMillis() - lastSceneSpokenAt > SCENE_REPEAT_MS) {
             toSpeak = scene;
@@ -600,6 +658,87 @@ public final class LiveWalkingController {
                 v.vibrate(pattern, -1);
             }
         } catch (Throwable ignore) {}
+    }
+
+    // ───── Levenshtein-based path dedup (v3.2) ─────
+
+    /**
+     * Returns true when {@code candidate} is ≥
+     * {@link #PATH_SIMILARITY_THRESHOLD} similar to ANY entry in the
+     * {@link #recentSpokenPaths} window. Similarity is computed as
+     * {@code 1 - levenshtein/maxLen} after case-folding and
+     * whitespace normalisation, so trivial punctuation /
+     * capitalisation differences ("clear path ahead" vs "Clear path
+     * ahead.") don't escape the filter.
+     *
+     * Bounded cost: window is 3 lines × ≤ ~120 chars each, so the
+     * O(n × m) Levenshtein DP runs in well under a millisecond per
+     * call.
+     */
+    private boolean isNearDuplicatePath(String candidate) {
+        if (candidate == null || candidate.isEmpty()) return false;
+        String norm = normaliseForSimilarity(candidate);
+        if (norm.isEmpty()) return false;
+        synchronized (recentSpokenPaths) {
+            for (String past : recentSpokenPaths) {
+                String pn = normaliseForSimilarity(past);
+                if (pn.isEmpty()) continue;
+                int dist = levenshtein(norm, pn);
+                int maxLen = Math.max(norm.length(), pn.length());
+                double similarity = 1.0 - (double) dist / (double) maxLen;
+                if (similarity >= PATH_SIMILARITY_THRESHOLD) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private void recordSpokenPath(String path) {
+        synchronized (recentSpokenPaths) {
+            recentSpokenPaths.addLast(path);
+            while (recentSpokenPaths.size() > PATH_HISTORY_SIZE) {
+                recentSpokenPaths.removeFirst();
+            }
+        }
+    }
+
+    /** Strip leading / trailing whitespace, collapse runs of inner
+     *  whitespace to a single space, and lowercase — so the
+     *  similarity check measures content, not formatting. */
+    private static String normaliseForSimilarity(String s) {
+        if (s == null) return "";
+        return s.trim().toLowerCase(java.util.Locale.ROOT)
+                .replaceAll("\\s+", " ");
+    }
+
+    /** Classic dynamic-programming Levenshtein with a single-row
+     *  rolling buffer — O(n × m) time, O(min(n, m)) space. */
+    private static int levenshtein(String a, String b) {
+        if (a == null) a = "";
+        if (b == null) b = "";
+        if (a.equals(b)) return 0;
+        if (a.isEmpty()) return b.length();
+        if (b.isEmpty()) return a.length();
+        // Run the shorter string along the row to keep memory tiny.
+        if (a.length() > b.length()) { String t = a; a = b; b = t; }
+        int n = a.length();
+        int m = b.length();
+        int[] prev = new int[n + 1];
+        int[] curr = new int[n + 1];
+        for (int j = 0; j <= n; j++) prev[j] = j;
+        for (int i = 1; i <= m; i++) {
+            curr[0] = i;
+            char bi = b.charAt(i - 1);
+            for (int j = 1; j <= n; j++) {
+                int cost = a.charAt(j - 1) == bi ? 0 : 1;
+                curr[j] = Math.min(
+                        Math.min(curr[j - 1] + 1, prev[j] + 1),
+                        prev[j - 1] + cost);
+            }
+            int[] swap = prev; prev = curr; curr = swap;
+        }
+        return prev[n];
     }
 
     // ───── Helpers ─────
