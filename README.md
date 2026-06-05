@@ -1,116 +1,86 @@
-# Basir AI – بصير AI
+# Basir AI | بصير
 
-> عينك الذكية في كل مكان · Your smart eye, everywhere
+Basir is a bilingual accessibility assistant for blind and low-vision users. The Android app uses Google Gemini to help with images, documents, translation, questions, voice conversation, and selected mobility-support tasks.
 
-Basir AI is an Android assistant for blind and low-vision users. It uses
-Google Gemini for scene description, document reading, translation, and
-voice conversation, with the whole UI designed around TalkBack and
-high-contrast text.
+Current Android version: **3.2.0**  
+Minimum Android version: **Android 6 (API 23)**
 
-The app talks to Gemini in one of two modes — the user picks at first launch:
+## Android features
 
-1. **Direct mode** — the user pastes their own Gemini API key into Settings.
-   The key is stored locally on the device only and never leaves it except
-   to call `generativelanguage.googleapis.com`. No developer-side server.
-2. **Proxy mode** — the user points the app at an HTTPS proxy they (or their
-   organization) run, which holds the key server-side. Useful for managed
-   deployments where end-users shouldn't see the key.
+- Ask Basir with typed or dictated questions.
+- Continuous voice conversation.
+- Detailed image and scene description.
+- Focused image alt text.
+- Screenshot, currency, receipt, invoice, legal-text, medical-text, table, and math assistance.
+- One-shot walking description and Android live scene guidance.
+- PDF and PowerPoint conversion to a screen-reader-friendly Word document.
+- Follow-up questions about the latest converted document.
+- Text and document translation.
+- Local saved items for people, products, medications, and places.
+- Local results archive and optional activity history.
+- Help-message preparation with an approximate location when permission is granted. The user reviews and sends the message manually.
 
-## Features
+AI output can be wrong or delayed. Basir is not a navigation system, medical device, legal adviser, financial adviser, or emergency service.
 
-- 📷 **Scene description** — image → Gemini → alt text, obstacles, risks,
-  signs, faces, text-in-image
-- 📄 **Document conversion** — PDF, DOCX, PPTX, images of pages → a
-  navigable Word file with real headings, lists, tables, and image
-  descriptions. Uses Gemini Files API + batched generateContent so files
-  up to ~1000 pages work
-- 💬 **Ask Basir** — open-ended questions, screen-reader friendly answers
-- 🌐 **Smart translation** — contextual Arabic ↔ English with tone notes
-- 🚶 **Walking assistant** — short voice + vibration alerts. Not a cane
-  replacement
-- 🆘 **Emergency mode** — confirmation-gated SMS with approximate location
-  to a contact you chose in advance
-- 🧠 **Personal memory** — save people, products, places (local, on-device)
-- 🗂 **Archive + activity log** — everything stored on the device,
-  deletable from settings
-- ⚙️ **Settings** — language, TTS rate, font size, vibration, privacy mode,
-  auto-save, per-task quality (Fast · Balanced · Best mapped to Flash-Lite ·
-  Flash · Pro)
-- 🎤 **Voice commands** — navigate the app hands-free in Arabic or English
+## Connection modes
 
-## Accessibility (TalkBack)
+### Direct connection
 
-Basir is a tool for blind users, so its own accessibility is treated as
-mission-critical, not as a finishing touch. As of v2.2.4:
+The user enters a Gemini API key. Requests go from the device to Google Gemini over HTTPS. The key and selected content are not routed through a developer-owned server in this mode.
 
-- Every screen title is an accessibility heading with focus requested on
-  mount, so TalkBack lands on the title after navigation
-- Every home-tab card is an accessibility heading, enabling card-by-card
-  swipe navigation
-- Switches announce on/off state in Arabic and English
-- Segmented pickers (quality, output mode) announce "selected" on change
-- Vibration cues on image capture, conversion success, and conversion
-  failure for users who can't see visual feedback
-- All TTS / speech-recognition locales follow the UI language
-- All vibration is gated by the user's "Vibration" preference
+### Manually configured proxy
 
-## Privacy
+The user enters an HTTPS proxy URL and, optionally, an app token. Requests and files are sent to that proxy. Its operator can technically access data passing through it, and its own privacy, security, and retention rules apply.
 
-- `android:allowBackup="false"` — Google Drive auto-backup never copies
-  the Gemini API key, personal memory, or conversation log
-- `android:usesCleartextTraffic="false"` in release builds — the app
-  refuses to send the API key or document content over plaintext HTTP
-- No analytics, no ad SDKs, no advertising identifiers
-- No GPS unless the user explicitly taps "share my location" in Emergency
-- Files uploaded for the "Ask about document" feature use Gemini Files
-  API and are deleted by Google after 48 hours
+The `server` folder contains a sample proxy. Its temporary conversion uploads are deleted after processing, but this behavior must not be assumed for a different proxy.
 
-See `app/src/main/java/com/basir/ai/MainActivity.java#showPrivacyScreen`
-for the full Arabic/English privacy text shown inside the app.
+## Privacy posture
 
-## How to build
+- No developer account is required inside Basir.
+- No ads, advertising identifiers, or analytics SDKs are included in this project.
+- Android release traffic is HTTPS-only.
+- Android backup is disabled for app data.
+- Settings, saved items, archive entries, and activity history are primarily local.
+- Activity-history saving and automatic result saving are separate controls.
+- Files saved to Downloads remain until the user deletes them.
+- Content selected for an AI task is sent to Gemini directly or through the configured proxy.
+- Gemini Files API uploads are controlled by Google and are automatically deleted after 48 hours according to Google documentation.
 
-A GitHub Actions workflow at `.github/workflows/build-apk.yml` builds a
-debug APK on every push to `main`, `master`, `claude/**`, or
-`mokafeefah-**`. To get an APK:
+Full legal text is available in the app and in:
 
-1. Push to GitHub
-2. Open the **Actions** tab → **Build Basir AI APK** workflow
-3. Wait ~5 minutes
-4. Open the latest run → **Artifacts** → download `BasirAI-debug-apk`
-5. Install the APK on an Android 6+ device
+- `legal/TERMS_AR.md`
+- `legal/TERMS_EN.md`
+- `legal/PRIVACY_AR.md`
+- `legal/PRIVACY_EN.md`
 
-The workflow regenerates `gradle/wrapper/gradle-wrapper.jar` from a fresh
-Gradle 8.5 distribution before building, so the jar doesn't need to be
-checked in.
+## Accessibility
 
-## Stack
+The UI is designed for TalkBack and large text. Main screens use clear headings, consolidated focus targets, explicit switch states, spoken progress, and vibration cues controlled by the user’s settings. Critical actions are described by their real outcome, especially help messages and external data transfer.
 
-| Layer    | Technology                                           |
-|----------|------------------------------------------------------|
-| App      | Android native, Java 17, framework views only        |
-| Build    | AGP 8.2.2 · Gradle 8.5 · compileSdk 34 · minSdk 23   |
-| CI       | GitHub Actions (Ubuntu, Temurin JDK 17)              |
-| AI       | Google Gemini 2.5 (Flash-Lite · Flash · Pro)         |
-| Storage  | SQLite via the framework `SQLiteOpenHelper`          |
+## Build
 
-## Versioning
+The project uses Java 17, Android Gradle Plugin 8.2.2, and Gradle 8.5.
 
-| Version  | Highlights                                              |
-|----------|---------------------------------------------------------|
-| v2.2.5   | Stability and security pass: `allowBackup=false`, HTTPS-only release, leftover OCR strings removed, README rewritten, user-friendly error mapping |
-| v2.2.4   | Accessibility pass: TalkBack focus on screen change, segmented-picker "selected" announcements, haptic cues for image capture and conversion result |
-| v2.2.3   | Terms of Service and Privacy Policy rewritten to version 2 (26 + 24 sections) |
-| v2.2.2   | Back button moved from the bottom of every screen to the top |
-| v2.2.1   | Home redesigned with hero panel + bottom navigation     |
-| v2.2     | OCR-on-touch removed, real table rendering in DOCX, inline Terms/Privacy |
-| v2.0     | PDF batching via Files API, "Ask about document" follow-up Q&A |
+The uploaded source package does not include `gradle/wrapper/gradle-wrapper.jar`. The GitHub Actions workflow regenerates the wrapper JAR from Gradle 8.5 before building.
+
+To build through GitHub Actions:
+
+1. Push the project to GitHub.
+2. Open **Actions**.
+3. Run **Build Basir AI APK**.
+4. Download the generated APK artifact after the workflow completes.
+
+## iOS
+
+The `ios` folder contains a SwiftUI implementation with a different feature set. Read `ios/README.md` before building or presenting feature claims.
+
+## Legal and publishing note
+
+The included terms and privacy policy are a product draft based on the reviewed application behavior. They require final approval from qualified Saudi legal counsel before public release. Store declarations, public privacy-policy URLs, and platform AI policies must also be completed separately.
 
 ## Contact
 
-- 📧 ubdallahalrashdee@gmail.com
-- 👤 عبدالله الراشدي · Abdullah Al-Rashidi
+Abdullah Al-Rashidi  
+ubdallahalrashdee@gmail.com
 
-## License
-
-All rights reserved. Contact the developer for licensing inquiries.
+All rights reserved.

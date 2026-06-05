@@ -31,8 +31,8 @@ struct ArchiveView: View {
                            "No saved results yet."),
                     systemImage: "tray",
                     description: Text(L10n.t(
-                        "النتائج تُحفظ تلقائياً عند تفعيل الحفظ التلقائي في الإعدادات.",
-                        "Results auto-save when auto-save is enabled in Settings."
+                        "تظهر هنا النتائج التي تحفظها يدويًا، والنتائج الجديدة التي يحفظها التطبيق تلقائيًا عند تفعيل ذلك من الإعدادات.",
+                        "Results you save manually appear here, along with new results saved automatically when that option is enabled in Settings."
                     ))
                 )
             } else {

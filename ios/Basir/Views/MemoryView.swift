@@ -20,7 +20,7 @@ struct MemoryView: View {
         List {
             Section(L10n.t("الأشخاص", "People")) {
                 if store.people.isEmpty {
-                    Text(L10n.t("لا يوجد أشخاص محفوظين.",
+                    Text(L10n.t("لا يوجد أشخاص محفوظون حتى الآن.",
                                  "No people saved yet."))
                         .foregroundStyle(.secondary)
                 } else {
@@ -53,7 +53,7 @@ struct MemoryView: View {
             Section(L10n.t("المنتجات والأدوية",
                             "Products and medications")) {
                 if store.products.isEmpty {
-                    Text(L10n.t("لا توجد منتجات محفوظة.",
+                    Text(L10n.t("لا توجد منتجات محفوظة حتى الآن.",
                                  "No products saved yet."))
                         .foregroundStyle(.secondary)
                 } else {
@@ -84,7 +84,7 @@ struct MemoryView: View {
 
             Section(L10n.t("الأماكن", "Places")) {
                 if store.places.isEmpty {
-                    Text(L10n.t("لا توجد أماكن محفوظة.",
+                    Text(L10n.t("لا توجد أماكن محفوظة حتى الآن.",
                                  "No places saved yet."))
                         .foregroundStyle(.secondary)
                 } else {
@@ -112,7 +112,7 @@ struct MemoryView: View {
                 }
             }
         }
-        .navigationTitle(L10n.t("محفوظاتي", "My saved items"))
+        .navigationTitle(L10n.t("محفوظاتي الخاصة", "My saved items"))
         .sheet(item: $newSection) { kind in
             NewEntrySheetView(kind: kind, store: store)
         }

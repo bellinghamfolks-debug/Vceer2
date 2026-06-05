@@ -13,8 +13,8 @@ struct AskBasirView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                Text(L10n.t("اكتب سؤالك، أو استخدم الإملاء الصوتي.",
-                             "Type your question, or use voice dictation."))
+                Text(L10n.t("اكتب سؤالك أو استخدم الإملاء الصوتي. قد تخطئ الإجابة، لذلك تحقّق من المعلومات المهمة.",
+                             "Type your question or use voice dictation. The answer may be wrong, so verify important information."))
                     .font(.callout)
                     .foregroundStyle(.secondary)
 
@@ -108,7 +108,7 @@ struct AskBasirView: View {
             // Announce completion to VoiceOver. Equivalent to the Android
             // announceForAccessibility call.
             UIAccessibility.post(notification: .announcement,
-                                  argument: L10n.t("اكتمل التحليل.", "Analysis complete."))
+                                  argument: L10n.t("أصبحت الإجابة جاهزة.", "Answer ready."))
         } catch {
             errorMessage = UserFriendlyErrorMapper.map(error)
         }

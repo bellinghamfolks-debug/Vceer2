@@ -105,7 +105,7 @@ struct GeminiClient {
         req.httpMethod = "POST"
         req.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
         req.setValue("application/json", forHTTPHeaderField: "Accept")
-        req.setValue("Basir-iOS/0.1", forHTTPHeaderField: "User-Agent")
+        req.setValue("Basir-iOS/3.2.0", forHTTPHeaderField: "User-Agent")
         req.timeoutInterval = 120
 
         do {

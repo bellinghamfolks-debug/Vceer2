@@ -18,8 +18,8 @@ struct VisionView: View {
                             icon: "photo.fill",
                             title: L10n.t("وصف صورة أو مشهد", "Describe an image or scene"),
                             description: L10n.t(
-                                "التقط صورة أو اخترها من المعرض لتحصل على وصف دقيق ومنظم.",
-                                "Take a photo or pick one from the gallery for a detailed structured description."
+                                "التقط صورة أو اخترها من الجهاز للحصول على وصف منظم لما يظهر فيها، مع قراءة النص الظاهر عند الإمكان.",
+                                "Take or choose an image to receive a structured description of what is visible, including readable text when possible."
                             )
                         )
                     }
@@ -32,8 +32,8 @@ struct VisionView: View {
                             icon: "text.below.photo.fill",
                             title: L10n.t("إنشاء وصف بديل للصورة", "Generate image alt text"),
                             description: L10n.t(
-                                "وصف قصير ومنظم يصلح كوصف بديل للصورة.",
-                                "A short structured description suitable as image alt text."
+                                "أنشئ وصفًا بديلًا مركزًا يشرح الغرض والمحتوى المهم دون حشو أو تخمين.",
+                                "Create focused alt text that explains the purpose and important content without filler or guesswork."
                             )
                         )
                     }
@@ -46,8 +46,8 @@ struct VisionView: View {
                             icon: "rectangle.on.rectangle.angled",
                             title: L10n.t("قراءة لقطة شاشة", "Read a screenshot"),
                             description: L10n.t(
-                                "شرح عناصر الشاشة وتوضيح ما يظهر فيها واقتراح الخطوة التالية عند الحاجة.",
-                                "Explain screen elements, describe what appears, and suggest the next step when helpful."
+                                "اقرأ النص الظاهر وأسماء الأزرار والرسائل، واشرح الخطوة التالية اعتمادًا على ما يظهر فقط.",
+                                "Read visible text, button names, and messages, and explain the next step using only what is shown."
                             )
                         )
                     }
@@ -61,8 +61,8 @@ struct VisionView: View {
                             title: L10n.t("قراءة العملات والفواتير",
                                           "Read currency and receipts"),
                             description: L10n.t(
-                                "التقط صورة للعملة أو الفاتورة وسأقرأ الفئة أو الإجمالي بسرعة ووضوح.",
-                                "Take a photo of currency or a receipt and I will read the denomination or total quickly and clearly."
+                                "التقط صورة واضحة للعملة أو الفاتورة لقراءة الفئة أو الإجمالي. تحقّق من الرقم قبل الدفع أو التسليم.",
+                                "Take a clear photo of currency or a receipt to read the denomination or total. Verify the amount before paying or handing it over."
                             )
                         )
                     }
@@ -75,8 +75,8 @@ struct VisionView: View {
                             icon: "function",
                             title: L10n.t("تحليل ورقة رياضيات", "Analyze a math sheet"),
                             description: L10n.t(
-                                "صوّر معادلات أو سبورة أو صفحة كتاب — يستخرج بصير كل المعادلات بصيغة منطوقة قابلة للقراءة بقارئ الشاشة، مع الحفاظ على LaTeX للمراجعة.",
-                                "Photograph equations, a whiteboard, or a textbook page — Basir extracts every equation in spoken form for the screen reader, with LaTeX preserved for verification."
+                                "صوّر معادلات أو سبورة أو صفحة كتاب. يحاول بصير استخراج المعادلات بصيغة منطوقة مع LaTeX للمراجعة؛ قارِن الناتج بالصورة قبل اعتماده.",
+                                "Photograph equations, a whiteboard, or a textbook page. Basir attempts to extract spoken math with LaTeX for review; compare the result with the image before relying on it."
                             )
                         )
                     }
@@ -89,8 +89,8 @@ struct VisionView: View {
                             icon: "figure.walk",
                             title: L10n.t("وضع المشي", "Walking mode"),
                             description: L10n.t(
-                                "التقط ما أمامك بضغطة واحدة، واستمع إلى وصف موجز، ثم كرر للمشهد التالي.",
-                                "Capture what is ahead in one tap, hear a brief description, then repeat for the next scene."
+                                "التقط صورة واحدة لما أمامك واستمع إلى وصف موجز. هذه الميزة مساعدة وليست وسيلة تنقل مستقلة.",
+                                "Capture one image of what is ahead and hear a brief description. This is an aid, not an independent mobility tool."
                             )
                         )
                     }

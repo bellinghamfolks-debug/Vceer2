@@ -18,9 +18,9 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.1.0</string>
+    <string>3.2.0</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>54</string>
 
     <key>LSRequiresIPhoneOS</key>
     <true/>
@@ -44,22 +44,20 @@
          permission prompts can appear. Apple rejects apps that access
          these resources without giving the user a meaningful reason. -->
     <key>NSCameraUsageDescription</key>
-    <string>يستخدم بصير الكاميرا لالتقاط الصور التي تختار تحليلها أو وصفها (Basir uses the camera to capture photos you choose to analyse or describe).</string>
+    <string>يستخدم بصير الكاميرا عندما تختار التقاط صورة لوصفها أو تحليلها. قد تُرسل الصورة إلى Google Gemini لتنفيذ طلبك. (Basir uses the camera when you choose to capture an image for description or analysis. The image may be sent to Google Gemini to perform your request.)</string>
 
     <key>NSMicrophoneUsageDescription</key>
-    <string>يستخدم بصير الميكروفون للإملاء الصوتي والمحادثة الصوتية (Basir uses the microphone for voice dictation and continuous voice conversation).</string>
+    <string>يستخدم بصير الميكروفون فقط عند تشغيل الإملاء أو المحادثة الصوتية. (Basir uses the microphone only when you start dictation or voice conversation.)</string>
 
     <key>NSSpeechRecognitionUsageDescription</key>
-    <string>يستخدم بصير التعرّف الصوتي لتحويل كلامك إلى نص يصل لـ Gemini للمعالجة (Basir uses speech recognition to convert your spoken input into text sent to Gemini).</string>
+    <string>يحوّل بصير كلامك إلى نص عند استخدام الإملاء أو المحادثة، وقد يُرسل النص الناتج إلى Google Gemini لتنفيذ طلبك. (Basir converts speech to text during dictation or conversation, and the resulting text may be sent to Google Gemini to perform your request.)</string>
 
     <key>NSLocationWhenInUseUsageDescription</key>
-    <string>يستخدم بصير موقعك التقريبي في وضع الطوارئ فقط، عند ضغطك الصريح على "أرسل موقعي" (Basir uses your approximate location only in Emergency mode, when you explicitly tap "Send my location").</string>
+    <string>يستخدم بصير موقعًا تقريبيًا عندما تختار إعداد رسالة طلب مساعدة أو رسالة بالموقع. تظهر الرسالة لك قبل الإرسال. (Basir uses an approximate location when you choose to prepare a help or location message. You review the message before sending.)</string>
 
     <key>NSPhotoLibraryUsageDescription</key>
-    <string>يحتاج بصير الوصول للصور التي تختارها لتحليلها (Basir needs access to photos you select for analysis).</string>
+    <string>يصل بصير إلى الصور التي تختارها فقط لوصفها أو تحليلها، وقد تُرسل الصورة المحددة إلى Google Gemini. (Basir accesses only photos you select for description or analysis, and the selected image may be sent to Google Gemini.)</string>
 
-    <key>NSPhotoLibraryAddUsageDescription</key>
-    <string>يحتاج بصير لحفظ المستندات المُحوَّلة في مكتبة الصور إذا اخترت ذلك (Basir needs to save converted documents to your photo library if you choose to).</string>
 
     <key>NSAppTransportSecurity</key>
     <dict>

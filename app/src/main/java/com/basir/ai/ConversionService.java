@@ -71,8 +71,8 @@ public class ConversionService extends Service {
 
         arabic = !"en".equalsIgnoreCase(intent.getStringExtra(EXTRA_LANGUAGE));
         startForeground(NOTIF_ID, buildNotification(
-                arabic ? "جاري تحويل الملف" : "Converting file",
-                arabic ? "جاري تجهيز الملف..." : "Preparing file...",
+                arabic ? "جارٍ معالجة الملف" : "Processing document",
+                arabic ? "جارٍ تجهيز الملف..." : "Preparing file...",
                 0, 0, true));
 
         final boolean resume = intent.getBooleanExtra(EXTRA_RESUME, false);
@@ -184,25 +184,25 @@ public class ConversionService extends Service {
 
     private void updateNotification(boolean arabic, int current, int total,
                                     ConversionState.Stage stage) {
-        String title = arabic ? "جاري تحويل الملف" : "Converting file";
+        String title = arabic ? "جارٍ معالجة الملف" : "Processing document";
         String text;
         boolean indeterminate;
 
         switch (stage) {
             case PREPARING:
-                text = arabic ? "تحضير الملف..." : "Preparing file...";
+                text = arabic ? "جارٍ تجهيز الملف..." : "Preparing file...";
                 indeterminate = true;
                 break;
             case UPLOADING:
-                text = arabic ? "رفع الملف..." : "Uploading file...";
+                text = arabic ? "جارٍ رفع الملف إلى خدمة المعالجة..." : "Uploading file...";
                 indeterminate = true;
                 break;
             case FINALISING:
-                text = arabic ? "حفظ المستند..." : "Saving document...";
+                text = arabic ? "جارٍ إنشاء الملف الناتج..." : "Saving document...";
                 indeterminate = true;
                 break;
             case DONE:
-                text = arabic ? "اكتمل التحويل" : "Conversion complete";
+                text = arabic ? "اكتملت معالجة المستند" : "Document processing complete";
                 indeterminate = false;
                 break;
             case PROCESSING:
@@ -213,7 +213,7 @@ public class ConversionService extends Service {
                             : "Page " + current + " of " + total;
                     indeterminate = false;
                 } else {
-                    text = arabic ? "جاري المعالجة..." : "Processing...";
+                    text = arabic ? "جارٍ تنفيذ المعالجة..." : "Processing...";
                     indeterminate = true;
                 }
         }

@@ -25,8 +25,8 @@ struct WalkingModeView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text(L10n.t(
-                "اضغط لالتقاط ما أمامك. سأصف المشهد بإيجاز، ثم يمكنك التقاط المشهد التالي. هذا الوضع للمساعدة ولا يغني عن الانتباه للطريق أو أدوات التنقل.",
-                "Tap to capture what is ahead. I will describe the scene briefly, then you can capture the next one. This mode is assistive and does not replace attention to your surroundings or mobility tools."
+                "اضغط لالتقاط صورة واحدة لما أمامك. قد يتأخر الوصف أو يخطئ، فلا تستخدمه وحده لعبور الطرق أو السلالم أو تجنّب العوائق. استخدم أداة التنقل المناسبة.",
+                "Capture one image of what is ahead. The description may be delayed or wrong, so do not use it alone to cross roads or stairs or avoid obstacles. Use an appropriate mobility aid."
             ))
             .font(.callout)
             .foregroundStyle(.secondary)

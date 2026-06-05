@@ -1,6 +1,5 @@
 // SettingsView.swift
-// All preferences in one Form. iOS Form gives us the native iOS Settings
-// look for free, and VoiceOver navigates it cleanly without extra work.
+// Native, VoiceOver-friendly settings for Basir on iOS.
 
 import SwiftUI
 
@@ -24,9 +23,9 @@ struct SettingsView: View {
             }
 
             Section(L10n.t("الصوت والاهتزاز", "Voice and vibration")) {
-                Toggle(L10n.t("النطق الصوتي", "Speech output"),
+                Toggle(L10n.t("نطق النتائج والتنبيهات", "Speak results and alerts"),
                        isOn: $settings.speechEnabled)
-                Toggle(L10n.t("الاهتزاز", "Vibration"),
+                Toggle(L10n.t("الاهتزاز للتأكيد والتنبيه", "Vibration for confirmation and alerts"),
                        isOn: $settings.vibrationEnabled)
                 HStack {
                     Text(L10n.t("سرعة النطق", "Speech rate"))
@@ -37,54 +36,78 @@ struct SettingsView: View {
                 }
             }
 
-            Section(L10n.t("الخصوصية", "Privacy")) {
-                Toggle(L10n.t("وضع الخصوصية", "Privacy mode"),
+            Section {
+                Toggle(L10n.t("عدم حفظ سجل النشاط", "Don't save activity history"),
                        isOn: $settings.privacyMode)
-                Toggle(L10n.t("الحفظ التلقائي للنتائج", "Auto-save results"),
+                Toggle(L10n.t("حفظ نتائج التحليل تلقائيًا", "Automatically save analysis results"),
                        isOn: $settings.autoSaveResults)
+            } header: {
+                Text(L10n.t("الخصوصية والتخزين المحلي", "Privacy and local storage"))
+            } footer: {
+                Text(L10n.t(
+                    "الخيار الأول يمنع إضافة عمليات جديدة إلى سجل النشاط، ولا يحذف السجل السابق. الخيار الثاني يتحكم في إضافة النتائج الجديدة إلى المحفوظات المحلية. لا يمنع أي منهما إرسال المحتوى إلى Gemini عند تشغيل ميزة تعتمد عليه.",
+                    "The first option prevents new activity-log entries but does not delete existing history. The second controls whether new results are added to the local archive. Neither option prevents content from being sent to Gemini when you use an AI-powered feature."
+                ))
             }
 
-            Section(L10n.t("إعداد Gemini", "Gemini setup")) {
+            Section {
                 SecureField(L10n.t("مفتاح Gemini API", "Gemini API key"),
                             text: $apiKey)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .accessibilityLabel(L10n.t(
-                        "حقل مفتاح Gemini API. النص محمي.",
-                        "Gemini API key field. Text is hidden."
+                        "حقل مفتاح Gemini API. الأحرف مخفية.",
+                        "Gemini API key field. Characters are hidden."
                     ))
-                Button(L10n.t("حفظ المفتاح", "Save key")) {
-                    KeychainStore.setGeminiKey(apiKey)
+                Button(L10n.t("حفظ المفتاح على هذا الجهاز", "Save key on this device")) {
+                    KeychainStore.setGeminiKey(apiKey.trimmingCharacters(in: .whitespacesAndNewlines))
                     showSavedToast = true
                     apiKey = ""
                 }
-                .disabled(apiKey.trimmingCharacters(in: .whitespaces).isEmpty)
+                .disabled(apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
-                Picker(L10n.t("جودة المهام السريعة", "Quick tasks quality"),
+                Picker(L10n.t("جودة المهام السريعة", "Quick-task quality"),
                        selection: $settings.quickQuality) {
-                    Text(L10n.t("سريع · Flash Lite", "Fast · Flash Lite")).tag("fast")
+                    Text(L10n.t("أسرع · Flash Lite", "Fastest · Flash Lite")).tag("fast")
                     Text(L10n.t("متوازن · Flash", "Balanced · Flash")).tag("balanced")
-                    Text(L10n.t("الأدق · Pro", "Most accurate · Pro")).tag("best")
+                    Text(L10n.t("أعلى جودة · Pro", "Best quality · Pro")).tag("best")
                 }
-                Picker(L10n.t("جودة تحويل المستندات", "Document conversion quality"),
+                Picker(L10n.t("جودة معالجة المستندات", "Document-processing quality"),
                        selection: $settings.docQuality) {
-                    Text(L10n.t("سريع · Flash Lite", "Fast · Flash Lite")).tag("fast")
+                    Text(L10n.t("أسرع · Flash Lite", "Fastest · Flash Lite")).tag("fast")
                     Text(L10n.t("متوازن · Flash", "Balanced · Flash")).tag("balanced")
-                    Text(L10n.t("الأدق · Pro", "Most accurate · Pro")).tag("best")
+                    Text(L10n.t("أعلى جودة · Pro", "Best quality · Pro")).tag("best")
                 }
+            } header: {
+                Text(L10n.t("إعداد Google Gemini", "Google Gemini setup"))
+            } footer: {
+                Text(L10n.t(
+                    "يستخدم إصدار iOS الاتصال المباشر بـ Google Gemini. تشترط Google حاليًا أن يكون استخدام Gemini API لمن بلغ 18 عامًا ولأغراض مهنية أو تجارية مسموحة. وقد تستخدم محتوى الخدمات غير المدفوعة لتحسين منتجاتها ويجوز أن يراجعه أشخاص مخولون. لا ترسل معلومات شخصية أو سرية قبل مراجعة سياسة الخصوصية وشروط مشروعك.",
+                    "The iOS release connects directly to Google Gemini. Google currently requires Gemini API users to be 18 or older and to use the service for permitted professional or business purposes. Google may use content from unpaid services to improve its products, and authorized people may review it. Do not submit personal or confidential information before reviewing the Privacy Policy and your project terms."
+                ))
             }
 
-            Section(L10n.t("الطوارئ", "Emergency")) {
-                TextField(L10n.t("جهة الطوارئ (مثال: +9665XXXXXXXX)",
-                                  "Emergency contact (e.g. +9665XXXXXXXX)"),
+            Section {
+                TextField(L10n.t("رقم جهة المساعدة، مثال: +9665XXXXXXXX",
+                                  "Help contact number, e.g. +9665XXXXXXXX"),
                           text: $settings.emergencyContact)
                     .keyboardType(.phonePad)
+            } header: {
+                Text(L10n.t("جهة طلب المساعدة", "Help contact"))
+            } footer: {
+                Text(L10n.t(
+                    "لا يرسل بصير الرسالة تلقائيًا. يفتح تطبيق الرسائل لتراجع المستلم والنص ثم تضغط إرسال بنفسك.",
+                    "Basir does not send a message automatically. It opens the messaging app so you can review the recipient and text and then tap Send yourself."
+                ))
             }
         }
         .navigationTitle(L10n.t("الإعدادات", "Settings"))
         .toolbar(.hidden, for: .tabBar)
-        .alert(L10n.t("تم الحفظ", "Saved"), isPresented: $showSavedToast) {
-            Button(L10n.t("حسناً", "OK"), role: .cancel) {}
+        .alert(L10n.t("تم حفظ المفتاح", "Key saved"), isPresented: $showSavedToast) {
+            Button(L10n.t("حسنًا", "OK"), role: .cancel) {}
+        } message: {
+            Text(L10n.t("حُفظ المفتاح في iOS Keychain على هذا الجهاز.",
+                        "The key was saved in the iOS Keychain on this device."))
         }
     }
 }

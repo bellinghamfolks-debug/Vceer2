@@ -209,8 +209,8 @@ public final class LiveWalkingService extends Service {
 
     private void startInForeground() {
         Notification n = buildNotification(
-                arabic ? "البث المباشر للمشي" : "Live walking mode",
-                arabic ? "جاري الفحص..."      : "Scanning...");
+                arabic ? "الوصف المباشر أثناء التنقل" : "Live scene guidance",
+                arabic ? "جارٍ تحليل المشهد..."      : "Analyzing the scene...");
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(NOTIF_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA);
         } else {
@@ -221,9 +221,9 @@ public final class LiveWalkingService extends Service {
     private void updateNotification(String status) {
         if (controller == null) return;
         Notification n = buildNotification(
-                arabic ? "البث المباشر للمشي" : "Live walking mode",
+                arabic ? "الوصف المباشر أثناء التنقل" : "Live scene guidance",
                 status == null || status.isEmpty()
-                        ? (arabic ? "جاري الفحص..." : "Scanning...")
+                        ? (arabic ? "جارٍ تحليل المشهد..." : "Analyzing the scene...")
                         : status);
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         if (nm != null) nm.notify(NOTIF_ID, n);
@@ -233,12 +233,12 @@ public final class LiveWalkingService extends Service {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         if (nm == null) return;
-        String label = isDeviceArabic() ? "البث المباشر للمشي" : "Live walking mode";
+        String label = isDeviceArabic() ? "الوصف المباشر أثناء التنقل" : "Live scene guidance";
         NotificationChannel ch = new NotificationChannel(
                 CHANNEL_ID, label, NotificationManager.IMPORTANCE_LOW);
         ch.setDescription(isDeviceArabic()
-                ? "إشعار دائم أثناء جلسة الإرشاد المباشر للمكفوفين."
-                : "Ongoing notification during a live blind-guidance session.");
+                ? "إشعار مستمر أثناء استخدام الكاميرا لتحليل المشهد. أوقف الجلسة عند انتهاء الحاجة."
+                : "Ongoing notification while the camera is used for scene analysis. Stop the session when finished.");
         ch.setShowBadge(false);
         nm.createNotificationChannel(ch);
     }

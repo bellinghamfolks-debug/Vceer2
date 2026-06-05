@@ -314,8 +314,8 @@ public class MainActivity extends Activity
         @Override public float   getTtsRate()       { return ttsRate; }
         @Override public void onTtsReady() {
             runOnUiThread(() -> speak(t(
-                    "مرحبًا بك في بصير الإصدار الثاني. أصبح بإمكانك الآن تحويل ملفات PDF كبيرة، وطرح أسئلة حول مستنداتك، وإجراء محادثة صوتية مستمرة، وقراءة العملات والفواتير، واستخدام وضع المشي للوصف الفوري.",
-                    "Welcome to Basir version 2. You can now convert large PDF files, ask questions about your documents, hold a continuous voice conversation, read currency and receipts, and use walking mode for instant scene descriptions.")));
+                    "مرحبًا بك في بصير. اختر المهمة التي تحتاجها، وراجع المعلومات المهمة قبل الاعتماد عليها.",
+                    "Welcome to Basir. Choose the task you need, and verify important information before relying on it.")));
         }
         @Override public void onUtteranceDoneOrError(String utteranceId) {
             // Engine callback thread — hop to UI before touching state or
@@ -913,12 +913,12 @@ public class MainActivity extends Activity
         String[] names = {
                 t("سريع", "Fast"),
                 t("متوازن", "Balanced"),
-                t("الأدق", "Most accurate")
+                t("أعلى جودة", "Best quality")
         };
         String[] subs = {
                 t("Flash Lite · الأسرع والأقل تكلفة، مناسب للمهام القصيرة.", "Flash Lite · Fastest and lowest cost. Best for short tasks."),
-                t("Flash · توازن جيد بين السرعة والدقة. الخيار الموصى به لمعظم الاستخدامات.", "Flash · A strong balance of speed and accuracy. Recommended for most uses."),
-                t("Pro · أعلى دقة، أبطأ نسبيًا، مناسب للمستندات المهمة أو المعقّدة.", "Pro · Highest accuracy, relatively slower. Best for important or complex documents.")
+                t("Flash · توازن جيد بين السرعة وجودة المخرجات، ومناسب لمعظم الاستخدامات.", "Flash · A strong balance of speed and output quality, suitable for most uses."),
+                t("Pro · عادةً أكثر تفصيلًا، وأبطأ نسبيًا، ومناسب للمستندات المهمة أو المعقّدة.", "Pro · Typically more detailed and relatively slower, suited to important or complex documents.")
         };
         addSegmentedPicker(ids, names, subs, selected, listener);
     }
@@ -1104,7 +1104,7 @@ public class MainActivity extends Activity
         hero.addView(appName);
 
         TextView tagline = new TextView(this);
-        tagline.setText(t("مساعدك الذكي لقراءة النصوص، ووصف الصور، وترجمة المستندات", "Your smart assistant for reading text, describing images, and translating documents"));
+        tagline.setText(t("مساعد وصول ذكي للصور والمستندات والترجمة والمحادثة", "An AI accessibility assistant for images, documents, translation, and conversation"));
         tagline.setTextSize(textSize(14));
         tagline.setTextColor(0xCCFFFFFF);
         tagline.setPadding(0, dp(4), 0, 0);
@@ -1215,12 +1215,12 @@ public class MainActivity extends Activity
 
         addRichCard("💬", null,
                 t("اسأل بصير", "Ask Basir"),
-                t("اكتب سؤالك أو أمليه صوتيًا لتحصل على إجابة واضحة ومنظمة.", "Type or dictate your question to get a clear, structured answer."),
+                t("اكتب سؤالك أو استخدم الإملاء الصوتي. راجع المعلومات المهمة قبل الاعتماد عليها.", "Type your question or use voice dictation. Verify important information before relying on it."),
                 v -> showAskScreen());
 
         addRichCard("🎙️", null,
                 t("محادثة صوتية مستمرة", "Continuous voice conversation"),
-                t("تحدث مع بصير بسلاسة، وسيستعد تلقائيًا للسؤال التالي.", "Talk with Basir smoothly, and it will get ready for the next question automatically."),
+                t("ابدأ محادثة صوتية متتابعة، واستمع إلى الإجابة قبل الانتقال تلقائيًا إلى السؤال التالي.", "Start a continuous voice conversation and hear each answer before the next question begins automatically."),
                 v -> showVoiceConversationScreen());
     }
 
@@ -1229,12 +1229,12 @@ public class MainActivity extends Activity
 
         addRichCard("📷", null,
                 t("وصف صورة أو مشهد", "Describe an image or scene"),
-                t("التقط صورة أو اخترها من المعرض لتحصل على وصف دقيق ومنظم.", "Take a photo or choose one from the gallery to get a detailed, structured description."),
+                t("التقط صورة أو اخترها من الجهاز للحصول على وصف منظم لما يظهر فيها، مع قراءة النصوص الظاهرة عند الإمكان.", "Take or choose an image to receive a structured description of what is visible, including readable text when possible."),
                 v -> showDescribeScreen());
 
         addRichCard("🚶", null,
                 t("وضع المشي", "Walking mode"),
-                t("التقط ما أمامك بضغطة واحدة، واستمع إلى وصف موجز، ثم كرر للمشهد التالي.", "Capture what is ahead in one tap, hear a brief description, then repeat for the next scene."),
+                t("التقط صورة واحدة لما أمامك واستمع إلى وصف موجز. هذه الميزة مساعدة وليست وسيلة تنقل مستقلة.", "Capture one image of what is ahead and hear a brief description. This is an aid, not an independent mobility tool."),
                 v -> showWalkingModeScreen());
 
         // v3.1 — live walking mode: continuous Camera2 capture every 2
@@ -1243,10 +1243,10 @@ public class MainActivity extends Activity
         // tap-to-capture for "I want a single check", live mode for "I'm
         // walking and want continuous guidance".
         addRichCard("🟢", null,
-                t("بث مباشر — إرشاد مكفوفين",
-                  "Live mode — blind guidance"),
-                t("بصير يفحص ما أمامك كل ثانيتين تلقائياً، يحذّر فوراً من الأخطار باهتزاز، ويتكلّم فقط عند تغيّر المشهد.",
-                  "Basir scans what is ahead every two seconds automatically, warns of hazards with vibration, and speaks only when the scene changes."),
+                t("الوصف المباشر أثناء التنقل",
+                  "Live scene guidance"),
+                t("يحلل بصير صورًا متتابعة للمشهد وينطق التغييرات المهمة. لا تعتمد عليه وحده لعبور الطرق أو تجنب الأخطار.",
+                  "Basir analyzes a sequence of scene images and announces important changes. Never rely on it alone to cross roads or avoid hazards."),
                 v -> showLiveWalkingScreen());
     }
 
@@ -1255,7 +1255,7 @@ public class MainActivity extends Activity
 
         addRichCard("📄", null,
                 t("قراءة وتحويل المستندات", "Read and convert documents"),
-                t("حوّل ملفات PDF وPowerPoint إلى Word منسّق، مع وصف الصور والجداول.", "Convert PDF and PowerPoint files into formatted Word documents with image and table descriptions."),
+                t("حوّل ملفات PDF وPowerPoint إلى Word منظم لقارئات الشاشة، مع معالجة النصوص والجداول ووصف الصور عند الإمكان.", "Convert PDF and PowerPoint files into screen-reader-friendly Word documents, preserving text and tables and describing images when possible."),
                 v -> showDocumentScreen());
 
         // Document Q&A entry shown only when a cached file is available.
@@ -1273,7 +1273,7 @@ public class MainActivity extends Activity
 
         addRichCard("🌐", null,
                 t("ترجمة وشرح", "Translate and explain"),
-                t("ترجم النصوص والملفات، وافهم المعنى والنبرة والسياق.", "Translate text and files, and understand meaning, tone, and context."),
+                t("ترجم النصوص أو المستندات، مع توضيح المعنى والنبرة والسياق عند طلبك.", "Translate text or documents, with explanations of meaning, tone, and context when requested."),
                 v -> showTranslateScreen());
     }
 
@@ -1282,25 +1282,25 @@ public class MainActivity extends Activity
 
         addRichCard("🆘", null,
                 t("الطوارئ والمساعدة", "Emergency and help"),
-                t("أرسل موقعك التقريبي أو اطلب المساعدة من جهة طوارئ محفوظة.", "Share your approximate location or request help from a saved emergency contact."),
+                t("جهّز رسالة طلب مساعدة لجهة محفوظة، مع موقع تقريبي عند السماح. ستراجع الرسالة وتؤكد إرسالها بنفسك.", "Prepare a help message for a saved contact, with approximate location when permitted. You review and send it yourself."),
                 v -> showEmergencyScreen());
 
         addSectionHeader(t("الأدوات", "Tools"));
 
         addRichCard("🛠", null,
                 t("أدوات متقدمة", "Advanced tools"),
-                t("وصف بديل، قراءة لقطات الشاشة، بطاقات مذاكرة، وصياغة ردود.", "Alt text, screenshot reading, study cards, and reply drafting."),
+                t("أنشئ وصفًا بديلًا، واقرأ لقطات الشاشة والجداول، وأنشئ بطاقات مذاكرة أو مسودة رد.", "Create alt text, read screenshots and tables, and generate study cards or a reply draft."),
                 v -> showAdvancedScreen());
 
         addRichCard("🧠", null,
                 t("محفوظاتي الخاصة", "My saved items"),
-                t("احفظ معلومات مهمة عن الأشخاص والمنتجات والأدوية والأماكن.", "Save important information about people, products, medications, and places."),
+                t("نظّم ملاحظات محلية عن الأشخاص والمنتجات والأدوية والأماكن للرجوع إليها لاحقًا.", "Organize local notes about people, products, medications, and places for later reference."),
                 v -> showMemoryScreen());
 
         addRichCard("📚", null,
                 t("المحفوظات", "Archive"),
-                t("نتائج التحليل المحفوظة محليًا على جهازك.",
-                  "Analysis results saved locally on your device."),
+                t("استعرض النتائج التي اخترت حفظها محليًا على هذا الجهاز.",
+                  "Review results you chose to save locally on this device."),
                 v -> showArchiveScreen());
 
         addSectionHeader(t("التطبيق", "App"));
@@ -1324,7 +1324,7 @@ public class MainActivity extends Activity
 
         addRichCard("🔒", null,
                 t("سياسة الخصوصية", "Privacy Policy"),
-                t("كيف نتعامل مع بياناتك، وما الذي يبقى محفوظًا على جهازك فقط.", "How we handle your data, and what stays saved only on your device."),
+                t("اعرف ما يُحفظ محليًا، وما يُرسل إلى Gemini أو إلى الخادم الوسيط الذي أعددته.", "Learn what is stored locally and what is sent to Gemini or your configured proxy server."),
                 v -> showPrivacyScreen());
 
         addOutlineButton(t("حالة التطبيق", "App status"), v -> showStatusScreen());
@@ -1343,7 +1343,7 @@ public class MainActivity extends Activity
                 v -> showMemoryScreen());
 
         addCard(t("أرشيف النتائج", "Results archive"),
-                t("نتائج التحليل المحفوظة محليًا على جهازك.", "Analysis results saved locally on your device."),
+                t("النتائج التي اخترت حفظها محليًا على هذا الجهاز.", "Results you chose to save locally on this device."),
                 v -> showArchiveScreen());
 
         addCard(t("آخر العمليات", "Recent activity"),
@@ -1371,13 +1371,13 @@ public class MainActivity extends Activity
                 t("ملخص واضح للإعدادات الحالية وحالة الاتصال.", "A clear summary of current settings and connection status."));
 
         addPlainText(t("اللغة:", "Language:") + (isEnglish() ? "English" : "العربية"));
-        addPlainText(t("وضع الخصوصية:", "Privacy mode:")
-                + (privacyMode ? t("مفعّل", "On") : t("غير مفعّل", "Off")));
+        addPlainText(t("حفظ سجل النشاط:", "Activity history saving:")
+                + (privacyMode ? t("متوقف", "Off") : t("مفعّل", "On")));
         addPlainText("Gemini: " + (AiClient.isConfigured(prefs)
                 ? t("متصل", "Connected") : t("يحتاج إلى إعداد", "Setup needed"))
                 + " · " + (AiClient.MODE_DIRECT.equals(AiClient.getMode(prefs))
                         ? t("اتصال مباشر", "Direct connection")
-                        : t("خادم بصير الوسيط", "Basir proxy server")));
+                        : t("خادم وسيط مُعدّ يدويًا", "Manually configured proxy server")));
         addPlainText(t("النطق الصوتي:", "Speech output:")
                 + (speechEnabled ? t("يعمل", "On") : t("متوقف", "Off")));
         addPlainText(t("الاهتزاز:", "Vibration:")
@@ -1402,7 +1402,7 @@ public class MainActivity extends Activity
 
     private void showAskScreen() {
         resetScreen(t("اسأل بصير", "Ask Basir"),
-                t("اكتب سؤالك، أو استخدم الإملاء الصوتي.", "Type your question, or use voice dictation."));
+                t("اكتب سؤالك أو استخدم الإملاء الصوتي. قد تخطئ الإجابة، لذلك تحقّق من المعلومات المهمة.", "Type your question or use voice dictation. The answer may be wrong, so verify important information."));
 
         EditText input = makeInput(t("اكتب سؤالك هنا", "Type your question here"), true);
         // v2.8.1 — if a text snippet was just shared into Basir from another
@@ -1436,7 +1436,7 @@ public class MainActivity extends Activity
                 t("اختر صورة من المعرض، أو التقط صورة جديدة، أو اكتب وصفًا للمشهد.", "Choose an image from the gallery, take a new photo, or type a scene description."));
 
         addCard(t("وصف تفصيلي للصورة", "Detailed image description"),
-                t("وصف واضح ومفصل، مناسب للمكفوفين وضعاف البصر.", "A clear, detailed description suitable for blind and low-vision users."),
+                t("وصف يبدأ بالخلاصة، ثم الأشخاص والأشياء وترتيبها والنص الظاهر والتفاصيل العملية.", "A description that starts with a summary, then covers people, objects, layout, visible text, and practical details."),
                 v -> pickImageForAi("image_describe",
                         t("وصف الصورة", "Image description"),
                         "Provide a detailed description suitable for a blind user. " +
@@ -1444,7 +1444,7 @@ public class MainActivity extends Activity
                         "Describe this image in detail."));
 
         addCard(t("إنشاء وصف بديل للصورة", "Generate image alt text"),
-                t("وصف قصير ومنظم يصلح كوصف بديل للصورة.", "A short, structured description suitable as image alt text."),
+                t("أنشئ وصفًا بديلًا مركزًا يشرح الغرض والمحتوى المهم دون حشو أو تخمين.", "Create focused alt text that explains the purpose and important content without filler or guesswork."),
                 v -> pickImageForAi("alt_text",
                         t("الوصف البديل", "Alt text"),
                         "Write precise alt text for a blind user: objects, spatial relationships, " +
@@ -1452,7 +1452,7 @@ public class MainActivity extends Activity
                         "Write detailed alt text for this image."));
 
         addCard(t("قراءة لقطة شاشة", "Read a screenshot"),
-                t("شرح عناصر الشاشة، وتوضيح ما يظهر فيها، واقتراح الخطوة التالية عند الحاجة.", "Explain screen elements, describe what appears, and suggest the next step when helpful."),
+                t("اقرأ النص الظاهر وأسماء الأزرار والرسائل، واشرح الخطوة التالية اعتمادًا على ما يظهر فقط.", "Read visible text, button names, and messages, and explain the next step using only what is shown."),
                 v -> pickImageForAi("screenshot",
                         t("قراءة لقطة الشاشة", "Screenshot reading"),
                         "Explain the screenshot for a screen-reader user: page, buttons, messages, errors, and the next useful step.",
@@ -1465,7 +1465,7 @@ public class MainActivity extends Activity
         // with the headline number/denomination so a TTS-only reading
         // still gets the critical info in the first second.
         addCard(t("قراءة العملات والفواتير", "Read currency and receipts"),
-                t("التقط صورة للعملة أو الفاتورة، وسأقرأ الفئة أو الإجمالي بسرعة ووضوح.", "Take a photo of the currency or receipt, and I will read the denomination or total quickly and clearly."),
+                t("التقط صورة واضحة للعملة أو الفاتورة لقراءة الفئة أو الإجمالي. تحقّق من الرقم قبل الدفع أو التسليم.", "Take a clear photo of currency or a receipt to read the denomination or total. Verify the amount before paying or handing it over."),
                 v -> pickImageForAi("currency_or_receipt",
                         t("قارئ العملات والفواتير", "Currency and receipt reader"),
                         "You are Basir, an assistant for blind and low-vision users. " +
@@ -1487,17 +1487,17 @@ public class MainActivity extends Activity
         // with a [LaTeX: ...] trailer for verifiability. The Pro model is
         // used by default because math accuracy matters more than speed.
         addCard(t("تحليل ورقة رياضيات", "Analyze a math sheet"),
-                t("التقط صورة لمعادلات أو سبورة أو صفحة كتاب رياضيات — يستخرج بصير كل المعادلات بصيغة منطوقة قابلة للقراءة بقارئ الشاشة، مع الحفاظ على LaTeX للمراجعة.",
-                  "Take a photo of equations, a whiteboard, or a math textbook page — Basir extracts every equation in spoken form for the screen reader, with the LaTeX preserved for verification."),
+                t("التقط صورة لمعادلات أو سبورة أو صفحة كتاب. يحاول بصير استخراج الصيغ بصيغة منطوقة مع LaTeX للمراجعة؛ قارِن الناتج بالصورة قبل اعتماده.",
+                  "Take a photo of equations, a whiteboard, or a textbook page. Basir attempts to extract spoken math with LaTeX for review; compare the result with the image before relying on it."),
                 v -> pickImageForAi("math_extract",
                         t("تحليل رياضيات", "Math analysis"),
                         AiClient.mathExtractionInstruction(isEnglish()),
                         "Extract every mathematical expression from this image with the format described."));
 
-        addOutlineButton(t("وصف نصي للمشهد", "Text description of a scene"),
+        addOutlineButton(t("تحويل وصف مكتوب إلى إرشادات", "Turn written scene details into guidance"),
                 v -> showTextTaskScreen("scene_text",
                         t("وصف المشهد", "Scene description"),
-                        t("اكتب ما حولك، وسأحوّله إلى توجيه عملي واضح.", "Describe your surroundings, and I will turn it into clear practical guidance."),
+                        t("اكتب ما تعرفه عن المكان للحصول على تلخيص للعوائق والاتجاهات والخطوة التالية، دون اعتباره وصفًا حيًا للمشهد.", "Write what you know about the place to get a summary of obstacles, directions, and a next step; this is not live scene recognition."),
                         "Turn the written scene into practical guidance: summary, obstacles, directions, risk level, next step."));
 
         addBackButton();
@@ -1509,7 +1509,7 @@ public class MainActivity extends Activity
 
     private void showDocumentScreen() {
         resetScreen(t("قراءة وتحليل المستندات", "Read and analyze documents"),
-                t("حلّل نصًا أو فاتورة أو عقدًا أو ورقة طبية، أو أرفق ملفًا لتحويله إلى Word منسّق.", "Analyze text, an invoice, a contract, or a medical note, or attach a file to convert it into a structured Word document."));
+                t("حلّل نصًا أو فاتورة أو عقدًا أو ورقة طبية، أو اختر ملفًا لتحويله. المخرجات مساعدة أولية وتحتاج إلى مراجعة عند وجود أثر مهم.", "Analyze text, an invoice, a contract, or a medical note, or choose a file to convert. Outputs are preliminary assistance and require review when consequences matter."));
 
         addCard(t("تحليل نص أو مستند", "Analyze text or document"),
                 t("اكتب النص أو الصقه، أو أرفق ملفًا من الخيار المخصص، لتحصل على تحليل واضح ومنظم.", "Type or paste text, or attach a file using the dedicated option, to get a clear, structured analysis."),
@@ -1535,9 +1535,9 @@ public class MainActivity extends Activity
         addCard(t("تحليل ورقة طبية", "Medical note analysis"),
                 t("شرح صحي للتوضيح فقط، دون تشخيص أو وصف علاج.", "A health explanation for clarification only, without diagnosis or treatment advice."),
                 v -> showTextTaskScreen("health",
-                        t("تحليل طبي آمن", "Safe medical analysis"),
+                        t("شرح ورقة طبية", "Explain a medical note"),
                         t("اكتب النص الطبي هنا، أو أرفق صورة أو ملفًا واضحًا.", "Type the medical text here, or attach a clear image or file."),
-                        "Safe analysis: medication names, dosage, warnings; advise consulting a doctor or pharmacist."));
+                        "Explain only what is stated: medication names, stated dosage, and warnings. Do not diagnose or prescribe. Recommend verification with a doctor or pharmacist."));
 
         addCard(t("تحويل إلى Word منسّق وسهل القراءة", "Convert to a structured, readable Word file"),
                 t("حوّل PDF أو PowerPoint إلى ملف Word منسّق، مع وصف الصور والجداول بما يناسب قارئات الشاشة.", "Convert PDF or PowerPoint into a structured Word file, with image and table descriptions suitable for screen readers."),
@@ -1785,7 +1785,7 @@ public class MainActivity extends Activity
 
     private void showAdvancedScreen() {
         resetScreen(t("أدوات متقدمة", "Advanced tools"),
-                t("أدوات إضافية تعمل عبر Gemini لمساعدتك في الدراسة والكتابة وتنظيم المعلومات.", "Additional tools powered by Gemini to help with studying, writing, and organizing information."));
+                t("أدوات تعتمد على Gemini للدراسة والكتابة وتنظيم المعلومات. راجع الناتج قبل نسخه أو إرساله.", "Gemini-powered tools for study, writing, and information organization. Review the output before copying or sending it."));
 
         addCard(t("إنشاء بطاقات مذاكرة", "Create study cards"),
                 t("حوّل النص إلى أسئلة وأجوبة منظمة للمراجعة.", "Turn text into organized questions and answers for review."),
@@ -1817,8 +1817,8 @@ public class MainActivity extends Activity
 
     private void showConvertScreen() {
         resetScreen(t("تحويل إلى Word", "Convert to Word"),
-                t("حوّل ملفات PDF و PowerPoint إلى مستند Word منظم ومتوافق مع قارئات الشاشة، يتضمن وصفًا تفصيليًا للصور والجداول.",
-                  "Convert PDF and PowerPoint files into a structured, screen-reader-friendly Word document with detailed image and table descriptions."));
+                t("حوّل ملفات PDF وPowerPoint إلى مستند Word منظم لقارئات الشاشة. يراجع الذكاء الاصطناعي البنية والجداول ويصف الصور عند الإمكان، وقد تحتاج النتيجة إلى مراجعة.",
+                  "Convert PDF and PowerPoint files into a screen-reader-friendly Word document. AI preserves structure and tables and describes images when possible; the result may require review."));
 
         addInfoCard(t("الملفات المدعومة", "Supported formats"),
                 t("PDF · PPT · PPTX — حتى 200 ميجابايت.",
@@ -1871,10 +1871,10 @@ public class MainActivity extends Activity
     private void confirmAndPickFile() {
         boolean direct = AiClient.MODE_DIRECT.equals(AiClient.getMode(prefs));
         String message = direct
-                ? t("سيُرسَل هذا الملف مباشرة إلى Gemini التابع لـ Google عبر مفتاحك الشخصي. لا يحفظ بصير أي نسخة منه. هل تريد المتابعة؟",
-                    "This file will be sent directly to Google's Gemini API using your personal key. Basir does not keep any copy. Do you want to continue?")
-                : t("سيُرفع هذا الملف إلى خادم بصير لمعالجته وتحويله إلى Word، ثم تُحذف النسخة المرفوعة فور انتهاء العملية. هل تريد المتابعة؟",
-                    "This file will be uploaded to the Basir server for conversion, then deleted from the server as soon as the process completes. Do you want to continue?");
+                ? t("سيُرفع الملف إلى Google Gemini باستخدام مفتاحك. قد تحتفظ Google بالملف المرفوع عبر Files API لمدة تصل إلى 48 ساعة، وتختلف معالجة البيانات بين الخدمة المجانية والمدفوعة. لا ترسل ملفًا حساسًا قبل مراجعة سياسة الخصوصية وشروط حسابك. هل تريد المتابعة؟",
+                    "The file will be uploaded to Google Gemini using your key. Google may retain a file uploaded through the Files API for up to 48 hours, and data handling differs between unpaid and paid services. Do not submit a sensitive file before reviewing the Privacy Policy and your account terms. Continue?")
+                : t("سيُرسل الملف إلى الخادم الوسيط الذي أعددته، ثم قد يُرسل إلى Gemini. يستطيع مشغل الخادم الوصول إلى البيانات المارة خلاله، وتحدد سياسته مدة الاحتفاظ والأمان. هل تريد المتابعة؟",
+                    "The file will be sent to the proxy server you configured and may then be sent to Gemini. The proxy operator can access data passing through it, and its policy controls retention and security. Continue?");
         new AlertDialog.Builder(this)
                 .setTitle(t("تأكيد الخصوصية", "Privacy confirmation"))
                 .setMessage(message)
@@ -1902,9 +1902,9 @@ public class MainActivity extends Activity
             case AiClient.QUALITY_FAST:
                 return t("الجودة: سريع. الأسرع والأقل تكلفة، مناسب للمهام القصيرة.", "Quality: Fast. Fastest and lowest cost, suited for short tasks.");
             case AiClient.QUALITY_BEST:
-                return t("الجودة: الأدق. أعلى دقة، مناسب للمستندات المهمة أو المعقّدة.", "Quality: Most accurate. Highest accuracy, suited for important or complex documents.");
+                return t("الجودة: أعلى جودة. عادةً أكثر تفصيلًا، ومناسبة للمستندات المهمة أو المعقّدة.", "Quality: Best quality. Typically more detailed and suited to important or complex documents.");
             default:
-                return t("الجودة: متوازن. توازن جيد بين السرعة والدقة.", "Quality: Balanced. A strong balance between speed and accuracy.");
+                return t("الجودة: متوازن. توازن جيد بين السرعة وجودة المخرجات.", "Quality: Balanced. A strong balance between speed and output quality.");
         }
     }
 
@@ -2586,7 +2586,7 @@ public class MainActivity extends Activity
             return;
         }
         resetScreen(t("وضع المشي", "Walking mode"),
-                t("اضغط لالتقاط ما أمامك. سأصف المشهد بإيجاز، ثم يمكنك التقاط المشهد التالي. هذا الوضع للمساعدة ولا يغني عن الانتباه للطريق أو أدوات التنقل.", "Tap to capture what is ahead. I will describe the scene briefly, then you can capture the next scene. This mode is assistive and does not replace attention to your surroundings or mobility tools."));
+                t("اضغط لالتقاط صورة واحدة لما أمامك. قد يتأخر الوصف أو يخطئ، فلا تستخدمه وحده لعبور الطرق أو السلالم أو تجنّب العوائق. استخدم أداة التنقل المناسبة.", "Capture one image of what is ahead. The description may be delayed or wrong, so do not use it alone to cross roads or stairs or avoid obstacles. Use an appropriate mobility aid."));
 
         if (!lastWalkingDescription.isEmpty()) {
             addPlainText(t("آخر وصف:", "Last description:") + lastWalkingDescription);
@@ -2692,21 +2692,21 @@ public class MainActivity extends Activity
                         t("خطأ: ", "Error: ") + message);
                 liveWalkingStatusText.setTextColor(0xFFD62828);
             }
-            speak(t("توقف البث المباشر بسبب خطأ.",
-                     "Live mode stopped due to an error."));
+            speak(t("توقف الوصف المباشر بسبب خطأ.",
+                     "Live guidance stopped because of an error."));
         }
     };
 
     private void showLiveWalkingScreen() {
-        resetScreen(t("بث مباشر — إرشاد مكفوفين",
-                       "Live mode — blind guidance"),
-                t("اتجِه بالكاميرا للأمام عند المشي. أبدأ، وسأفحص ما أمامك تلقائياً كل ثانيتين، وأحذّر فوراً من أي خطر باهتزاز.",
-                  "Point the camera forward as you walk. Tap Start and I will scan ahead automatically every two seconds, warning of hazards immediately with vibration."));
+        resetScreen(t("الوصف المباشر أثناء التنقل",
+                       "Live scene guidance"),
+                t("وجّه الكاميرا نحو المشهد وابدأ التحليل الدوري. قد يتأخر الوصف أو يخطئ، فلا تعتمد عليه وحده في الحركة أو اكتشاف الأخطار.",
+                  "Point the camera toward the scene and start periodic analysis. Descriptions may be delayed or incorrect, so never rely on them alone for mobility or hazard detection."));
 
         if (!permissionController.hasCamera()) {
             addPlainText(t(
-                    "يجب السماح بإذن الكاميرا لاستخدام البث المباشر.",
-                    "Camera permission is required for live mode."));
+                    "يلزم إذن الكاميرا لبدء الوصف المباشر.",
+                    "Camera permission is required for live guidance."));
             addPrimaryButton(t("طلب إذن الكاميرا", "Grant camera permission"),
                     v -> permissionController.requestCamera());
             addBackButton();
@@ -2714,8 +2714,8 @@ public class MainActivity extends Activity
         }
 
         addPlainText(t(
-                "تنبيه: هذه أداة مساعدة، لا تُغني عن العصا أو الكلب المرشد. لا تستخدمها أثناء عبور الشارع وحدك.",
-                "Note: this is an aid, not a substitute for a cane or guide dog. Do not use it to cross streets unattended."));
+                "تنبيه سلامة: استخدم العصا البيضاء أو الكلب المرشد أو المرافق المناسب. لا تستخدم هذه الميزة وحدها لعبور الطرق أو السلالم أو الاقتراب من المركبات والآلات.",
+                "Safety notice: use a white cane, guide dog, or appropriate human guide. Do not use this feature alone to cross roads or stairs or approach vehicles or machinery."));
 
         // Live status indicators
         liveWalkingStatusText = new TextView(this);
@@ -2745,8 +2745,8 @@ public class MainActivity extends Activity
         // (helps the model recognise street signs and landmarks
         // against the right place). Permission is requested lazily
         // the moment the switch is flipped on for the first time.
-        addSwitchRow(t("استخدام الموقع لتحسين الإرشاد",
-                        "Use GPS to improve guidance"),
+        addSwitchRow(t("إضافة موقع تقريبي إلى سياق الوصف",
+                        "Add approximate location to scene context"),
                 prefs.getBoolean("live_walking_use_gps", false),
                 checked -> {
                     prefs.edit().putBoolean("live_walking_use_gps", checked).apply();
@@ -2755,7 +2755,7 @@ public class MainActivity extends Activity
                     }
                 });
 
-        addPrimaryButton(t("بدء البث المباشر", "Start live mode"),
+        addPrimaryButton(t("بدء الوصف المباشر", "Start live guidance"),
                 v -> startLiveWalking());
         addOutlineButton(t("إيقاف", "Stop"),
                 v -> stopLiveWalking());
@@ -2764,8 +2764,8 @@ public class MainActivity extends Activity
 
     private void startLiveWalking() {
         if (walkingService != null && walkingService.isRunning()) {
-            speak(t("البث المباشر يعمل بالفعل.",
-                     "Live mode is already running."));
+            speak(t("الوصف المباشر يعمل بالفعل.",
+                     "Live guidance is already running."));
             return;
         }
         boolean arabic = !isEnglish();
@@ -3054,18 +3054,18 @@ public class MainActivity extends Activity
 
     private void showEmergencyScreen() {
         resetScreen(t("الطوارئ والمساعدة", "Emergency and help"),
-                t("طلب مساعدة سريع مع خيار مشاركة موقعك التقريبي.", "Quick help request with optional approximate location sharing."));
+                t("جهّز رسالة طلب مساعدة، أو شارك موقعًا تقريبيًا عبر تطبيق تختاره. لن تُرسل رسالة طلب المساعدة حتى تراجعها وتؤكد الإرسال في تطبيق الرسائل.", "Prepare a help message, or share an approximate location through an app you choose. The help message is not sent until you review and confirm it in the messaging app."));
 
         String contact = prefs.getString("emergency_contact", "");
         addPlainText(contact.isEmpty()
-                ? t("لم تُحفظ جهة طوارئ بعد.", "No emergency contact has been saved yet.")
-                : t("جهة الطوارئ المحفوظة:", "Saved emergency contact:") + contact);
+                ? t("لم تُحفظ جهة مساعدة بعد. أضف رقمًا قبل إعداد الرسالة.", "No help contact is saved. Add a number before preparing a message.")
+                : t("جهة المساعدة المحفوظة: ", "Saved help contact: ") + contact);
 
-        addPrimaryButton(t("إرسال طلب مساعدة الآن", "Send help request now"),
+        addPrimaryButton(t("فتح رسالة طلب مساعدة", "Open a help message"),
                 v -> confirmAndSendEmergency());
-        addOutlineButton(t("مشاركة موقعي الحالي", "Share my current location"),
+        addOutlineButton(t("مشاركة موقعي التقريبي", "Share my approximate location"),
                 v -> shareLocation());
-        addOutlineButton(t("تشغيل صوت لتحديد موقعي", "Play a locator sound"), v -> {
+        addOutlineButton(t("تشغيل نداء صوتي ثلاث مرات", "Play a locator call three times"), v -> {
             log("locator", "play");
             // v2.2.4 — immediate haptic + TalkBack announcement BEFORE the
             // speech loop, so a blind user gets instant confirmation that the
@@ -3076,16 +3076,16 @@ public class MainActivity extends Activity
                     t("جارٍ تشغيل صوت تحديد الموقع.", "Locator sound is now playing."));
             for (int i = 0; i < 3; i++) speak(t("أنا هنا وأحتاج إلى مساعدة.", "I am here and need help."));
         });
-        addOutlineButton(t("إضافة أو تغيير جهة الطوارئ", "Add or change emergency contact"),
+        addOutlineButton(t("إضافة أو تغيير جهة المساعدة", "Add or change help contact"),
                 v -> showEmergencyContactDialog());
         addBackButton();
     }
 
     private void confirmAndSendEmergency() {
         new AlertDialog.Builder(this)
-                .setTitle(t("تأكيد إرسال طلب المساعدة", "Confirm help request"))
-                .setMessage(t("هل تريد إرسال رسالة طلب مساعدة إلى جهة الطوارئ المحفوظة؟", "Do you want to send a help request message to your saved emergency contact?"))
-                .setPositiveButton(t("إرسال الآن", "Send now"), (d, w) -> sendEmergencySms())
+                .setTitle(t("فتح رسالة طلب المساعدة", "Open help message"))
+                .setMessage(t("سيُفتح تطبيق الرسائل مع جهة الاتصال والنص والموقع التقريبي عند توفره. لن تُرسل الرسالة حتى تراجعها وتضغط زر الإرسال بنفسك.", "The messaging app will open with the contact, message, and approximate location when available. Nothing is sent until you review it and tap Send yourself."))
+                .setPositiveButton(t("فتح الرسالة", "Open message"), (d, w) -> sendEmergencySms())
                 .setNegativeButton(t("إلغاء", "Cancel"), null)
                 .show();
     }
@@ -3093,7 +3093,7 @@ public class MainActivity extends Activity
     private void sendEmergencySms() {
         String c = prefs.getString("emergency_contact", "").trim();
         if (c.isEmpty()) { showEmergencyContactDialog(); return; }
-        String msg = t("أحتاج إلى مساعدة. موقعي التقريبي:", "I need help. My approximate location:") + getLastKnownLocation();
+        String msg = t("أحتاج إلى مساعدة. هذا موقعي التقريبي: ", "I need help. This is my approximate location: ") + getLastKnownLocation();
         log("emergency_sms", msg);
         Intent i = new Intent(Intent.ACTION_SENDTO);
         i.setData(Uri.parse("smsto:" + c.replace(" ", "")));
@@ -3132,12 +3132,12 @@ public class MainActivity extends Activity
         input.setInputType(InputType.TYPE_CLASS_PHONE);
         input.setText(prefs.getString("emergency_contact", ""));
         new AlertDialog.Builder(this)
-                .setTitle(t("جهة الطوارئ", "Emergency contact"))
+                .setTitle(t("جهة طلب المساعدة", "Help contact"))
                 .setView(input)
                 .setPositiveButton(t("حفظ", "Save"), (d, w) -> {
                     prefs.edit().putString("emergency_contact",
                             input.getText().toString().trim()).apply();
-                    speak(t("تم الحفظ بنجاح.", "Saved."));
+                    speak(t("تم الحفظ.", "Saved."));
                     showEmergencyScreen();
                 })
                 .setNegativeButton(t("إلغاء", "Cancel"), null)
@@ -3150,25 +3150,25 @@ public class MainActivity extends Activity
 
     private void showMemoryScreen() {
         resetScreen(t("محفوظاتي", "My saved items"),
-                t("احفظ معلومات مهمة عن الأشخاص والمنتجات والأدوية والأماكن. تُخزَّن هذه البيانات محليًا على جهازك فقط.", "Save important information about people, products, medications, and places. This data is stored locally on your device only."));
+                t("أضف ملاحظات محلية عن الأشخاص والمنتجات والأدوية والأماكن. لا تُرسل هذه العناصر إلى Gemini إلا إذا نسخت محتواها بنفسك إلى طلب آخر.", "Add local notes about people, products, medications, and places. These items are not sent to Gemini unless you copy their content into another request."));
 
         addCard(t("إضافة شخص", "Add person"), null,
                 v -> showThreeFieldDialog(t("إضافة شخص", "Add person"),
                         t("الاسم", "Name"), t("العلاقة", "Relationship"), t("ملاحظات", "Notes"),
                         (a, b, c) -> { db.insertPerson(a, b, c);
-                            speak(t("تم الحفظ بنجاح.", "Saved.")); showMemoryScreen(); }));
+                            speak(t("تم الحفظ.", "Saved.")); showMemoryScreen(); }));
 
         addCard(t("إضافة منتج أو دواء", "Add a product or medication"), null,
                 v -> showThreeFieldDialog(t("إضافة منتج", "Add product"),
                         t("الاسم", "Name"), t("الباركود", "Barcode"), t("ملاحظات", "Notes"),
                         (a, b, c) -> { db.insertProduct(a, b, c);
-                            speak(t("تم الحفظ بنجاح.", "Saved.")); showMemoryScreen(); }));
+                            speak(t("تم الحفظ.", "Saved.")); showMemoryScreen(); }));
 
         addCard(t("إضافة مكان", "Add place"), null,
                 v -> showThreeFieldDialog(t("إضافة مكان", "Add place"),
                         t("الاسم", "Name"), t("الوصف", "Description"), t("ملاحظات الوصول", "Accessibility notes"),
                         (a, b, c) -> { db.insertPlace(a, b, c);
-                            speak(t("تم الحفظ بنجاح.", "Saved.")); showMemoryScreen(); }));
+                            speak(t("تم الحفظ.", "Saved.")); showMemoryScreen(); }));
 
         addCard(t("عرض المحفوظات", "Show saved items"), null, v -> {
             String summary = db.getMemorySummary(isEnglish());
@@ -3203,7 +3203,7 @@ public class MainActivity extends Activity
 
     private void showArchiveScreen() {
         resetScreen(t("أرشيف النتائج", "Results archive"),
-                t("نتائج التحليل المحفوظة محليًا على جهازك.", "Analysis results saved locally on your device."));
+                t("النتائج التي اخترت حفظها محليًا على هذا الجهاز.", "Results you chose to save locally on this device."));
         List<String> docs = db.getRecentDocuments(40);
         if (docs.isEmpty()) addPlainText(t("لا توجد نتائج محفوظة حتى الآن.", "No saved results yet."));
         else for (int i = 0; i < docs.size(); i++) addPlainText((i + 1) + ". " + docs.get(i));
@@ -3212,7 +3212,7 @@ public class MainActivity extends Activity
 
     private void showHistoryScreen() {
         resetScreen(t("آخر العمليات", "Recent activity"),
-                t("يحفظ السجل النصوص فقط، ولا يحفظ الصور أو الملفات.", "The log stores text only. It does not save images or files."));
+                t("يعرض سجل النشاط نصوص العمليات فقط ولا يحتفظ بنسخ من الصور أو الملفات. يمكنك منع إضافة سجلات جديدة من الإعدادات.", "Activity history contains text entries only and does not keep copies of images or files. You can stop new entries in Settings."));
         List<String> logs = db.getRecentLogs(40);
         if (logs.isEmpty()) addPlainText(t("لا توجد عمليات حتى الآن.", "No activity yet."));
         else for (int i = 0; i < logs.size(); i++) addPlainText((i + 1) + ". " + humanLog(logs.get(i)));
@@ -3278,11 +3278,11 @@ public class MainActivity extends Activity
         addPlainText(t("يتبع المظهر الداكن إعدادات النظام تلقائيًا.", "Dark appearance automatically follows your system settings."));
 
         addSection(t("الخصوصية", "Privacy"));
-        addSwitchRow(t("وضع الخصوصية", "Privacy mode"), privacyMode, checked -> {
+        addSwitchRow(t("عدم حفظ سجل النشاط", "Don't save activity history"), privacyMode, checked -> {
             privacyMode = checked;
             prefs.edit().putBoolean("privacy_mode", checked).apply();
         });
-        addSwitchRow(t("الحفظ التلقائي للنتائج", "Auto-save results"), autoSaveResults, checked -> {
+        addSwitchRow(t("حفظ نتائج التحليل تلقائيًا", "Automatically save analysis results"), autoSaveResults, checked -> {
             autoSaveResults = checked;
             prefs.edit().putBoolean("auto_save", checked).apply();
         });
@@ -3298,14 +3298,14 @@ public class MainActivity extends Activity
                     "Return one short sentence confirming the connection works.");
         });
 
-        addSection(t("الطوارئ", "Emergency"));
-        addOutlineButton(t("جهة الطوارئ", "Emergency contact"), v -> showEmergencyContactDialog());
+        addSection(t("طلب المساعدة", "Help request"));
+        addOutlineButton(t("جهة طلب المساعدة", "Help contact"), v -> showEmergencyContactDialog());
 
         addSection(t("بيانات الجهاز", "Device data"));
         addDangerButton(t("حذف بياناتي من هذا الجهاز", "Delete my data from this device"),
                 v -> new AlertDialog.Builder(this)
                         .setTitle(t("تأكيد الحذف", "Confirm deletion"))
-                        .setMessage(t("سيتم حذف السجل والمحفوظات من هذا الجهاز. لا يمكن التراجع عن هذه العملية.", "History and saved items will be deleted from this device. This action cannot be undone."))
+                        .setMessage(t("سيُحذف سجل النشاط والمحفوظات وقاعدة البيانات المحلية داخل التطبيق. لن تُحذف الملفات التي حفظتها في مجلد التنزيلات، ولن يؤدي ذلك إلى حذف بيانات سبق إرسالها إلى خدمة خارجية.", "Activity history, saved items, and the App's local database will be deleted. Files saved in Downloads and data already sent to an external service will not be deleted."))
                         .setPositiveButton(t("حذف", "Delete"), (d, w) -> {
                             db.clearAllData();
                             speak(t("تم حذف البيانات من هذا الجهاز.", "Data deleted from this device."));
@@ -3360,7 +3360,7 @@ public class MainActivity extends Activity
         scroll.addView(box);
 
         TextView info = new TextView(this);
-        info.setText(t("اختر طريقة اتصال بصير بـ Gemini، وحدد مستوى الجودة المناسب لكل نوع من المهام.", "Choose how Basir connects to Gemini and set the preferred quality level for each task type."));
+        info.setText(t("اختر الاتصال المباشر باستخدام مفتاحك أو خادمًا وسيطًا موثوقًا أعددته بنفسك، ثم حدد جودة النماذج. راجع سياسة الخصوصية قبل إرسال بيانات حساسة.", "Choose direct connection with your key or a trusted proxy you configured, then select model quality. Review the Privacy Policy before submitting sensitive data."));
         info.setTextSize(textSize(14));
         info.setTextColor(colorTextSec());
         info.setLineSpacing(dp(2), 1.1f);
@@ -3377,7 +3377,7 @@ public class MainActivity extends Activity
         modeSwitch.setTextSize(textSize(14));
         modeSwitch.setTextColor(colorText());
         modeSwitch.setChecked(directMode[0]);
-        modeSwitch.setContentDescription(t("زر تبديل وضع الاتصال. عند التفعيل، يتصل التطبيق مباشرة بـ Gemini باستخدام مفتاحك. عند التعطيل، يمر الاتصال عبر خادم بصير الوسيط.", "Connection mode toggle. When enabled, the app connects directly to Gemini using your key. When disabled, the connection goes through the Basir proxy server."));
+        modeSwitch.setContentDescription(t("تبديل نمط الاتصال. عند التفعيل يتصل التطبيق مباشرة بـ Gemini باستخدام مفتاحك. عند التعطيل يرسل الطلب إلى الخادم الوسيط الذي أدخلت عنوانه.", "Connection mode switch. When on, the App connects directly to Gemini using your key. When off, requests go to the proxy server address you entered."));
         box.addView(modeSwitch, fullWidth());
 
         // ----- Direct mode fields -----
@@ -3385,8 +3385,8 @@ public class MainActivity extends Activity
         directGroup.setOrientation(LinearLayout.VERTICAL);
 
         TextView directHelp = new TextView(this);
-        directHelp.setText(t("احصل على مفتاح API من Google AI Studio: aistudio.google.com",
-                             "Get an API key from Google AI Studio: aistudio.google.com"));
+        directHelp.setText(t("أدخل مفتاح مشروعك في Google AI Studio. تشترط Google حاليًا أن يكون استخدام Gemini API لمن بلغ 18 عامًا ولأغراض مهنية أو تجارية مسموحة. وقد تستخدم محتوى الخدمات غير المدفوعة لتحسين منتجاتها ويجوز أن يراجعه أشخاص مخولون؛ لا ترسل بيانات شخصية أو سرية قبل مراجعة الشروط.",
+                             "Enter your Google AI Studio project key. Google currently requires Gemini API users to be 18 or older and to use the service for permitted professional or business purposes. Google may use content from unpaid services to improve its products, and authorized people may review it; do not submit personal or confidential data before reviewing the terms."));
         directHelp.setTextSize(textSize(13));
         directHelp.setTextColor(colorTextSec());
         LinearLayout.LayoutParams dh = fullWidth(); dh.setMargins(0, dp(10), 0, 0);
@@ -3405,7 +3405,7 @@ public class MainActivity extends Activity
         proxyGroup.setOrientation(LinearLayout.VERTICAL);
 
         TextView proxyHelp = new TextView(this);
-        proxyHelp.setText(t("أدخل رابط خادم بصير الوسيط الذي يدير الاتصال بـ Gemini نيابة عنك.", "Enter the Basir proxy server URL that manages the connection to Gemini on your behalf."));
+        proxyHelp.setText(t("أدخل رابط HTTPS لخادم وسيط تثق بمشغله. يستطيع المشغل معالجة الطلبات والملفات المرسلة إليه، وتخضع البيانات لسياسته.", "Enter the HTTPS URL of a proxy whose operator you trust. The operator can process requests and files sent to it, and its own policy applies."));
         proxyHelp.setTextSize(textSize(13));
         proxyHelp.setTextColor(colorTextSec());
         LinearLayout.LayoutParams ph = fullWidth(); ph.setMargins(0, dp(10), 0, 0);
@@ -3466,7 +3466,7 @@ public class MainActivity extends Activity
             speak(isChecked
                     ? t("تم تفعيل الاتصال المباشر بـ Gemini.",
                         "Direct connection to Gemini is enabled.")
-                    : t("تم تفعيل الاتصال عبر خادم بصير الوسيط.", "Connection through the Basir proxy server is enabled."));
+                    : t("تم تفعيل الاتصال عبر الخادم الوسيط المُعدّ.", "Connection through the configured proxy server is enabled."));
         });
 
         new AlertDialog.Builder(this)
@@ -3490,7 +3490,7 @@ public class MainActivity extends Activity
                     }
                     e.apply();
                     speak(AiClient.isConfigured(prefs)
-                            ? t("تم الحفظ بنجاح.", "Saved.")
+                            ? t("تم الحفظ.", "Saved.")
                             : t("الإعداد غير مكتمل. تأكد من إدخال البيانات المطلوبة.", "Setup is incomplete. Check the required fields."));
                     showSettingsScreen();
                 })
@@ -3513,7 +3513,7 @@ public class MainActivity extends Activity
         String[] labels = {
                 t("سريع · Flash Lite", "Fast · Flash Lite"),
                 t("متوازن · Flash (موصى به)", "Balanced · Flash (recommended)"),
-                t("الأدق · Pro", "Most accurate · Pro")
+                t("أعلى جودة · Pro", "Best quality · Pro")
         };
         ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
                 android.R.layout.simple_spinner_dropdown_item, labels);
@@ -3579,7 +3579,7 @@ public class MainActivity extends Activity
         boolean canAttach = supportsFileAttachment(task);
         resetScreen(title, canAttach
                 ? t("اكتب النص أو الصقه، أو أرفق ملف PDF أو صورة للتحليل.", "Type or paste text, or attach a PDF or image for analysis.")
-                : t("اكتب النص أو الصقه، أو أرفق ملفًا، ثم اضغط تشغيل.", "Type or paste text, or attach a file, then tap Run."));
+                : t("اكتب النص أو الصقه، أو أرفق ملفًا، ثم اختر بدء المعالجة.", "Type or paste text, or attach a file, then choose Start processing."));
         if (!AiClient.isConfigured(prefs)) {
             addPlainText(t("يجب إعداد Gemini أولًا. افتح الإعدادات، ثم اختر إعداد Gemini.", "Gemini must be set up first. Open Settings, then choose Gemini setup."));
             addOutlineButton(t("فتح إعداد Gemini الآن", "Open Gemini setup now"), v -> showAiSettingsDialog());
@@ -3588,7 +3588,7 @@ public class MainActivity extends Activity
         }
         EditText input = makeInput(hint, true);
         root.addView(input, fullWidth());
-        addPrimaryButton(t("تشغيل", "Run"), v -> {
+        addPrimaryButton(t("بدء المعالجة", "Start processing"), v -> {
             String text = input.getText().toString().trim();
             if (text.isEmpty()) {
                 speak(canAttach
@@ -3812,10 +3812,10 @@ public class MainActivity extends Activity
         // user can't see the camera-app flash, so this is the only confirmation
         // that "your photo was captured and we're working on it now."
         if (vibrationEnabled) vibrate(60);
-        resetScreen(pendingTitle, t("جاري تحليل الصورة عبر Gemini...",
-                                    "Analyzing the image via Gemini..."));
+        resetScreen(pendingTitle, t("جارٍ تحليل الصورة عبر Gemini...",
+                                    "Analyzing the image with Gemini..."));
         addPlainText(t("قد تستغرق العملية بضع ثوانٍ.", "This may take a few seconds."));
-        speak(t("جاري التحليل...", "Analyzing..."));
+        speak(t("جارٍ التحليل...", "Analyzing..."));
 
         aiExecutor.execute(() -> {
             try {
@@ -3849,8 +3849,8 @@ public class MainActivity extends Activity
             speak(t("لم يتم إدخال أي نص.", "No text was entered.")); return;
         }
         if (!AiClient.isConfigured(prefs)) { showAiSettingsDialog(); return; }
-        resetScreen(title, t("جاري الاتصال بـ Gemini...", "Connecting to Gemini..."));
-        speak(t("جاري المعالجة...", "Processing..."));
+        resetScreen(title, t("جارٍ الاتصال بـ Gemini...", "Connecting to Gemini..."));
+        speak(t("جارٍ تنفيذ الطلب...", "Processing the request..."));
         aiExecutor.execute(() -> {
             try {
                 String answer = AiClient.ask(prefs, task, input, instruction, lang);
@@ -3888,7 +3888,7 @@ public class MainActivity extends Activity
 
     private void showResult(String title, String result, boolean saveable) {
         resetScreen(title, null);
-        speak(t("اكتمل التحليل.", "Analysis complete."));
+        speak(t("اكتملت المعالجة. راجع النتيجة قبل استخدامها.", "Processing is complete. Review the result before using it."));
 
         addPlainText(result);
 
@@ -4067,6 +4067,6 @@ public class MainActivity extends Activity
     }
 
     private void log(String type, String content) {
-        if (db != null) db.insertLog(type, content);
+        if (db != null && !privacyMode) db.insertLog(type, content);
     }
 }

@@ -11,7 +11,7 @@ enum DescribeImageMode {
 
     var title: String {
         switch self {
-        case .detailed:           return L10n.t("وصف صورة أو مشهد", "Describe an image")
+        case .detailed:           return L10n.t("وصف صورة أو مشهد", "Describe an image or scene")
         case .altText:            return L10n.t("الوصف البديل", "Alt text")
         case .screenshot:         return L10n.t("قراءة لقطة شاشة", "Screenshot reading")
         case .currencyOrReceipt:  return L10n.t("قارئ العملات والفواتير",
@@ -71,7 +71,7 @@ struct DescribeImageView: View {
                 if isLoading {
                     HStack {
                         ProgressView()
-                        Text(L10n.t("جارٍ التحليل عبر Gemini...",
+                        Text(L10n.t("جارٍ تحليل الصورة عبر Gemini...",
                                      "Analyzing via Gemini..."))
                     }
                 }

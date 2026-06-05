@@ -197,8 +197,8 @@ public final class LiveWalkingController {
         if (!hasCameraPermission()) {
             running.set(false);
             postError(arabic
-                    ? "إذن الكاميرا مطلوب لوضع البث المباشر."
-                    : "Camera permission is required for live mode.");
+                    ? "يلزم إذن الكاميرا للوصف المباشر."
+                    : "Camera permission is required for live guidance.");
             return;
         }
         if (!AiClient.isConfigured(prefs)) {
@@ -217,7 +217,7 @@ public final class LiveWalkingController {
         // sent without a location hint; from the second frame onward
         // (if GPS resolved) the hint is included.
         if (useGps) bgHandler.post(this::fetchLocationOnce);
-        postStatus(arabic ? "جاري فتح الكاميرا..." : "Opening camera...");
+        postStatus(arabic ? "جارٍ فتح الكاميرا..." : "Opening camera...");
         bgHandler.post(this::openCamera);
     }
 

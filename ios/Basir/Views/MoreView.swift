@@ -19,14 +19,14 @@ struct MoreView: View {
                             title: L10n.t("الطوارئ والمساعدة",
                                           "Emergency and help"),
                             description: L10n.t(
-                                "أرسل موقعك التقريبي أو اطلب المساعدة من جهة طوارئ محفوظة.",
-                                "Share your approximate location or request help from a saved emergency contact."
+                                "جهّز رسالة طلب مساعدة لجهة محفوظة، مع موقع تقريبي عند السماح. ستراجع الرسالة وتؤكد إرسالها بنفسك.",
+                                "Prepare a help message for a saved contact, with approximate location when permitted. You review and send it yourself."
                             )
                         )
                     }
                     .buttonStyle(.plain)
 
-                    SectionHeader(L10n.t("محفوظاتي", "My data"))
+                    SectionHeader(L10n.t("المحفوظات المحلية", "Local saved data"))
 
                     NavigationLink {
                         MemoryView()
@@ -36,8 +36,8 @@ struct MoreView: View {
                             title: L10n.t("محفوظاتي الخاصة",
                                           "My saved items"),
                             description: L10n.t(
-                                "احفظ معلومات مهمة عن الأشخاص والمنتجات والأدوية والأماكن.",
-                                "Save important information about people, products, medications, and places."
+                                "نظّم ملاحظات محلية عن الأشخاص والمنتجات والأدوية والأماكن للرجوع إليها لاحقًا.",
+                                "Organize local notes about people, products, medications, and places for later reference."
                             )
                         )
                     }
@@ -50,8 +50,8 @@ struct MoreView: View {
                             icon: "tray.full.fill",
                             title: L10n.t("أرشيف النتائج", "Results archive"),
                             description: L10n.t(
-                                "نتائج التحليل المحفوظة محلياً على جهازك.",
-                                "Analysis results saved locally on your device."
+                                "استعرض النتائج التي اخترت حفظها محليًا على هذا الجهاز.",
+                                "Review results you chose to save locally on this device."
                             )
                         )
                     }
@@ -66,8 +66,8 @@ struct MoreView: View {
                             icon: "gearshape.fill",
                             title: L10n.t("الإعدادات", "Settings"),
                             description: L10n.t(
-                                "اللغة، الصوت، المظهر، الخصوصية، إعداد Gemini.",
-                                "Language, voice, appearance, privacy, and Gemini setup."
+                                "اللغة، والصوت، والخصوصية، وإعداد Gemini، وجهة طلب المساعدة.",
+                                "Language, voice, privacy, Gemini setup, and the help contact."
                             )
                         )
                     }
@@ -110,8 +110,8 @@ struct MoreView: View {
                             icon: "hand.raised.fill",
                             title: L10n.t("سياسة الخصوصية", "Privacy Policy"),
                             description: L10n.t(
-                                "كيف نتعامل مع بياناتك، وما الذي يبقى محفوظًا على جهازك فقط.",
-                                "How we handle your data, and what stays only on your device."
+                                "اعرف ما يُحفظ محليًا وما يُرسل إلى Google Gemini.",
+                                "Learn what is stored locally and what is sent to Google Gemini."
                             )
                         )
                     }

@@ -1,63 +1,59 @@
-// DocumentsView.swift  (Documents tab)
-// PDF / DOCX / PPTX conversion and translation entry points.
-//
-// Note: in this scaffold the actual conversion pipeline is NOT
-// implemented (see README for why — iOS background-processing limits
-// require a different strategy than Android's foreground service). The
-// cards remain so the layout matches the Android version; tapping them
-// shows a friendly "coming soon" message.
+// DocumentsView.swift
+// iOS currently supports single-pass PDF and text-file processing.
 
 import SwiftUI
 
 struct DocumentsView: View {
-    @State private var showSoon = false
+    @State private var showUnavailable = false
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    SectionHeader(L10n.t("المستندات والتحويل",
-                                          "Documents and conversion"))
+                    SectionHeader(L10n.t("قراءة المستندات وترجمتها",
+                                          "Read and translate documents"))
                     NavigationLink {
                         DocumentConvertView()
                     } label: {
                         BasirCard(
                             icon: "doc.richtext.fill",
-                            title: L10n.t("قراءة وتحويل المستندات",
-                                          "Read and convert documents"),
+                            title: L10n.t("معالجة PDF أو ملف نصي",
+                                          "Process a PDF or text file"),
                             description: L10n.t(
-                                "حوّل ملفات PDF و PowerPoint و Word إلى نص منظم، مع وصف للصور والجداول.",
-                                "Convert PDF, PowerPoint, and Word files into structured text with image and table descriptions."
-                            )
-                        )
-                    }
-                    .buttonStyle(.plain)
-
-                    NavigationLink {
-                        VoiceConversationView()
-                    } label: {
-                        BasirCard(
-                            icon: "waveform.and.mic",
-                            title: L10n.t("محادثة صوتية مستمرة",
-                                          "Continuous voice conversation"),
-                            description: L10n.t(
-                                "تحدّث مع بصير بسلاسة — استمع للإجابة وسيستعدّ تلقائياً للسؤال التالي.",
-                                "Talk with Basir smoothly — listen to the answer and Basir gets ready for the next question."
+                                "استخرج النص من PDF حتى 60 صفحة أو افتح ملفًا نصيًا، ثم نظّمه أو ترجمه عبر Gemini. النتيجة نص قابل للنسخ والمشاركة وليست ملف Word.",
+                                "Extract text from a PDF of up to 60 pages or open a text file, then structure or translate it with Gemini. The result is shareable text, not a Word file."
                             )
                         )
                     }
                     .buttonStyle(.plain)
 
                     Button {
-                        showSoon = true
+                        showUnavailable = true
                     } label: {
                         BasirCard(
                             icon: "questionmark.bubble.fill",
-                            title: L10n.t("اسأل عن آخر مستند",
-                                          "Ask about the latest document"),
+                            title: L10n.t("اسأل عن مستند محفوظ",
+                                          "Ask about a saved document"),
                             description: L10n.t(
-                                "اطرح أي سؤال عن المستند الذي حوّلته للتو.",
-                                "Ask any question about the document you just converted."
+                                "هذه الميزة غير متاحة في إصدار iOS الحالي.",
+                                "This feature is not available in the current iOS release."
+                            )
+                        )
+                    }
+                    .buttonStyle(.plain)
+
+                    SectionHeader(L10n.t("أدوات مرتبطة", "Related tools"))
+
+                    NavigationLink {
+                        VoiceConversationView()
+                    } label: {
+                        BasirCard(
+                            icon: "waveform.and.mic",
+                            title: L10n.t("محادثة صوتية متتابعة",
+                                          "Continuous voice conversation"),
+                            description: L10n.t(
+                                "اسأل بصوتك واستمع إلى كل إجابة، ثم يبدأ الاستماع للسؤال التالي تلقائيًا.",
+                                "Ask by voice, hear each answer, and automatically begin listening for the next question."
                             )
                         )
                     }
@@ -68,10 +64,10 @@ struct DocumentsView: View {
                     } label: {
                         BasirCard(
                             icon: "globe",
-                            title: L10n.t("ترجمة وشرح", "Translate and explain"),
+                            title: L10n.t("ترجمة نص وشرح السياق", "Translate text and explain context"),
                             description: L10n.t(
-                                "ترجم النصوص والملفات، وافهم المعنى والنبرة والسياق.",
-                                "Translate text and files, and understand meaning, tone, and context."
+                                "ترجم نصًا بين اللغات المدعومة، مع توضيح النبرة والسياق عند الحاجة.",
+                                "Translate text across supported languages, with tone and context notes when useful."
                             )
                         )
                     }
@@ -80,12 +76,12 @@ struct DocumentsView: View {
                 .padding(20)
             }
             .navigationTitle(L10n.t("المستندات", "Documents"))
-            .alert(L10n.t("قيد التطوير", "In development"), isPresented: $showSoon) {
-                Button(L10n.t("حسناً", "OK"), role: .cancel) {}
+            .alert(L10n.t("الميزة غير متاحة", "Feature unavailable"), isPresented: $showUnavailable) {
+                Button(L10n.t("حسنًا", "OK"), role: .cancel) {}
             } message: {
                 Text(L10n.t(
-                    "تحويل المستندات على iOS يحتاج آلية معالجة خلفية مختلفة عن نظام أندرويد. سيُضاف في الإصدار التالي.",
-                    "Document conversion on iOS needs a different background-processing strategy than Android. It will arrive in the next release."
+                    "لا يدعم إصدار iOS الحالي الاحتفاظ بملف مرفوع لطرح أسئلة لاحقة عليه. استخدم معالجة المستند للحصول على نص، ثم انسخ المقطع المطلوب إلى شاشة اسأل بصير.",
+                    "The current iOS release does not keep an uploaded document for later questions. Process the document to obtain text, then copy the relevant passage into Ask Basir."
                 ))
             }
         }

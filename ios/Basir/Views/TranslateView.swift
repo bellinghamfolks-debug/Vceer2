@@ -24,8 +24,8 @@ struct TranslateView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 Text(L10n.t(
-                    "اختر اللغة المصدر واللغة الهدف، ثم اكتب النص أو الصقه.",
-                    "Choose the source and target languages, then type or paste text."
+                    "اختر اللغة المصدر واللغة الهدف، ثم اكتب النص أو الصقه. راجع الأسماء والأرقام والمصطلحات المتخصصة قبل استخدام الترجمة.",
+                    "Choose the source and target languages, then type or paste text. Check names, numbers, and specialized terms before using the translation."
                 ))
                 .font(.callout)
                 .foregroundStyle(.secondary)

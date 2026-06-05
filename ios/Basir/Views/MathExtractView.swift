@@ -20,8 +20,8 @@ struct MathExtractView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 Text(L10n.t(
-                    "صوّر معادلات أو سبورة أو صفحة كتاب، وسأستخرج كل معادلة بصيغة منطوقة + LaTeX.",
-                    "Photograph equations, a whiteboard, or a textbook page; I will extract every expression in spoken form plus LaTeX."
+                    "صوّر معادلات أو سبورة أو صفحة كتاب. سيحاول بصير استخراج الصيغ بصيغة منطوقة مع LaTeX للمراجعة.",
+                    "Photograph equations, a whiteboard, or a textbook page. Basir will attempt to extract spoken expressions with LaTeX for review."
                 ))
                 .font(.callout)
                 .foregroundStyle(.secondary)
@@ -93,8 +93,8 @@ struct MathExtractView: View {
         do {
             guard let data = try await item.loadTransferable(type: Data.self) else {
                 throw GeminiError.decode(L10n.t(
-                    "تعذر قراءة الصورة.",
-                    "Could not read image."
+                    "تعذّرت قراءة الصورة.",
+                    "Could not read the image."
                 ))
             }
             // Compress to ~1600px long edge + JPEG quality 85 — matches

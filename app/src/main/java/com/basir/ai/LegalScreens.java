@@ -4,19 +4,356 @@ import android.content.Intent;
 import android.net.Uri;
 
 /**
- * v2.6 — legal-information screens (Terms of Service, Privacy Policy,
- * About) extracted from MainActivity. These are pure presentation: no AI
- * calls, no DB calls, no voice / camera / files. They only call back into
- * the host for UI primitives.
- *
- * This is the first slice of the MainActivity decomposition. Subsequent
- * slices will extract task screens (talk, vision, documents), the
- * settings screen, and the result screen — each as its own class with
- * the same Host-callback shape used here.
+ * In-app legal and product-information screens.
+ * Text is embedded so it remains available offline and is identical in scope
+ * across the supported platforms.
  */
 public final class LegalScreens {
 
     private final BasirScreenHost host;
+
+    private static final String TERMS_AR = "تاريخ النفاذ: 5 يونيو 2026\n"
+            + "الإصدار القانوني: 3\n"
+            + "\n"
+            + "يرجى قراءة هذه الشروط بعناية قبل استخدام تطبيق بصير. باستخدام التطبيق أو أي ميزة تعتمد على الذكاء الاصطناعي، فإنك تقر بأنك قرأت هذه الشروط وسياسة الخصوصية وفهمتهما ووافقت عليهما. لا تستخدم التطبيق إذا لم توافق.\n"
+            + "\n"
+            + "1) التعريفات\n"
+            + "• «بصير» أو «التطبيق»: تطبيق مساعد للمكفوفين وضعاف البصر يتيح أدوات مثل وصف الصور والمشاهد، قراءة النصوص والمستندات، الترجمة، المحادثة، حفظ النتائج، ورسائل طلب المساعدة.\n"
+            + "• «المطوّر»: عبدالله الراشدي، بصفته ناشر التطبيق ومشغله ما لم يذكر خلاف ذلك.\n"
+            + "• «المستخدم»: أي شخص يثبت التطبيق أو يستخدمه.\n"
+            + "• «المحتوى»: النصوص والصور والملفات والأسئلة والمدخلات الصوتية بعد تحويلها إلى نص، وأي بيانات يختار المستخدم معالجتها.\n"
+            + "• «الخدمات الخارجية»: خدمات مستقلة يحتاج إليها بعض وظائف التطبيق، ومنها Google Gemini وخدمات نظام التشغيل وتطبيقات المشاركة أو الرسائل والخوادم الوسيطة التي يحددها المستخدم.\n"
+            + "\n"
+            + "2) قبول الشروط\n"
+            + "يصبح استخدامك للتطبيق خاضعًا لهذه الشروط من لحظة تشغيله أو استخدام إحدى ميزاته. إذا استخدمت التطبيق نيابة عن شخص أو جهة، فأنت تقر بأن لديك الصلاحية اللازمة للموافقة نيابة عنها.\n"
+            + "\n"
+            + "3) الأهلية العمرية\n"
+            + "ميزات الذكاء الاصطناعي في التطبيق مخصصة لمن بلغ 18 عامًا فأكثر. وتنص شروط Google Gemini API السارية حاليًا على أن الخدمة موجهة للمطورين الذين يبنون باستخدام النماذج لأغراض مهنية أو تجارية، وليست للاستخدام الاستهلاكي. لا تستخدم ميزات Gemini إلا ضمن غرض يسمح به حسابك وشروط Google، ولا يجوز توجيه التطبيق إلى قاصر أو تمكينه من استخدام تلك الميزات بصورة مستقلة.\n"
+            + "\n"
+            + "4) وصف الخدمة\n"
+            + "بصير أداة تقنية مساعدة تسعى إلى جعل المحتوى المرئي والرقمي أكثر قابلية للوصول. تختلف الميزات المتاحة باختلاف المنصة والإصدار والجهاز والأذونات ونمط الاتصال والخدمات الخارجية.\n"
+            + "\n"
+            + "5) طبيعة المخرجات وحدود الدقة\n"
+            + "مخرجات الذكاء الاصطناعي احتمالية وقد تكون غير صحيحة، ناقصة، قديمة، متحيزة، أو غير ملائمة للسياق. قد يخطئ التطبيق في قراءة نص، أو تحديد عملة أو دواء أو شخص أو عائق، أو وصف موقع أو مستند. يجب مراجعة الأصل والاستعانة بشخص مؤهل عند الحاجة.\n"
+            + "\n"
+            + "6) السلامة والتنقل\n"
+            + "وصف المشهد ووضع المشي المباشر أدوات مساندة وليسا نظام ملاحة أو وسيلة تنقل مستقلة. لا تعتمد على التطبيق وحده لعبور الطرق، استخدام السلالم أو المصاعد، الاقتراب من المركبات، التعامل مع النار أو الآلات، أو الحركة في مكان خطر أو مزدحم. استخدم العصا البيضاء أو الكلب المرشد أو المرافق البشري أو وسيلة السلامة المناسبة.\n"
+            + "\n"
+            + "7) الكاميرا في وضع المشي المباشر\n"
+            + "في Android قد يعمل وضع المشي المباشر كخدمة أمامية ويحلل صورًا متتابعة حتى توقفه، وقد يستمر عند انتقال التطبيق إلى الخلفية بحسب إعدادات الجهاز. يجب إيقافه عندما لا يكون مطلوبًا، وعدم توجيه الكاميرا إلى أشخاص أو أماكن خاصة دون حق أو موافقة.\n"
+            + "\n"
+            + "8) رسائل طلب المساعدة والطوارئ\n"
+            + "ميزة طلب المساعدة تُنشئ رسالة في تطبيق الرسائل أو المشاركة ولا تضمن إرسالها أو وصولها. يجب على المستخدم مراجعة المستلم والنص ثم تأكيد الإرسال بنفسه. لا تحل هذه الميزة محل الاتصال بأرقام الطوارئ الرسمية، وقد تتعطل بسبب الشبكة أو البطارية أو الأذونات أو الموقع أو تطبيق الرسائل.\n"
+            + "\n"
+            + "9) المجالات الطبية والقانونية والمالية\n"
+            + "أي محتوى طبي أو دوائي أو قانوني أو مالي أو ضريبي أو مهني هو للمساعدة العامة فقط، وليس تشخيصًا أو وصفة أو فتوى قانونية أو استشارة مهنية. لا تتخذ قرارًا مؤثرًا اعتمادًا على التطبيق وحده.\n"
+            + "\n"
+            + "10) أنماط الاتصال\n"
+            + "قد يتيح Android نمطين: اتصال مباشر بخدمة Gemini باستخدام مفتاح المستخدم، أو اتصال عبر خادم وسيط يحدده المستخدم أو الجهة التي وفرت له الإعدادات. إصدار iOS الحالي يستخدم الاتصال المباشر. يتحمل مشغل أي خادم وسيط مستقل مسؤولية ممارساته وأمنه ومدة احتفاظه.\n"
+            + "\n"
+            + "11) Google Gemini\n"
+            + "تعتمد ميزات الذكاء الاصطناعي على Google Gemini API. يخضع استخدام Gemini لشروط Google وسياساتها وحصة الحساب وفوترته وتوفر الخدمة. Google جهة مستقلة عن المطوّر، وقد تغير النماذج أو الحدود أو الأسعار أو ممارسات المعالجة.\n"
+            + "\n"
+            + "12) الحساب المجاني والمدفوع لدى Google\n"
+            + "قد تختلف طريقة استخدام Google للمدخلات والمخرجات باختلاف ما إذا كانت الخدمة أو المشروع غير مدفوع أو مدفوع. وفق شروط Gemini API، قد تستخدم Google المحتوى المرسل عبر الخدمات غير المدفوعة لتحسين منتجاتها، وقد يراجعه أشخاص مخولون؛ أما الخدمات المدفوعة فلا تستخدم المدخلات والمخرجات لتحسين المنتجات وفق الشروط المنشورة، مع بقاء معالجة محدودة للأمان والامتثال. لا ترسل معلومات حساسة قبل مراجعة إعدادات حسابك وشروط Google الحالية.\n"
+            + "\n"
+            + "13) مفتاح API والتكاليف\n"
+            + "إذا أدخلت مفتاح Gemini API، فأنت مسؤول عن حمايته، وصحة المشروع المرتبط به، وحدود الاستخدام، وأي رسوم أو ضرائب. لا تشارك المفتاح. ألغِه أو دوّره فورًا عند الاشتباه بتسربه. لا يضمن المطوّر بقاء أي حصة مجانية.\n"
+            + "\n"
+            + "14) محتوى المستخدم وحقوقه\n"
+            + "تحتفظ بحقوقك في المحتوى الذي تختاره. تمنح التطبيق والخدمات الخارجية اللازمة إذنًا محدودًا لمعالجة المحتوى بقدر ما يلزم لتنفيذ طلبك. أنت مسؤول عن امتلاك حق استخدام المحتوى وعن الحصول على موافقة الأشخاص الظاهرين فيه متى كانت مطلوبة.\n"
+            + "\n"
+            + "15) البيانات الحساسة وبيانات الغير\n"
+            + "لا ترسل رقم هوية، أو معلومات صحية أو مالية، أو أسرارًا تجارية، أو صورًا خاصة، أو بيانات قاصر أو طرف ثالث إلا عند الضرورة وبعد فهم مسار المعالجة والحصول على الصلاحية اللازمة. استخدم أقل قدر ممكن من البيانات واحذف أو اخفِ ما لا يلزم.\n"
+            + "\n"
+            + "16) الاستخدام المقبول والمحظور\n"
+            + "يُحظر استخدام التطبيق في نشاط غير مشروع، أو احتيال أو تزوير أو انتحال، أو انتهاك خصوصية أو ملكية فكرية، أو مراقبة أشخاص دون حق، أو إنشاء برمجيات ضارة، أو تجاوز أنظمة الحماية أو الحصص، أو اتخاذ قرار عالي الخطورة دون مراجعة بشرية مؤهلة.\n"
+            + "\n"
+            + "17) مخرجات الذكاء الاصطناعي وحقوق الملكية\n"
+            + "قد تكون المخرجات مشابهة لمخرجات يحصل عليها مستخدمون آخرون، ولا يضمن المطوّر تفردها أو قابليتها للحماية أو خلوها من حقوق الغير. تقع على المستخدم مسؤولية مراجعة المخرجات قبل نشرها أو استخدامها تجاريًا.\n"
+            + "\n"
+            + "18) ملكية التطبيق والترخيص\n"
+            + "يملك المطوّر أو المرخصون له حقوق التطبيق وعلامته وتصميمه ونصوصه وكوده، باستثناء مكونات الطرف الثالث الخاضعة لتراخيصها. يمنح المستخدم ترخيصًا شخصيًا محدودًا، غير حصري، غير قابل للنقل، وقابلًا للإلغاء لاستخدام التطبيق بصورة مشروعة.\n"
+            + "\n"
+            + "19) التخزين المحلي والملفات الناتجة\n"
+            + "قد يحفظ التطبيق الإعدادات، المحفوظات، السجل، بيانات الطوارئ، ونتائج أو بيانات وصفية محليًا بحسب اختيارات المستخدم والمنصة. الملفات التي ينزلها المستخدم إلى مجلد عام، مثل التنزيلات، تبقى حتى يحذفها يدويًا. يجب على المستخدم حماية جهازه ونسخه الاحتياطية.\n"
+            + "\n"
+            + "20) التوفر والتغييرات\n"
+            + "قد تتوقف بعض الميزات أو تتغير بسبب الصيانة أو الاتصال أو الجهاز أو المتجر أو تحديثات Google أو الخادم الوسيط. يجوز تعديل الميزات أو النماذج أو الحدود أو إيقافها دون ضمان استمرارها بالشكل نفسه.\n"
+            + "\n"
+            + "21) التحديثات\n"
+            + "قد تكون التحديثات ضرورية للأمان أو التوافق. استمرار استخدام التطبيق بعد نشر شروط محدثة يعني قبولها بالقدر الذي يسمح به النظام. عند وجود تغيير جوهري، يسعى المطوّر إلى إظهاره داخل التطبيق أو صفحة المتجر.\n"
+            + "\n"
+            + "22) إخلاء الضمان\n"
+            + "يُقدّم التطبيق «كما هو» و«بحسب التوفر». لا يقدم المطوّر ضمانًا صريحًا أو ضمنيًا بشأن خلوه من الأخطاء، أو استمراره، أو دقة المخرجات، أو ملاءمته لغرض محدد، وذلك بالقدر الذي يسمح به النظام.\n"
+            + "\n"
+            + "23) تحديد المسؤولية\n"
+            + "إلى الحد الذي يسمح به النظام، لا يكون المطوّر مسؤولًا عن ضرر نتج عن الاعتماد المنفرد على مخرج، أو استخدام غير آمن، أو فقد بيانات، أو رسوم API، أو عطل جهاز أو خدمة خارجية. لا يستبعد هذا البند مسؤولية لا يجوز نظامًا استبعادها أو تقييدها.\n"
+            + "\n"
+            + "24) تعليق الاستخدام وإنهاؤه\n"
+            + "يجوز تقييد ميزة أو إيقافها عند إساءة الاستخدام، أو وجود خطر أمني أو قانوني، أو توقف خدمة خارجية. يمكنك إنهاء استخدامك بحذف التطبيق وإلغاء مفتاح API وحذف الملفات المحلية والعامة التي أنشأتها.\n"
+            + "\n"
+            + "25) القانون الحاكم وأحكام عامة\n"
+            + "تخضع هذه الشروط لأنظمة المملكة العربية السعودية، وتختص الجهة القضائية المختصة بنظر النزاع، ما لم يوجب نظام آمر خلاف ذلك. إذا تعذر تنفيذ بند، يبقى باقي البنود نافذًا. عدم التمسك بحق في مرة لا يعد تنازلًا دائمًا عنه.\n"
+            + "\n"
+            + "26) اللغة والتواصل\n"
+            + "النسخة العربية هي المرجع داخل المملكة العربية السعودية، والإنجليزية ترجمة مساعدة. للاستفسارات أو الطلبات المتعلقة بهذه الشروط: ubdallahalrashdee@gmail.com.";
+    private static final String TERMS_EN = "Effective date: 5 June 2026\n"
+            + "Legal version: 3\n"
+            + "\n"
+            + "Please read these Terms carefully before using Basir. By using the app or any AI-powered feature, you acknowledge that you have read, understood, and agreed to these Terms and the Privacy Policy. Do not use the app if you do not agree.\n"
+            + "\n"
+            + "1) Definitions\n"
+            + "• “Basir” or the “App” means an assistive application for blind and low-vision users that offers features such as image and scene description, text and document reading, translation, conversation, saved results, and help-message preparation.\n"
+            + "• “Developer” means Abdullah Al-Rashidi as the publisher and operator of the App unless otherwise stated.\n"
+            + "• “User” means any person who installs or uses the App.\n"
+            + "• “Content” means text, images, files, questions, voice input after speech-to-text conversion, and any data the User chooses to process.\n"
+            + "• “External Services” means independent services required by some features, including Google Gemini, operating-system services, messaging or sharing apps, and proxy servers configured by the User.\n"
+            + "\n"
+            + "2) Acceptance\n"
+            + "Your use of the App is subject to these Terms from the moment you launch it or use a feature. If you use the App for another person or organization, you confirm that you have authority to accept these Terms on their behalf.\n"
+            + "\n"
+            + "3) Age Eligibility\n"
+            + "The App’s AI features are intended for users aged 18 or older. The current Google Gemini API terms also state that the service is for developers building with Google AI models for professional or business purposes, not consumer use. Use Gemini-powered features only for a purpose permitted by your account and Google’s terms, and do not direct the App to minors or make those features independently available to them.\n"
+            + "\n"
+            + "4) Service Description\n"
+            + "Basir is an assistive technology intended to make visual and digital content more accessible. Available features vary by platform, version, device, permissions, connection mode, and external services.\n"
+            + "\n"
+            + "5) Nature and Accuracy of Outputs\n"
+            + "AI outputs are probabilistic and may be incorrect, incomplete, outdated, biased, or unsuitable for the context. The App may misread text, identify a currency, medicine, person, obstacle, location, or document incorrectly. Review the original source and obtain qualified human assistance when needed.\n"
+            + "\n"
+            + "6) Safety and Mobility\n"
+            + "Scene description and live walking mode are supplementary tools, not navigation systems or independent mobility aids. Never rely on the App alone to cross roads, use stairs or elevators, approach vehicles, handle fire or machinery, or move through dangerous or crowded places. Use a white cane, guide dog, human guide, or other appropriate safety method.\n"
+            + "\n"
+            + "7) Camera Use in Live Walking Mode\n"
+            + "On Android, live walking mode may run as a foreground service and analyze a sequence of images until you stop it, and it may continue while the App is in the background depending on device settings. Stop it when it is not needed and do not point the camera at people or private places without a lawful basis or consent.\n"
+            + "\n"
+            + "8) Help Messages and Emergencies\n"
+            + "The help feature prepares a message in a messaging or sharing app. It does not guarantee that the message is sent or delivered. You must review the recipient and content and confirm sending yourself. It does not replace official emergency numbers and may fail because of network, battery, permission, location, or messaging-app limitations.\n"
+            + "\n"
+            + "9) Medical, Legal, and Financial Matters\n"
+            + "Medical, medication, legal, financial, tax, or professional content is general assistance only and is not a diagnosis, prescription, legal opinion, or professional advice. Do not make a material decision based solely on the App.\n"
+            + "\n"
+            + "10) Connection Modes\n"
+            + "Android may offer direct connection to Gemini using the User’s API key or connection through a proxy server configured by the User or the organization that supplied the settings. The current iOS release uses direct connection. An independent proxy operator is responsible for its own practices, security, and retention.\n"
+            + "\n"
+            + "11) Google Gemini\n"
+            + "AI features rely on the Google Gemini API. Gemini use is subject to Google’s terms, policies, account quota, billing, and service availability. Google is independent from the Developer and may change models, limits, prices, or processing practices.\n"
+            + "\n"
+            + "12) Google Free and Paid Services\n"
+            + "Google’s use of inputs and outputs may differ depending on whether the service or project is unpaid or paid. Under the published Gemini API terms, Google may use content submitted through unpaid services to improve its products and authorized people may review it. For paid services, Google states that prompts and responses are not used to improve products, while limited processing for security, abuse monitoring, and legal compliance may still occur. Do not submit sensitive information until you have reviewed your account settings and Google’s current terms.\n"
+            + "\n"
+            + "13) API Key and Charges\n"
+            + "If you enter a Gemini API key, you are responsible for protecting it, selecting the correct project, monitoring limits, and paying any charges or taxes. Do not share the key. Revoke or rotate it immediately if exposure is suspected. The Developer does not guarantee that any free quota will remain available.\n"
+            + "\n"
+            + "14) User Content and Permissions\n"
+            + "You retain your rights in Content you choose to submit. You grant the App and necessary External Services a limited permission to process it only as needed to perform your request. You are responsible for having the right to use the Content and for obtaining consent from people shown in it when required.\n"
+            + "\n"
+            + "15) Sensitive and Third-Party Data\n"
+            + "Do not submit identity numbers, health or financial information, trade secrets, private images, or data about a minor or another person unless necessary, authorized, and understood. Minimize the data and redact anything not needed.\n"
+            + "\n"
+            + "16) Acceptable and Prohibited Use\n"
+            + "You must not use the App for unlawful conduct, fraud, forgery, impersonation, privacy or intellectual-property violations, unauthorized surveillance, malware, bypassing safeguards or quotas, or making a high-risk decision without qualified human review.\n"
+            + "\n"
+            + "17) AI Outputs and Intellectual Property\n"
+            + "Outputs may resemble content generated for other users. The Developer does not guarantee exclusivity, protectability, or freedom from third-party rights. You are responsible for reviewing outputs before publishing or commercially using them.\n"
+            + "\n"
+            + "18) App Ownership and License\n"
+            + "The Developer or licensors own the App, brand, design, original copy, and code, except third-party components governed by their licenses. You receive a personal, limited, non-exclusive, non-transferable, revocable license for lawful use.\n"
+            + "\n"
+            + "19) Local Storage and Generated Files\n"
+            + "Depending on platform and settings, the App may store preferences, saved items, history, emergency details, results, or metadata locally. Files downloaded to a public folder, such as Downloads, remain until you delete them manually. You are responsible for protecting your device and backups.\n"
+            + "\n"
+            + "20) Availability and Changes\n"
+            + "Features may become unavailable or change because of maintenance, connectivity, device or store restrictions, Google updates, or proxy changes. Features, models, or limits may be modified or discontinued without a guarantee that they will remain unchanged.\n"
+            + "\n"
+            + "21) Updates\n"
+            + "Updates may be required for security or compatibility. Continued use after revised Terms are published constitutes acceptance to the extent permitted by law. For a material change, the Developer will seek to provide notice in the App or store listing.\n"
+            + "\n"
+            + "22) Disclaimer of Warranties\n"
+            + "The App is provided “as is” and “as available.” To the extent permitted by law, the Developer gives no express or implied warranty that it will be error-free, uninterrupted, accurate, or fit for a particular purpose.\n"
+            + "\n"
+            + "23) Limitation of Liability\n"
+            + "To the extent permitted by law, the Developer is not liable for harm caused by sole reliance on an output, unsafe use, data loss, API charges, device failure, or an External Service. Nothing in this section excludes or limits liability that cannot legally be excluded or limited.\n"
+            + "\n"
+            + "24) Suspension and Termination\n"
+            + "A feature may be restricted or stopped because of misuse, legal or security risk, or loss of an External Service. You may stop using the App by uninstalling it, revoking the API key, and deleting local and public files you created.\n"
+            + "\n"
+            + "25) Governing Law and General Terms\n"
+            + "These Terms are governed by the laws of the Kingdom of Saudi Arabia, and disputes are subject to the competent court or authority unless mandatory law requires otherwise. If a provision is unenforceable, the remaining provisions continue. Failure to enforce a right once is not a permanent waiver.\n"
+            + "\n"
+            + "26) Language and Contact\n"
+            + "The Arabic version is the reference version in the Kingdom of Saudi Arabia; English is an assisting translation. Questions or requests relating to these Terms may be sent to: ubdallahalrashdee@gmail.com.";
+    private static final String PRIVACY_AR = "تاريخ النفاذ: 5 يونيو 2026\n"
+            + "الإصدار القانوني: 3\n"
+            + "\n"
+            + "توضح هذه السياسة كيف يتعامل تطبيق بصير مع البيانات. صيغت بلغة مباشرة لتكون قابلة للقراءة بقارئات الشاشة. اقرأها مع الشروط والأحكام.\n"
+            + "\n"
+            + "1) المسؤول عن المعالجة ونطاق السياسة\n"
+            + "المسؤول عن التطبيق: عبدالله الراشدي. البريد المخصص للاستفسارات والطلبات: ubdallahalrashdee@gmail.com. تنطبق السياسة على تطبيق بصير على Android وiOS، مع اختلاف بعض الميزات بين المنصتين، ولا تغطي ممارسات خدمة خارجية خارج سيطرة المطوّر.\n"
+            + "\n"
+            + "2) ملخص واضح\n"
+            + "• لا يتطلب بصير إنشاء حساب لدى المطوّر.\n"
+            + "• لا يحتوي التطبيق على إعلانات أو معرّفات إعلانية أو بيع للبيانات.\n"
+            + "• كثير من الإعدادات والنتائج تحفظ محليًا على جهازك.\n"
+            + "• عند استخدام الذكاء الاصطناعي، يُرسل المحتوى الذي اخترته إلى Google Gemini مباشرة أو، في Android عند اختياره، عبر خادم وسيط مُعدّ.\n"
+            + "• لا توجد معالجة ذكاء اصطناعي سحابية دون إرسال المحتوى إلى مزود الخدمة المستخدم.\n"
+            + "\n"
+            + "3) البيانات التي تختار تقديمها\n"
+            + "قد يعالج التطبيق نص السؤال أو الترجمة، الصورة أو لقطة الشاشة، الملف أو النص المستخرج منه، وصف المهمة، والمدخل الصوتي بعد تحويله إلى نص. لا يطلب التطبيق هذه البيانات إلا عند استخدامك للميزة ذات الصلة.\n"
+            + "\n"
+            + "4) البيانات المحلية على Android\n"
+            + "قد يحفظ Android محليًا: اللغة والصوت وإعدادات الاتصال، مفتاح API، جهة الطوارئ، المحفوظات، سجل النشاط إذا لم توقفه، نتائج محفوظة، بيانات وصفية عن المستندات، وبيانات تضيفها إلى أدوات الذاكرة مثل الأشخاص أو المنتجات أو الأماكن. تُقيد قاعدة البيانات تلقائيًا تقريبًا بآخر 1000 سجل نشاط و200 سجل مستند، وقد تبقى الملفات المنزلة خارج مساحة التطبيق.\n"
+            + "\n"
+            + "5) البيانات المحلية على iOS\n"
+            + "قد يحفظ iOS محليًا: اللغة والصوت والإعدادات، مفتاح API في iOS Keychain، جهة الطوارئ، المحفوظات والنتائج المحفوظة، وسجل النشاط إذا لم توقفه. قد تُنشأ نسخة مؤقتة من ملف يختاره المستخدم أثناء المعالجة، ويخضع حذفها لسير العملية ونظام التشغيل.\n"
+            + "\n"
+            + "6) مفتاح Gemini API\n"
+            + "يُحفظ المفتاح على الجهاز. يستخدم Android مخزن مفاتيح النظام وتشفير AES-GCM عند توفرهما، وقد يرجع في بعض الأجهزة أو الحالات غير المدعومة إلى تفضيلات محلية أقل حماية. يستخدم iOS خدمة Keychain القياسية. يُرسل المفتاح إلى Google عند الاتصال المباشر، ولا يرسله المطوّر إلى نفسه. احمِ الجهاز ولا تشارك المفتاح.\n"
+            + "\n"
+            + "7) الاتصال المباشر بـ Google\n"
+            + "في الاتصال المباشر، يرسل التطبيق طلبك والمحتوى المحدد ومفتاح API إلى Google Gemini عبر HTTPS. لا تمر البيانات في هذه الحالة عبر خادم يملكه المطوّر. تتحكم Google في معالجة البيانات داخل خدمتها وفق نوع حسابك ومشروعك وشروطها.\n"
+            + "\n"
+            + "8) الاتصال عبر خادم وسيط\n"
+            + "في Android قد تختار خادمًا وسيطًا. عندها يرسل التطبيق الطلب إلى عنوان الخادم الذي أعددته، وقد يرسل الخادم المحتوى إلى Gemini باستخدام مفتاح مخزن لديه. مشغل الخادم قادر تقنيًا على الوصول إلى البيانات المارة خلاله وتحدد سياسته مدة الاحتفاظ والأمان والموقع الجغرافي للمعالجة. الخادم النموذجي المرفق مع مشروع بصير يحذف ملفات التحويل المؤقتة بعد انتهاء الطلب، لكن لا يجوز افتراض أن كل خادم آخر يفعل ذلك.\n"
+            + "\n"
+            + "9) استخدام Google للبيانات: الخدمة غير المدفوعة والمدفوعة\n"
+            + "بحسب شروط Gemini API المنشورة، قد تستخدم Google المدخلات والمخرجات المرسلة عبر الخدمات غير المدفوعة لتحسين منتجاتها، وقد يراجعها أشخاص مخولون. وتذكر Google أن المدخلات والمخرجات في الخدمات المدفوعة لا تستخدم لتحسين المنتجات، مع احتفاظ أو مراجعة محدودة لأغراض منع الإساءة والالتزام القانوني. راجع تصنيف مشروعك قبل إرسال معلومات حساسة.\n"
+            + "\n"
+            + "10) الاحتفاظ لدى Google وFiles API\n"
+            + "عند رفع ملف عبر Gemini Files API، تذكر Google أن الملف يحذف تلقائيًا بعد 48 ساعة. كما قد تحتفظ Google ببيانات طلبات معينة لفترة محدودة لأمن الخدمة ومراقبة الإساءة؛ وتذكر وثائق مراقبة الإساءة مدة تصل إلى 55 يومًا لبعض السجلات. هذه المدد تديرها Google وقد تتغير وفق شروطها أو القانون.\n"
+            + "\n"
+            + "11) الصور والكاميرا والملفات\n"
+            + "لا يصل التطبيق إلى صورة أو ملف إلا عندما تختاره أو تلتقطه أو تبدأ وضعًا يحتاج الكاميرا. يُستخدم المحتوى لتنفيذ الطلب، وقد يُرسل إلى Gemini أو الخادم الوسيط بحسب نمط الاتصال. لا يعني اختيار ملف أن المطوّر يحصل على نسخة دائمة منه. الملفات الناتجة التي تحفظها في التنزيلات أو تطبيق الملفات تبقى تحت سيطرتك حتى تحذفها.\n"
+            + "\n"
+            + "12) الميكروفون والتعرف على الكلام\n"
+            + "يستخدم الميكروفون عند تفعيل الإملاء أو المحادثة الصوتية. قد ينفذ نظام التشغيل أو مزود التعرف الصوتي تحويل الكلام إلى نص وفق إعدادات جهازك. لا ينشئ بصير عمدًا أرشيفًا دائمًا للتسجيل الصوتي الخام، لكنه يعالج النص الناتج وقد يحفظه في السجل أو النتائج وفق إعداداتك.\n"
+            + "\n"
+            + "13) الموقع الجغرافي\n"
+            + "في Android قد يطلب التطبيق موقعًا لمرة واحدة عند إعداد رسالة طلب مساعدة، أو اختياريًا لتحسين سياق وضع المشي المباشر. في iOS يستخدم الموقع حاليًا لرسالة طلب المساعدة عند اختيارك. لا يرسل التطبيق الموقع تلقائيًا؛ تظهر الرسالة للمراجعة قبل الإرسال. قد يكون الموقع تقريبيًا أو غير متاح.\n"
+            + "\n"
+            + "14) وضع المشي المباشر والكاميرا في الخلفية\n"
+            + "في Android يمكن أن يعمل وضع المشي المباشر كخدمة أمامية ويستخدم الكاميرا دوريًا حتى توقفه. تُرسل اللقطات اللازمة للتحليل وفق نمط الاتصال. لا يستخدم بصير هذه اللقطات للإعلانات، لكن مزود الخدمة يعالجها وفق سياسته. أوقف الوضع عند انتهاء الحاجة واحترم خصوصية الآخرين.\n"
+            + "\n"
+            + "15) أغراض المعالجة\n"
+            + "نستخدم البيانات لتنفيذ الميزة التي طلبتها، وتخصيص اللغة والصوت، حفظ ما تطلب حفظه، إعداد رسالة مساعدة، تشخيص خطأ محلي ظاهر لك، حماية الخدمة، والامتثال لالتزام نظامي. لا نستخدمها لبناء ملف إعلاني أو للتسويق المباشر.\n"
+            + "\n"
+            + "16) الأساس النظامي\n"
+            + "تعتمد المعالجة أساسًا على طلبك الصريح للميزة أو موافقتك عند اختيار محتوى أو إذن، وعلى تنفيذ الخدمة التي طلبتها. وقد تستند معالجة محدودة إلى مصلحة مشروعة في الأمن ومنع الإساءة أو إلى التزام نظامي، متى انطبق ذلك ودون الإخلال بحقوقك.\n"
+            + "\n"
+            + "17) الجهات التي قد تستلم البيانات\n"
+            + "قد تصل البيانات إلى: Google عند استخدام Gemini؛ مشغل الخادم الوسيط الذي اخترته؛ مزود التعرف الصوتي أو خدمات النظام؛ تطبيق الرسائل أو المشاركة الذي تفتحه؛ أو جهة مختصة عند وجود طلب نظامي ملزم. لا يبيع المطوّر البيانات ولا يؤجرها.\n"
+            + "\n"
+            + "18) نقل البيانات خارج المملكة\n"
+            + "قد تعالج Google أو مشغل خادم وسيط البيانات في دول خارج المملكة العربية السعودية. يعتمد مكان المعالجة والضمانات على مزود الخدمة وإعدادات المشروع. لا تستخدم الميزة السحابية بمحتوى حساس ما لم تكن تقبل مسار النقل وتراجِع سياسة المزود.\n"
+            + "\n"
+            + "19) مدة الاحتفاظ والحذف\n"
+            + "• الإعدادات والمحفوظات والسجل المحلي: حتى تحذفها من التطبيق أو تحذف التطبيق، مع مراعاة النسخ الاحتياطية التي يديرها نظامك.\n"
+            + "• مفتاح API: حتى تستبدله أو تحذفه أو تحذف التطبيق.\n"
+            + "• الملفات في التنزيلات أو تطبيق الملفات: حتى تحذفها يدويًا.\n"
+            + "• النسخ المؤقتة: خلال مدة الحاجة للمعالجة، وقد ينظفها النظام لاحقًا.\n"
+            + "• Google أو الخادم الوسيط: وفق الفقرات السابقة وسياسة كل مزود.\n"
+            + "حذف بيانات التطبيق لا يحذف تلقائيًا ما سبق إرساله إلى خدمة خارجية أو ملفًا محفوظًا في مجلد عام.\n"
+            + "\n"
+            + "20) الحماية\n"
+            + "يستخدم التطبيق HTTPS للاتصال المدعوم، وآليات التخزين الآمن المتاحة في النظام، ويعطل النسخ الاحتياطي للتطبيق والاتصال غير المشفر في إعداد Android الحالية. لا توجد وسيلة إلكترونية آمنة بنسبة 100%. استخدم قفلًا قويًا للجهاز، وحدّث النظام، وراجع الأذونات، وألغِ المفتاح عند فقد الجهاز.\n"
+            + "\n"
+            + "21) اختياراتك وأذوناتك\n"
+            + "يمكنك رفض إذن الكاميرا أو الميكروفون أو الموقع أو الملفات، لكن الميزة المرتبطة قد لا تعمل. يمكنك إيقاف حفظ سجل النشاط، وإيقاف الحفظ التلقائي للنتائج، ومسح البيانات المحلية، وحذف الملفات العامة يدويًا، وتغيير نمط الاتصال، وإلغاء مفتاح API من حساب Google.\n"
+            + "\n"
+            + "22) حقوقك وطلباتك\n"
+            + "بحسب نظام حماية البيانات الشخصية السعودي والأنظمة المنطبقة، قد تشمل حقوقك العلم بالمعالجة، والوصول إلى بياناتك، والحصول على نسخة مقروءة، والتصحيح أو الإكمال أو التحديث، وطلب الإتلاف، وسحب الموافقة عندما تكون هي الأساس، وتقديم شكوى أو طلب تعويض عند توافر شروطه. أرسل طلبك إلى البريد المذكور في الفقرة الأولى. يُتعامل مع الطلب خلال المدة النظامية، وعادة خلال 30 يومًا، وقد تمتد عند السماح نظامًا مع إشعارك بالسبب. قد نطلب ما يكفي للتحقق من الهوية وحماية البيانات.\n"
+            + "\n"
+            + "23) القُصّر والقرارات الآلية\n"
+            + "ميزات Gemini غير مخصصة لمن هم دون 18 عامًا. لا يستخدم بصير المخرجات لاتخاذ قرار ملزم عنك، لكنك قد تختار الاستفادة منها؛ لذلك يجب إجراء مراجعة بشرية لأي قرار مهم أو عالي المخاطر.\n"
+            + "\n"
+            + "24) التحديثات والشكاوى واللغة\n"
+            + "قد تُحدّث هذه السياسة عند تغير ميزة أو مزود أو متطلب نظامي، ويظهر تاريخ النفاذ أعلى الوثيقة. للاستفسار أو ممارسة حق أو تقديم شكوى إلى المطوّر: ubdallahalrashdee@gmail.com. ويجوز لك أيضًا التقدم إلى الجهة السعودية المختصة وفق القنوات الرسمية. النسخة العربية هي المرجع داخل المملكة، والإنجليزية ترجمة مساعدة.";
+    private static final String PRIVACY_EN = "Effective date: 5 June 2026\n"
+            + "Legal version: 3\n"
+            + "\n"
+            + "This Policy explains how Basir handles data. It is written in direct, screen-reader-friendly language. Read it together with the Terms and Conditions.\n"
+            + "\n"
+            + "1) Controller and Scope\n"
+            + "The person responsible for the App is Abdullah Al-Rashidi. Privacy questions and requests may be sent to ubdallahalrashdee@gmail.com. This Policy applies to Basir on Android and iOS, noting that features differ by platform. It does not govern an external service outside the Developer’s control.\n"
+            + "\n"
+            + "2) Clear Summary\n"
+            + "• Basir does not require an account with the Developer.\n"
+            + "• The App contains no ads, advertising identifiers, or sale of data.\n"
+            + "• Many settings and results are stored locally on your device.\n"
+            + "• When you use AI, the Content you select is sent directly to Google Gemini or, on Android when selected, through a configured proxy server.\n"
+            + "• Cloud AI processing cannot occur without sending Content to the provider being used.\n"
+            + "\n"
+            + "3) Data You Choose to Provide\n"
+            + "The App may process question or translation text, an image or screenshot, a file or text extracted from it, task instructions, and voice input after speech-to-text conversion. The App requests such data only when you use the related feature.\n"
+            + "\n"
+            + "4) Local Data on Android\n"
+            + "Android may locally store language, voice and connection settings, the API key, emergency contact, saved items, activity history unless disabled, saved results, document metadata, and information you add to memory tools such as people, products, or places. The database is automatically limited to approximately the latest 1,000 activity records and 200 document records. Downloaded files may remain outside the App’s private storage.\n"
+            + "\n"
+            + "5) Local Data on iOS\n"
+            + "iOS may locally store language, voice and other settings, the API key in the standard iOS Keychain, emergency contact, saved items and results, and activity history unless disabled. A temporary copy of a selected file may be created during processing, with deletion governed by the workflow and operating system.\n"
+            + "\n"
+            + "6) Gemini API Key\n"
+            + "The key is stored on the device. Android uses the system keystore and AES-GCM encryption when available, but may fall back in unsupported circumstances to less protected local preferences. iOS uses the standard Keychain. In direct mode, the key is sent to Google and is not sent to the Developer. Protect your device and do not share the key.\n"
+            + "\n"
+            + "7) Direct Connection to Google\n"
+            + "In direct mode, the App sends your request, selected Content, and API key to Google Gemini over HTTPS. The data does not pass through a server owned by the Developer. Google controls processing within its service according to your account type, project, and its terms.\n"
+            + "\n"
+            + "8) Proxy Connection\n"
+            + "On Android, you may select a proxy server. The App then sends the request to the address you configured, and that server may send the Content to Gemini using a key stored by the server. The operator can technically access data passing through it and its policy determines retention, security, and processing location. The sample proxy included with the Basir project deletes temporary conversion files after a request, but you must not assume that every other proxy does the same.\n"
+            + "\n"
+            + "9) Google Data Use: Unpaid and Paid Services\n"
+            + "Under the published Gemini API terms, Google may use inputs and outputs submitted through unpaid services to improve its products, and authorized people may review them. Google states that inputs and outputs in paid services are not used to improve products, although limited retention or review may still occur for abuse prevention and legal compliance. Confirm your project type before submitting sensitive information.\n"
+            + "\n"
+            + "10) Google Retention and the Files API\n"
+            + "When a file is uploaded through the Gemini Files API, Google states that it is automatically deleted after 48 hours. Google may also retain certain request data for a limited period for service security and abuse monitoring; its abuse-monitoring documentation describes a period of up to 55 days for some logs. Google controls these periods and may change them under its terms or applicable law.\n"
+            + "\n"
+            + "11) Images, Camera, and Files\n"
+            + "The App accesses an image or file only when you select or capture it or start a camera-dependent mode. The Content is used to perform the request and may be sent to Gemini or the configured proxy depending on connection mode. Selecting a file does not mean the Developer receives a permanent copy. Generated files saved to Downloads or the Files app remain under your control until you delete them.\n"
+            + "\n"
+            + "12) Microphone and Speech Recognition\n"
+            + "The microphone is used when you start dictation or voice conversation. The operating system or speech-recognition provider may convert audio to text under your device settings. Basir does not intentionally create a permanent archive of raw voice recordings, but the resulting text may be processed and saved in activity history or results according to your settings.\n"
+            + "\n"
+            + "13) Location\n"
+            + "On Android, the App may request a one-time location when preparing a help message or, optionally, to improve context in live walking mode. On iOS, location is currently used for a help message when you choose it. The App does not send location automatically; the message is displayed for review before sending. Location may be approximate or unavailable.\n"
+            + "\n"
+            + "14) Live Walking Mode and Background Camera\n"
+            + "On Android, live walking mode can run as a foreground service and use the camera periodically until you stop it. Images needed for analysis are sent according to the selected connection mode. Basir does not use them for advertising, but the service provider processes them under its policy. Stop the mode when finished and respect other people’s privacy.\n"
+            + "\n"
+            + "15) Purposes\n"
+            + "Data is used to perform the feature you requested, personalize language and voice, save items you ask to save, prepare a help message, display local error information, secure the service, and comply with a legal obligation. It is not used to build an advertising profile or for direct marketing.\n"
+            + "\n"
+            + "16) Legal Basis\n"
+            + "Processing primarily relies on your express request for a feature or your choice to select Content or grant permission, and on performing the service you requested. Limited processing may also rely on a legitimate interest in security and abuse prevention or a legal obligation where applicable and without overriding your rights.\n"
+            + "\n"
+            + "17) Recipients\n"
+            + "Data may be received by Google when Gemini is used; the operator of a proxy you selected; a speech-recognition or operating-system service; the messaging or sharing app you open; or a competent authority under a binding lawful request. The Developer does not sell or rent data.\n"
+            + "\n"
+            + "18) International Transfers\n"
+            + "Google or a proxy operator may process data outside the Kingdom of Saudi Arabia. The processing location and safeguards depend on the provider and project settings. Do not use a cloud feature for sensitive Content unless you accept the transfer path and have reviewed the provider’s policy.\n"
+            + "\n"
+            + "19) Retention and Deletion\n"
+            + "• Local settings, saved items, and history: until you delete them in the App or uninstall the App, subject to operating-system backups you control.\n"
+            + "• API key: until replaced or removed, or until the App is uninstalled.\n"
+            + "• Files in Downloads or the Files app: until you delete them manually.\n"
+            + "• Temporary copies: for the processing period and potentially until later operating-system cleanup.\n"
+            + "• Google or a proxy: as described above and under each provider’s policy.\n"
+            + "Deleting App data does not automatically delete data already sent to an external service or a file stored in a public folder.\n"
+            + "\n"
+            + "20) Security\n"
+            + "The App uses HTTPS for supported connections and available operating-system secure-storage mechanisms. The current Android configuration disables App backup and cleartext network traffic. No electronic storage or transmission method is completely secure. Use a strong device lock, keep the system updated, review permissions, and revoke the key if the device is lost.\n"
+            + "\n"
+            + "21) Your Choices and Permissions\n"
+            + "You may refuse camera, microphone, location, or file permissions, but the related feature may not work. You can disable activity-history saving and automatic result saving, clear local data, manually delete public files, change connection mode, and revoke the API key in your Google account.\n"
+            + "\n"
+            + "22) Your Rights and Requests\n"
+            + "Under the Saudi Personal Data Protection Law and other applicable laws, your rights may include being informed, accessing data, obtaining a readable copy, correction, completion or update, requesting destruction, withdrawing consent where consent is the basis, and lodging a complaint or seeking compensation where the legal conditions are met. Send a request to the email in section 1. Requests will be handled within the legally required period, ordinarily within 30 days, with an extension where legally permitted and with notice and reasons. Sufficient information may be requested to verify identity and protect the data.\n"
+            + "\n"
+            + "23) Minors and Automated Outputs\n"
+            + "Gemini-powered features are not intended for users under 18. Basir does not itself make a binding decision about you, but you may choose to use generated output. Qualified human review is required for any important or high-risk decision.\n"
+            + "\n"
+            + "24) Updates, Complaints, and Language\n"
+            + "This Policy may be updated when a feature, provider, or legal requirement changes. The effective date appears at the top. Privacy questions, rights requests, or complaints to the Developer may be sent to ubdallahalrashdee@gmail.com. You may also complain to the competent Saudi authority through its official channels. The Arabic version is the reference version in the Kingdom; English is an assisting translation.";
 
     public LegalScreens(BasirScreenHost host) {
         this.host = host;
@@ -24,464 +361,55 @@ public final class LegalScreens {
 
     public void showTerms() {
         host.resetScreen(host.t("الشروط والأحكام", "Terms and Conditions"),
-                host.t("الإصدار 2 — " + host.appVersion(),
-                  "Version 2 — " + host.appVersion()));
-
-        host.addPlainText(host.t(
-            "يرجى قراءة هذه الشروط بعناية قبل استخدام تطبيق بصير. باستخدامك التطبيق أو الاستمرار في استخدامه، فإنك تقر بأنك قرأت هذه الشروط وفهمتها ووافقت عليها، بما في ذلك سياسة الخصوصية وأي تعليمات أمان تظهر داخل التطبيق.\n" +
-            "\n" +
-            "1) التعريفات\n" +
-            "• \"التطبيق\" أو \"بصير\": تطبيق مساعد يعتمد على الذكاء الاصطناعي لمساعدة المكفوفين وضعاف البصر في مهام مثل قراءة المستندات، وصف الصور والمشاهد، الترجمة، التعرف على بعض العناصر، وتحويل المحتوى إلى صيغ أكثر قابلية للوصول.\n" +
-            "• \"المطوّر\": مالك التطبيق أو الجهة التي تديره أو تنشره عبر المتاجر الرسمية.\n" +
-            "• \"المستخدم\": كل شخص يثبت التطبيق أو يستخدمه أو يرسل من خلاله نصاً أو صورة أو ملفاً أو طلباً صوتياً.\n" +
-            "• \"خدمات خارجية\": أي خدمات تابعة لطرف ثالث يعتمد عليها التطبيق، ومنها Google Gemini API وخدمات Android المدمجة مثل التعرف الصوتي أو مشاركة الرسائل.\n" +
-            "\n" +
-            "2) قبول الشروط\n" +
-            "باستخدامك التطبيق، فإنك توافق على الالتزام بهذه الشروط. إذا كنت لا توافق عليها، فيجب عليك التوقف عن استخدام التطبيق وحذفه من جهازك. إذا كنت تستخدم التطبيق نيابةً عن شخص آخر، فإنك تقر بأن لديك الصلاحية أو الموافقة اللازمة لذلك.\n" +
-            "\n" +
-            "3) أهلية الاستخدام\n" +
-            "إذا كان عمرك أقل من 18 سنة، فيجب استخدام التطبيق تحت إشراف ولي الأمر أو بموافقته. يتحمل ولي الأمر أو المشرف القانوني مسؤولية متابعة استخدام القاصر للتطبيق، خصوصاً عند إرسال صور أو ملفات أو معلومات شخصية أو صحية أو تعليمية.\n" +
-            "\n" +
-            "4) طبيعة الخدمة\n" +
-            "بصير أداة مساعدة تكميلية، وليست بديلاً عن الوسائل الأساسية أو المهنية أو الرسمية. لا يحل التطبيق محل العصا البيضاء، أو الكلب المرشد، أو المرافق البشري عند الحاجة، أو الطبيب، أو المحامي، أو المستشار المالي، أو خدمات الطوارئ الرسمية.\n" +
-            "\n" +
-            "5) حدود الاعتماد على مخرجات الذكاء الاصطناعي\n" +
-            "قد تحتوي المخرجات على أخطاء، أو وصف غير كامل، أو ترجمة غير دقيقة، أو استنتاج غير مناسب للسياق. يجب التحقق من أي معلومة حساسة أو مؤثرة قبل التصرف بناءً عليها، وبخاصة المعلومات الطبية، القانونية، المالية، الدوائية، السلامة المرورية، أو القرارات التي قد يترتب عليها ضرر.\n" +
-            "\n" +
-            "6) السلامة أثناء المشي والتنقل\n" +
-            "أي وضع متعلق بالمشي أو وصف البيئة أو قراءة اللوحات أو التعرف على العوائق هو مساعدة بصرية فقط. لا تعتمد على التطبيق وحده عند عبور الطرق، استخدام السلالم، ركوب المصاعد، التنقل في أماكن مزدحمة، أو الحركة في بيئات خطرة. استخدامك للتطبيق لا يلغي مسؤوليتك الشخصية في اتخاذ احتياطات السلامة المناسبة.\n" +
-            "\n" +
-            "7) عدم استخدام التطبيق أثناء القيادة أو الأعمال الخطرة\n" +
-            "يحظر استخدام التطبيق بطريقة تشتت الانتباه أثناء قيادة السيارة أو الدراجة أو تشغيل آلات أو أداء أعمال قد تسبب خطراً عليك أو على الآخرين. يتحمل المستخدم وحده مسؤولية أي استخدام غير آمن.\n" +
-            "\n" +
-            "8) خدمات الطوارئ\n" +
-            "قد يتضمن التطبيق ميزة طوارئ تساعدك في إرسال رسالة أو موقع تقريبي إلى جهة تختارها. هذه الميزة لا تضمن وصول الرسالة فوراً، ولا تغني عن الاتصال بالجهات الرسمية المختصة مثل الإسعاف أو الدفاع المدني أو الشرطة عند وجود خطر حقيقي. قد تتأثر ميزة الطوارئ بعوامل مثل ضعف الإنترنت، نفاد البطارية، تعطل خدمة الموقع، أو قيود الجهاز.\n" +
-            "\n" +
-            "9) خدمات Google Gemini والخدمات الخارجية\n" +
-            "يعتمد التطبيق على Google Gemini API لمعالجة بعض الطلبات. عند إرسال نص أو صورة أو ملف للمعالجة، قد يتم إرساله إلى Google أو معالجته وفق شروط وسياسات Google ذات الصلة. باستخدامك لهذه الميزات، فإنك تقر بأن خدمات Google مستقلة عن المطوّر، وقد تتغير شروطها أو أسعارها أو توفرها أو حدود استخدامها في أي وقت.\n" +
-            "\n" +
-            "10) مفتاح Gemini API والتكاليف\n" +
-            "إذا أدخلت مفتاح Gemini API يدوياً، فأنت مسؤول عن صحة المفتاح، وسريته، وأي تكاليف أو حدود استخدام مرتبطة به وفق حسابك لدى Google. لا تشارك مفتاحك مع أي شخص. إذا اشتبهت بتسريب المفتاح، فقم بإلغائه أو تدويره من لوحة تحكم Google فوراً.\n" +
-            "\n" +
-            "11) المحتوى الذي يرفعه المستخدم\n" +
-            "أنت مسؤول عن أي نص أو صورة أو ملف أو تسجيل صوتي أو بيانات ترسلها عبر التطبيق. يجب ألا ترسل محتوى غير قانوني، أو مسيئاً، أو ينتهك خصوصية الغير، أو حقوق الملكية الفكرية، أو يتضمن بيانات لا تملك صلاحية معالجتها أو مشاركتها.\n" +
-            "\n" +
-            "12) المحتوى الحساس\n" +
-            "يُنصح بعدم إرسال بيانات شديدة الحساسية إلا عند الحاجة وبالقدر الضروري، مثل التقارير الطبية، الأرقام الوطنية، المستندات المالية، العقود، الصور الشخصية، بيانات الأطفال، أو أي بيانات تخص أشخاصاً آخرين. إذا أرسلت هذه البيانات، فأنت تقر بأنك قبلت معالجتها عبر الخدمات الخارجية اللازمة لتشغيل الميزة.\n" +
-            "\n" +
-            "13) الاستخدامات المحظورة\n" +
-            "يُحظر استخدام التطبيق في أي مما يلي:\n" +
-            "• انتهاك القوانين أو حقوق الآخرين.\n" +
-            "• التحايل أو الاحتيال أو التزوير أو انتحال الشخصية.\n" +
-            "• إرسال محتوى ضار أو مسيء أو ينتهك الخصوصية.\n" +
-            "• استخدام التطبيق لاتخاذ قرارات عالية الخطورة دون مراجعة بشرية مؤهلة.\n" +
-            "• محاولة تعطيل التطبيق، أو إساءة استخدام المفاتيح، أو تجاوز حدود الخدمات الخارجية.\n" +
-            "\n" +
-            "14) الملكية الفكرية\n" +
-            "يظل التطبيق، وتصميمه، واسمه، وشعاراته، وواجهاته، ونصوصه الأصلية، وأي عناصر مملوكة للمطوّر أو مرخصة له، محمية بالأنظمة ذات الصلة. لا يحق لك نسخ التطبيق أو إعادة بيعه أو تفكيكه أو إعادة نشره أو استخدام اسمه بطريقة توحي بعلاقة غير مصرح بها.\n" +
-            "\n" +
-            "15) الترخيص المحدود\n" +
-            "يمنحك المطوّر ترخيصاً محدوداً، غير حصري، غير قابل للنقل، وقابلاً للإلغاء، لاستخدام التطبيق لأغراض شخصية أو تعليمية أو يومية مشروعة وفق هذه الشروط.\n" +
-            "\n" +
-            "16) الخصوصية\n" +
-            "تخضع معالجة البيانات لسياسة الخصوصية الخاصة بتطبيق بصير. تعد سياسة الخصوصية جزءاً مكملاً لهذه الشروط، ويجب قراءتها مع هذه الوثيقة.\n" +
-            "\n" +
-            "17) التحديثات وتغيير الميزات\n" +
-            "يجوز للمطوّر تحديث التطبيق أو تعديل أو إضافة أو إزالة أي ميزة، بما في ذلك تغيير طريقة الاتصال بالخدمات الخارجية، تحسين الأمان، تعديل واجهة الاستخدام، أو إيقاف ميزة لم تعد مستقرة أو مناسبة. قد تؤثر التحديثات على طريقة عمل بعض الخصائص.\n" +
-            "\n" +
-            "18) إيقاف الخدمة أو إنهاء الاستخدام\n" +
-            "يجوز للمطوّر إيقاف التطبيق أو أي ميزة مؤقتاً أو نهائياً لأسباب تقنية، قانونية، أمنية، تجارية، أو بسبب تغيّر خدمات الأطراف الثالثة. كما يجوز تقييد الاستخدام عند وجود إساءة استخدام أو مخالفة جوهرية لهذه الشروط.\n" +
-            "\n" +
-            "19) عدم تقديم ضمانات\n" +
-            "يُقدّم التطبيق كما هو وبحسب توفره. لا يضمن المطوّر أن التطبيق سيكون خالياً من الأخطاء، أو متاحاً دائماً، أو مناسباً لكل حالة استخدام، أو أن نتائجه ستكون صحيحة أو كاملة أو آمنة للاعتماد عليها وحدها.\n" +
-            "\n" +
-            "20) حدود المسؤولية\n" +
-            "إلى أقصى حد يسمح به النظام، لا يتحمل المطوّر المسؤولية عن أي خسارة أو ضرر مباشر أو غير مباشر أو عرضي أو تبعي ينشأ عن استخدام التطبيق أو عدم القدرة على استخدامه، أو عن الاعتماد المنفرد على مخرجاته، أو عن انقطاع الخدمات الخارجية، أو عن محتوى يرسله المستخدم.\n" +
-            "\n" +
-            "21) التعويض\n" +
-            "توافق على تعويض المطوّر وحمايته من أي مطالبات أو أضرار أو تكاليف أو مسؤوليات تنشأ عن استخدامك المخالف لهذه الشروط، أو انتهاكك حقوق الآخرين، أو إرسال محتوى لا تملك حق معالجته أو مشاركته، وذلك بالقدر الذي يسمح به النظام.\n" +
-            "\n" +
-            "22) متجر التطبيقات والأطراف الثالثة\n" +
-            "قد يخضع تنزيل التطبيق أو تحديثه لشروط متجر التطبيقات المستخدم، مثل Google Play أو أي متجر آخر. لا يعد أي متجر تطبيقات مسؤولاً عن محتوى التطبيق أو مخرجاته، ما لم تنص شروط المتجر أو الأنظمة المعمول بها على خلاف ذلك.\n" +
-            "\n" +
-            "23) القانون الحاكم والاختصاص\n" +
-            "تخضع هذه الشروط وتفسر وفق أنظمة المملكة العربية السعودية. وتختص الجهة القضائية المختصة في المملكة بنظر أي نزاع ينشأ عنها، ما لم يوجد نص نظامي آمر يقضي بخلاف ذلك.\n" +
-            "\n" +
-            "24) تعارض النسخ اللغوية\n" +
-            "أُعدت النسخة العربية لتكون النسخة المرجعية داخل المملكة العربية السعودية. وتعد النسخة الإنجليزية ترجمة مساعدة، ما لم يقرر المطوّر خلاف ذلك صراحةً.\n" +
-            "\n" +
-            "25) تحديث الشروط\n" +
-            "قد يتم تعديل هذه الشروط من وقت لآخر. استمرارك في استخدام التطبيق بعد نشر أي تحديث يعد قبولاً بالشروط المعدلة. إذا كان التعديل جوهرياً، فيُفضّل إشعار المستخدم داخل التطبيق أو عبر صفحة المتجر متى كان ذلك ممكناً.\n" +
-            "\n" +
-            "26) التواصل\n" +
-            "لأي استفسار متعلق بهذه الشروط، يمكنك التواصل مع المطوّر عبر وسيلة التواصل المنشورة داخل التطبيق أو صفحة التطبيق في المتجر.",
-
-            "Please read these Terms carefully before using Basir. By using or continuing to use the app, you acknowledge that you have read, understood, and agreed to these Terms, including the Privacy Policy and any safety instructions displayed inside the app.\n" +
-            "\n" +
-            "1) Definitions\n" +
-            "• \"App\" or \"Basir\" means the AI-powered assistive application designed to help blind and low-vision users with tasks such as reading documents, describing images and scenes, translation, identifying certain items, and converting content into more accessible formats.\n" +
-            "• \"Developer\" means the owner, operator, or publisher of the app through official app stores.\n" +
-            "• \"User\" means any person who installs, accesses, or uses the app, or submits text, images, files, or voice requests through it.\n" +
-            "• \"External Services\" means third-party services used by the app, including Google Gemini API and Android built-in services such as speech recognition or message sharing.\n" +
-            "\n" +
-            "2) Acceptance of Terms\n" +
-            "By using the app, you agree to comply with these Terms. If you do not agree, you must stop using the app and remove it from your device. If you use the app on behalf of another person, you confirm that you have the required authority or consent to do so.\n" +
-            "\n" +
-            "3) Eligibility\n" +
-            "If you are under 18, you must use the app under the supervision or consent of a parent or legal guardian. The parent or guardian is responsible for monitoring the minor's use of the app, especially when images, files, personal data, health data, or educational data are submitted.\n" +
-            "\n" +
-            "4) Nature of the Service\n" +
-            "Basir is a complementary assistive tool. It is not a substitute for essential, professional, or official support, including a white cane, guide dog, human assistance when needed, a doctor, lawyer, financial adviser, or official emergency services.\n" +
-            "\n" +
-            "5) Limits of Reliance on AI Outputs\n" +
-            "AI outputs may contain errors, incomplete descriptions, inaccurate translations, or contextually inappropriate conclusions. You must verify any sensitive or material information before acting on it, especially medical, legal, financial, medication-related, road-safety, or other high-impact information.\n" +
-            "\n" +
-            "6) Safety While Walking and Moving\n" +
-            "Any walking, scene-description, sign-reading, or obstacle-related feature is a visual aid only. Do not rely on the app alone when crossing roads, using stairs, entering elevators, moving in crowded places, or navigating hazardous environments. Using the app does not remove your personal responsibility to take appropriate safety precautions.\n" +
-            "\n" +
-            "7) No Use While Driving or Performing Hazardous Activities\n" +
-            "You must not use the app in a way that distracts you while driving, cycling, operating machinery, or performing any activity that may create risk to you or others. You are solely responsible for unsafe use.\n" +
-            "\n" +
-            "8) Emergency Features\n" +
-            "The app may include an emergency feature that helps you send a message or approximate location to a contact you choose. This feature does not guarantee immediate delivery and does not replace contacting official emergency services when there is real danger. Emergency features may be affected by internet quality, battery level, location-service limitations, device restrictions, or third-party service outages.\n" +
-            "\n" +
-            "9) Google Gemini and External Services\n" +
-            "The app uses Google Gemini API to process certain requests. When you submit text, images, or files for processing, they may be sent to or processed by Google under Google's applicable terms and policies. By using these features, you acknowledge that Google services are independent from the Developer and that their terms, pricing, availability, and usage limits may change at any time.\n" +
-            "\n" +
-            "10) Gemini API Key and Costs\n" +
-            "If you manually enter a Gemini API key, you are responsible for its accuracy, confidentiality, and any costs or usage limits associated with it under your Google account. Do not share your API key with anyone. If you suspect that your key has been exposed, revoke or rotate it through your Google console immediately.\n" +
-            "\n" +
-            "11) User-Submitted Content\n" +
-            "You are responsible for any text, image, file, audio recording, or data you submit through the app. You must not submit content that is unlawful, abusive, privacy-infringing, intellectual-property-infringing, or that you do not have the right to process or share.\n" +
-            "\n" +
-            "12) Sensitive Content\n" +
-            "You should avoid submitting highly sensitive data unless necessary and limited to what is required, such as medical reports, national identifiers, financial documents, contracts, personal photos, children's data, or data relating to other people. If you submit such data, you acknowledge that it may be processed through the external services required to operate the relevant feature.\n" +
-            "\n" +
-            "13) Prohibited Uses\n" +
-            "You must not use the app to:\n" +
-            "• Violate laws or the rights of others.\n" +
-            "• Commit fraud, forgery, evasion, or impersonation.\n" +
-            "• Submit harmful, abusive, or privacy-infringing content.\n" +
-            "• Make high-risk decisions without qualified human review.\n" +
-            "• Disrupt the app, misuse API keys, or bypass third-party service limits.\n" +
-            "\n" +
-            "14) Intellectual Property\n" +
-            "The app, its design, name, logos, interfaces, original text, and any elements owned or licensed by the Developer are protected by applicable laws. You may not copy, resell, decompile, republish, or use the app's name in a way that suggests an unauthorized relationship.\n" +
-            "\n" +
-            "15) Limited License\n" +
-            "The Developer grants you a limited, non-exclusive, non-transferable, revocable license to use the app for lawful personal, educational, or daily-assistance purposes in accordance with these Terms.\n" +
-            "\n" +
-            "16) Privacy\n" +
-            "Data processing is governed by Basir's Privacy Policy. The Privacy Policy is incorporated into and forms part of these Terms, and should be read together with this document.\n" +
-            "\n" +
-            "17) Updates and Feature Changes\n" +
-            "The Developer may update the app or modify, add, or remove any feature, including changes to external-service connections, security improvements, interface changes, or removal of features that are no longer stable or appropriate. Updates may affect how certain functions behave.\n" +
-            "\n" +
-            "18) Suspension or Termination\n" +
-            "The Developer may suspend or discontinue the app or any feature temporarily or permanently for technical, legal, security, business, or third-party-service reasons. Use may also be restricted if there is misuse or a material breach of these Terms.\n" +
-            "\n" +
-            "19) No Warranties\n" +
-            "The app is provided as is and as available. The Developer does not guarantee that the app will be error-free, always available, suitable for every use case, or that its outputs will be accurate, complete, or safe to rely on alone.\n" +
-            "\n" +
-            "20) Limitation of Liability\n" +
-            "To the maximum extent permitted by law, the Developer is not liable for any direct, indirect, incidental, consequential, or special loss or damage arising from use of the app, inability to use it, sole reliance on its outputs, outages of external services, or content submitted by users.\n" +
-            "\n" +
-            "21) Indemnity\n" +
-            "To the extent permitted by law, you agree to indemnify and protect the Developer from claims, damages, costs, or liabilities arising from your breach of these Terms, violation of others' rights, or submission of content that you did not have the right to process or share.\n" +
-            "\n" +
-            "22) App Stores and Third Parties\n" +
-            "Downloading or updating the app may also be subject to the terms of the app store used, such as Google Play or another store. App stores are not responsible for the app's content or outputs unless their own terms or applicable laws provide otherwise.\n" +
-            "\n" +
-            "23) Governing Law and Jurisdiction\n" +
-            "These Terms are governed by and interpreted in accordance with the laws and regulations of the Kingdom of Saudi Arabia. The competent courts or authorities in the Kingdom shall have jurisdiction over disputes arising from these Terms, unless mandatory law provides otherwise.\n" +
-            "\n" +
-            "24) Language Conflict\n" +
-            "The Arabic version is intended to be the reference version within the Kingdom of Saudi Arabia. The English version is provided as an assisting translation unless the Developer expressly states otherwise.\n" +
-            "\n" +
-            "25) Updates to These Terms\n" +
-            "These Terms may be updated from time to time. Continued use of the app after an update is posted constitutes acceptance of the updated Terms. If a change is material, the Developer should, where practical, notify users inside the app or through the app-store page.\n" +
-            "\n" +
-            "26) Contact\n" +
-            "For questions about these Terms, you may contact the Developer through the contact method published inside the app or on the app's store page."));
-
+                host.t("الإصدار القانوني 3 — إصدار التطبيق " + host.appVersion(),
+                        "Legal version 3 — App version " + host.appVersion()));
+        host.addPlainText(host.t(TERMS_AR, TERMS_EN));
         host.addBackButton();
     }
 
     public void showPrivacy() {
         host.resetScreen(host.t("سياسة الخصوصية", "Privacy Policy"),
-                host.t("الإصدار 2 — " + host.appVersion(),
-                  "Version 2 — " + host.appVersion()));
-
-        host.addPlainText(host.t(
-            "نأخذ خصوصيتك بجدية. توضح هذه السياسة، بلغة مباشرة، ما البيانات التي يتعامل معها تطبيق بصير، وما الذي يبقى على جهازك، وما الذي قد يُرسل إلى خدمات خارجية مثل Google Gemini عند استخدام بعض الميزات.\n" +
-            "\n" +
-            "1) نطاق هذه السياسة\n" +
-            "تنطبق هذه السياسة على استخدامك لتطبيق بصير والميزات المرتبطة به. لا تنطبق هذه السياسة على مواقع أو خدمات أو سياسات أطراف ثالثة، بما في ذلك خدمات Google، إلا بالقدر الذي يوضح طريقة ارتباط التطبيق بها.\n" +
-            "\n" +
-            "2) ملخص سريع\n" +
-            "• لا يتطلب التطبيق إنشاء حساب داخل بصير.\n" +
-            "• لا يستخدم التطبيق إعلانات أو معرفات إعلانية.\n" +
-            "• لا يستخدم التطبيق تتبعاً تحليلياً لأغراض التسويق.\n" +
-            "• أغلب البيانات تحفظ محلياً على جهازك.\n" +
-            "• بعض الطلبات، مثل تحليل الصور أو الملفات أو النصوص، تُرسل إلى Google Gemini API لمعالجتها.\n" +
-            "• ملفات PDF المرفوعة عبر ميزة \"اسأل عن المستند\" قد تُخزن لدى Google لمدة تصل إلى 48 ساعة وفق آلية Files API.\n" +
-            "• يمكنك حذف البيانات المحلية من الإعدادات أو بحذف التطبيق.\n" +
-            "\n" +
-            "3) البيانات التي تُحفظ محلياً على جهازك\n" +
-            "قد يحفظ التطبيق البيانات التالية محلياً فقط، بحسب استخدامك:\n" +
-            "• مفتاح Gemini API إذا أدخلته يدوياً.\n" +
-            "• تفضيلات الاستخدام، مثل اللغة، حجم الخط، سرعة الصوت، ونمط الاتصال.\n" +
-            "• العناصر التي تحفظها يدوياً، مثل الأشخاص، المنتجات، الأدوية، الأماكن، أو الملاحظات ذات الصلة.\n" +
-            "• محفوظات المستندات المحوّلة داخل مجلد التنزيلات أو المجلد الذي يحدده النظام.\n" +
-            "• سجل آخر العمليات داخل التطبيق، إذا كانت الميزة مفعلة، ويكون نصياً وقابلاً للحذف من الإعدادات.\n" +
-            "• جهة الطوارئ التي تضيفها يدوياً، إذا استخدمت ميزة الطوارئ.\n" +
-            "\n" +
-            "لا تُرسل هذه البيانات إلى خوادم المطوّر ما دام التطبيق يعمل بالنمط المحلي المباشر الموضح في هذه السياسة.\n" +
-            "\n" +
-            "4) البيانات التي قد تُرسل إلى Google Gemini\n" +
-            "عند طلب وصف صورة، قراءة ملف، تحليل نص، ترجمة محتوى، أو استخدام ميزة تعتمد على الذكاء الاصطناعي، يرسل التطبيق المحتوى الذي اخترته فقط إلى Google Gemini API لمعالجته وإعادة النتيجة. قد يشمل ذلك:\n" +
-            "• النص الذي تكتبه أو تمليه صوتياً.\n" +
-            "• الصورة التي تختار التقاطها أو رفعها.\n" +
-            "• الملف أو المستند الذي تختار تحليله.\n" +
-            "• السؤال أو التعليمات المرتبطة بالمحتوى.\n" +
-            "\n" +
-            "لا يحتفظ التطبيق بنسخة لدى المطوّر من المحتوى المرسل إذا لم تكن هناك خوادم وسيطة تابعة للمطوّر. تخضع معالجة Google للبيانات لشروط وسياسات Google ذات الصلة.\n" +
-            "\n" +
-            "5) ميزة \"اسأل عن المستند\"\n" +
-            "عند استخدام ميزة \"اسأل عن المستند\" أو أي ميزة تعتمد على رفع ملف عبر Files API، قد يتم رفع ملف PDF إلى خوادم Google لمدة تصل إلى 48 ساعة، ثم يُحذف تلقائياً وفق سياسة Google لهذه الواجهة. لا تستخدم هذه الميزة مع مستندات شديدة الحساسية إلا إذا كنت تقبل هذا النوع من المعالجة.\n" +
-            "\n" +
-            "6) مراقبة إساءة الاستخدام لدى الخدمات الخارجية\n" +
-            "قد تحتفظ Google، وفق سياساتها الخاصة، ببعض بيانات الطلبات والمخرجات لمدة محددة لأغراض السلامة، منع إساءة الاستخدام، إنفاذ السياسات، أو الامتثال القانوني. هذه المعالجة تتم خارج سيطرة المطوّر المباشرة، ويجب مراجعة شروط وسياسات Google لفهمها بدقة.\n" +
-            "\n" +
-            "7) البيانات التي لا يجمعها التطبيق\n" +
-            "لا يجمع التطبيق، بحسب التصميم الحالي:\n" +
-            "• حسابات مستخدمين داخل بصير.\n" +
-            "• كلمات مرور خاصة ببصير.\n" +
-            "• بيانات إعلانية أو معرفات إعلانية.\n" +
-            "• تتبعاً تحليلياً تسويقياً.\n" +
-            "• قائمة جهات الاتصال كاملة.\n" +
-            "• الموقع الجغرافي في الخلفية.\n" +
-            "• تسجيلات صوتية دائمة لدى المطوّر.\n" +
-            "• نسخاً من ملفاتك على خوادم المطوّر.\n" +
-            "\n" +
-            "8) الموقع الجغرافي والطوارئ\n" +
-            "لا يستخدم التطبيق موقع GPS إلا في وضع الطوارئ، وعند اختيارك الصريح إرسال موقعك. في هذه الحالة، قد تُرفق إحداثيات تقريبية أو رابط موقع برسالة الطوارئ إلى الجهة التي اخترتها. لا يحصل التطبيق على قائمة جهات اتصالك كاملة، بل يتعامل فقط مع جهة الطوارئ التي تضيفها أو تختارها يدوياً.\n" +
-            "\n" +
-            "9) الأذونات وسبب طلبها\n" +
-            "• الكاميرا: لالتقاط الصور التي تختار وصفها أو تحليلها.\n" +
-            "• الميكروفون: لإدخال الأوامر أو الأسئلة صوتياً، وقد يستخدم التعرف الصوتي خدمة مدمجة في نظام Android أو خدمة خارجية بحسب الجهاز.\n" +
-            "• الموقع: لاستخدامه في الطوارئ عند اختيارك الصريح.\n" +
-            "• التخزين أو الملفات: لحفظ الملفات المحولة أو قراءة ملف تختاره أنت.\n" +
-            "• الإنترنت: للاتصال بخدمات Gemini أو الخدمات الخارجية اللازمة لتشغيل بعض الميزات.\n" +
-            "• الإشعارات، إن وُجدت: لتنبيهك بنتائج أو حالات تشغيل مهمة داخل التطبيق.\n" +
-            "\n" +
-            "يمكنك التحكم في كثير من هذه الأذونات من إعدادات جهازك، وقد يؤدي تعطيل بعضها إلى توقف ميزات معينة.\n" +
-            "\n" +
-            "10) الغرض من معالجة البيانات\n" +
-            "تُستخدم البيانات فقط لتشغيل الميزات التي تطلبها، مثل وصف صورة، قراءة مستند، ترجمة نص، حفظ تفضيلاتك، إرسال رسالة طوارئ، أو تحسين قابلية الوصول داخل التطبيق. لا تُستخدم بياناتك داخل بصير لبناء ملفات إعلانية أو بيعها لأطراف ثالثة.\n" +
-            "\n" +
-            "11) الأساس النظامي أو سبب المعالجة\n" +
-            "يعتمد التطبيق غالباً على اختيارك وطلبك الصريح للميزة، مثل اختيار صورة أو ملف أو الضغط على زر الطوارئ. وبقدر انطباق أنظمة حماية البيانات، قد يكون أساس المعالجة هو موافقتك، تنفيذ طلبك، المصلحة المشروعة في تشغيل التطبيق وأمانه، أو الالتزام النظامي عند الاقتضاء.\n" +
-            "\n" +
-            "12) الاحتفاظ بالبيانات\n" +
-            "• البيانات المحلية تبقى على جهازك إلى أن تحذفها من الإعدادات، أو تحذف ملفات التنزيلات، أو تلغي تثبيت التطبيق.\n" +
-            "• سجل آخر العمليات، إن وُجد، يكون قابلاً للحذف من الإعدادات.\n" +
-            "• الملفات المحولة في مجلد التنزيلات تبقى حتى تحذفها أنت من جهازك.\n" +
-            "• المحتوى المرسل إلى Google يخضع لمدد الاحتفاظ وسياسات Google، ومنها التخزين المؤقت لبعض الملفات وفق طريقة الرفع المستخدمة.\n" +
-            "\n" +
-            "13) حذف البيانات والتحكم بها\n" +
-            "يمكنك التحكم في بياناتك عبر:\n" +
-            "• الإعدادات داخل التطبيق: استخدام خيار مسح المحفوظات أو العناصر المحفوظة، إن توفر.\n" +
-            "• مدير الملفات: حذف الملفات المحولة من مجلد التنزيلات.\n" +
-            "• إعدادات الجهاز: إلغاء الأذونات مثل الكاميرا، الميكروفون، الموقع، أو التخزين.\n" +
-            "• إلغاء تثبيت التطبيق: يحذف غالبية بيانات التطبيق المحلية، مع بقاء الملفات التي حفظتها خارج مساحة التطبيق مثل مجلد التنزيلات إلى أن تحذفها يدوياً.\n" +
-            "\n" +
-            "14) حقوقك\n" +
-            "بقدر ما تنطبق أنظمة حماية البيانات، قد يكون لك الحق في طلب الوصول إلى بياناتك، تصحيحها، حذفها، تقييد معالجتها، سحب موافقتك، الاعتراض على بعض صور المعالجة، أو تقديم شكوى إلى الجهة المختصة. نظراً لأن معظم البيانات محفوظة محلياً على جهازك، فإن أسرع طريقة لممارسة كثير من هذه الحقوق هي من خلال إعدادات التطبيق والجهاز.\n" +
-            "\n" +
-            "15) مشاركة البيانات مع أطراف ثالثة\n" +
-            "لا يبيع المطوّر بياناتك. قد تتم مشاركة أو إرسال البيانات فقط بالقدر اللازم لتشغيل الميزات التي تطلبها، مثل إرسال المحتوى إلى Google Gemini API، استخدام خدمات نظام Android، مشاركة رسالة طوارئ عبر تطبيق مراسلة تختاره، أو الامتثال لطلب نظامي صحيح عند الاقتضاء.\n" +
-            "\n" +
-            "16) النقل خارج المملكة\n" +
-            "عند استخدام Google Gemini أو أي خدمة خارجية عالمية، قد تُعالج البيانات أو تُنقل خارج المملكة العربية السعودية بحسب بنية الخدمة وسياساتها. باستخدامك الميزات التي تتطلب تلك الخدمات، فإنك تقر بإمكان حدوث هذا النقل بالقدر اللازم لتشغيل الميزة.\n" +
-            "\n" +
-            "17) أمن البيانات\n" +
-            "يعتمد التطبيق على تخزين محلي داخل جهازك وعلى آليات الأمان التي يوفرها نظام التشغيل. ومع ذلك، لا توجد وسيلة تخزين أو نقل إلكتروني آمنة بنسبة 100%. عليك حماية جهازك بكلمة مرور أو بصمة، وعدم مشاركة مفتاح API، وتجنب رفع بيانات شديدة الحساسية إلا عند الحاجة.\n" +
-            "\n" +
-            "18) مفتاح API\n" +
-            "إذا أدخلت مفتاح Gemini API يدوياً، فيُخزن محلياً على جهازك لاستخدامه في الاتصال بالخدمة. أنت مسؤول عن المحافظة عليه، وعن أي رسوم أو حدود استخدام مرتبطة به لدى Google. إذا فقدت السيطرة عليه، قم بإلغائه أو تدويره من حسابك لدى Google.\n" +
-            "\n" +
-            "19) بيانات الأطفال\n" +
-            "لا يستهدف التطبيق جمع بيانات الأطفال عمداً. إذا استخدم طفل التطبيق، فيجب أن يكون ذلك بإشراف ولي الأمر أو بموافقته، خصوصاً عند رفع صور أو مستندات أو بيانات تعليمية أو صحية.\n" +
-            "\n" +
-            "20) القرارات الآلية\n" +
-            "قد يقدم التطبيق مخرجات مولدة آلياً، لكنه لا ينبغي أن يكون المصدر الوحيد لاتخاذ قرارات مؤثرة قانونياً أو طبياً أو مالياً أو تعليمياً أو متعلقة بالسلامة. يجب وجود مراجعة بشرية مؤهلة عند الحاجة.\n" +
-            "\n" +
-            "21) روابط وخدمات الأطراف الثالثة\n" +
-            "قد يحتوي التطبيق أو صفحته على روابط أو يعتمد على خدمات خارجية. لسنا مسؤولين عن ممارسات الخصوصية لدى تلك الجهات. ننصح بمراجعة سياسات Google وأي خدمة أخرى تستخدمها من خلال التطبيق.\n" +
-            "\n" +
-            "22) تحديثات هذه السياسة\n" +
-            "إذا تغيّرت ممارساتنا بشأن البيانات أو أضيفت ميزات جديدة تؤثر على الخصوصية، فسيتم تحديث هذه السياسة. استمرارك في استخدام التطبيق بعد تحديث السياسة يعني قبولك للنسخة المعدلة بالقدر الذي يسمح به النظام.\n" +
-            "\n" +
-            "23) التواصل\n" +
-            "لأي سؤال أو طلب متعلق بالخصوصية، يمكنك التواصل مع المطوّر عبر وسيلة التواصل المنشورة داخل التطبيق أو صفحة التطبيق في المتجر.\n" +
-            "\n" +
-            "24) تعارض النسخ اللغوية\n" +
-            "أُعدت النسخة العربية لتكون النسخة المرجعية داخل المملكة العربية السعودية. وتعد النسخة الإنجليزية ترجمة مساعدة، ما لم يقرر المطوّر خلاف ذلك صراحةً.",
-
-            "We take your privacy seriously. This Policy explains, in direct language, what data Basir handles, what remains on your device, and what may be sent to external services such as Google Gemini when you use certain features.\n" +
-            "\n" +
-            "1) Scope of This Policy\n" +
-            "This Policy applies to your use of Basir and its related features. It does not apply to third-party websites, services, or policies, including Google services, except to the extent this Policy explains how the app connects with them.\n" +
-            "\n" +
-            "2) Quick Summary\n" +
-            "• The app does not require you to create a Basir account.\n" +
-            "• The app does not use ads or advertising identifiers.\n" +
-            "• The app does not use marketing analytics tracking.\n" +
-            "• Most data is stored locally on your device.\n" +
-            "• Some requests, such as image, file, or text analysis, are sent to Google Gemini API for processing.\n" +
-            "• PDFs uploaded through the \"Ask about document\" feature may be stored by Google for up to 48 hours under the Files API mechanism.\n" +
-            "• You can delete local data through settings or by uninstalling the app.\n" +
-            "\n" +
-            "3) Data Stored Locally on Your Device\n" +
-            "Depending on how you use the app, the following data may be stored locally only:\n" +
-            "• Your Gemini API key, if you enter it manually.\n" +
-            "• Preferences such as language, font size, speech rate, and connection mode.\n" +
-            "• Items you manually save, such as people, products, medications, places, or related notes.\n" +
-            "• Converted-document history in your Downloads folder or the folder selected by the operating system.\n" +
-            "• Recent activity log inside the app, if enabled, which is text-only and can be deleted from settings.\n" +
-            "• The emergency contact you manually add, if you use the emergency feature.\n" +
-            "\n" +
-            "This data is not sent to the Developer's servers as long as the app operates in the direct local mode described in this Policy.\n" +
-            "\n" +
-            "4) Data That May Be Sent to Google Gemini\n" +
-            "When you request image description, file reading, text analysis, translation, or another AI-powered feature, the app sends only the content you chose to Google Gemini API for processing and returns the result. This may include:\n" +
-            "• Text you type or dictate.\n" +
-            "• An image you choose to capture or upload.\n" +
-            "• A file or document you choose to analyze.\n" +
-            "• The question or instruction associated with the content.\n" +
-            "\n" +
-            "The app does not keep a Developer-side copy of submitted content if no Developer-operated intermediary servers are used. Google's processing is governed by Google's applicable terms and policies.\n" +
-            "\n" +
-            "5) \"Ask about Document\" Feature\n" +
-            "When you use the \"Ask about document\" feature or any feature that uploads a file through the Files API, your PDF may be uploaded to Google's servers for up to 48 hours and then automatically deleted according to Google's policy for that interface. Do not use this feature with highly sensitive documents unless you accept this form of processing.\n" +
-            "\n" +
-            "6) Abuse Monitoring by External Services\n" +
-            "Google may, under its own policies, retain certain request and output data for a limited period for safety, abuse prevention, policy enforcement, or legal compliance. This processing is outside the Developer's direct control, and you should review Google's terms and policies to understand it accurately.\n" +
-            "\n" +
-            "7) Data the App Does Not Collect\n" +
-            "Under the current design, the app does not collect:\n" +
-            "• Basir user accounts.\n" +
-            "• Basir-specific passwords.\n" +
-            "• Advertising data or advertising identifiers.\n" +
-            "• Marketing analytics tracking.\n" +
-            "• Your full contact list.\n" +
-            "• Background GPS location.\n" +
-            "• Permanent voice recordings held by the Developer.\n" +
-            "• Copies of your files on the Developer's servers.\n" +
-            "\n" +
-            "8) Location and Emergency Mode\n" +
-            "The app does not use GPS location except in Emergency mode and only when you expressly choose to send your location. In that case, an approximate coordinate or location link may be attached to an emergency message sent to the contact you selected. The app does not access your full contact list and only uses the emergency contact you manually add or choose.\n" +
-            "\n" +
-            "9) Permissions and Why We Request Them\n" +
-            "• Camera: to capture photos you choose to describe or analyze.\n" +
-            "• Microphone: to enter commands or questions by voice; speech recognition may use an Android built-in service or an external service depending on your device.\n" +
-            "• Location: for Emergency mode only when you expressly choose to use it.\n" +
-            "• Storage or files: to save converted files or read a file you choose.\n" +
-            "• Internet: to connect to Gemini or other external services required for certain features.\n" +
-            "• Notifications, if present: to alert you about important results or app status.\n" +
-            "\n" +
-            "You can control many of these permissions through your device settings. Disabling some permissions may stop certain features from working.\n" +
-            "\n" +
-            "10) Purpose of Processing\n" +
-            "Data is used only to operate the features you request, such as describing an image, reading a document, translating text, saving preferences, sending an emergency message, or improving accessibility inside the app. Basir does not use your data to build advertising profiles or sell it to third parties.\n" +
-            "\n" +
-            "11) Legal Basis or Reason for Processing\n" +
-            "The app generally relies on your explicit choice and request for a feature, such as selecting an image or file or pressing the emergency button. To the extent data-protection laws apply, processing may be based on your consent, performance of your request, legitimate interest in operating and securing the app, or legal obligation where applicable.\n" +
-            "\n" +
-            "12) Data Retention\n" +
-            "• Local data remains on your device until you delete it from settings, delete files from Downloads, or uninstall the app.\n" +
-            "• Recent activity logs, if present, can be deleted from settings.\n" +
-            "• Converted files in your Downloads folder remain until you delete them manually.\n" +
-            "• Content sent to Google is governed by Google's retention periods and policies, including temporary storage for certain files depending on the upload method used.\n" +
-            "\n" +
-            "13) Deleting and Controlling Your Data\n" +
-            "You can control your data through:\n" +
-            "• App settings: use the clear history or saved items option, if available.\n" +
-            "• File manager: delete converted files from Downloads.\n" +
-            "• Device settings: revoke permissions such as camera, microphone, location, or storage.\n" +
-            "• Uninstalling the app: this deletes most local app data, while files saved outside the app's private space, such as Downloads, may remain until you delete them manually.\n" +
-            "\n" +
-            "14) Your Rights\n" +
-            "To the extent data-protection laws apply, you may have the right to request access, correction, deletion, restriction, withdrawal of consent, objection to certain processing, or to file a complaint with the competent authority. Because most data is stored locally on your device, the fastest way to exercise many of these rights is through the app and device settings.\n" +
-            "\n" +
-            "15) Sharing Data With Third Parties\n" +
-            "The Developer does not sell your data. Data may be shared or transmitted only as necessary to operate the features you request, such as sending content to Google Gemini API, using Android system services, sharing an emergency message through a messaging app you choose, or complying with a valid legal request where applicable.\n" +
-            "\n" +
-            "16) International Transfers\n" +
-            "When you use Google Gemini or another global external service, data may be processed in or transferred outside the Kingdom of Saudi Arabia according to that service's infrastructure and policies. By using features that require those services, you acknowledge that such transfer may occur to the extent necessary to operate the feature.\n" +
-            "\n" +
-            "17) Data Security\n" +
-            "The app relies on local storage on your device and the security mechanisms provided by your operating system. However, no electronic storage or transmission method is 100% secure. You should protect your device with a passcode or biometric lock, avoid sharing your API key, and avoid uploading highly sensitive data unless necessary.\n" +
-            "\n" +
-            "18) API Key\n" +
-            "If you manually enter a Gemini API key, it is stored locally on your device for use in connecting to the service. You are responsible for protecting it and for any fees or usage limits associated with it under your Google account. If you lose control of it, revoke or rotate it from your Google account.\n" +
-            "\n" +
-            "19) Children's Data\n" +
-            "The app is not designed to intentionally collect children's data. If a child uses the app, it must be under parental or guardian supervision or consent, especially when uploading images, documents, educational data, or health data.\n" +
-            "\n" +
-            "20) Automated Outputs\n" +
-            "The app may provide automatically generated outputs, but it should not be the sole source for legally, medically, financially, educationally, or safety-significant decisions. Qualified human review should be used when needed.\n" +
-            "\n" +
-            "21) Third-Party Links and Services\n" +
-            "The app or its store page may contain links to, or rely on, external services. We are not responsible for the privacy practices of those third parties. You should review the policies of Google and any other service you use through the app.\n" +
-            "\n" +
-            "22) Updates to This Policy\n" +
-            "If our data practices change or new features affecting privacy are added, this Policy will be updated. Continued use of the app after an update means you accept the revised Policy to the extent permitted by law.\n" +
-            "\n" +
-            "23) Contact\n" +
-            "For privacy questions or requests, you may contact the Developer through the contact method published inside the app or on the app's store page.\n" +
-            "\n" +
-            "24) Language Conflict\n" +
-            "The Arabic version is intended to be the reference version within the Kingdom of Saudi Arabia. The English version is provided as an assisting translation unless the Developer expressly states otherwise."));
-
+                host.t("الإصدار القانوني 3 — سارية من 5 يونيو 2026",
+                        "Legal version 3 — Effective 5 June 2026"));
+        host.addPlainText(host.t(PRIVACY_AR, PRIVACY_EN));
         host.addBackButton();
     }
 
     public void showAbout() {
-        host.resetScreen(host.t("حول التطبيق", "About"),
-                host.t("بصير — مساعد ذكي للمكفوفين وضعاف البصر.", "Basir — a smart assistant for blind and low-vision users."));
+        host.resetScreen(host.t("حول بصير", "About Basir"),
+                host.t("مساعد وصول ذكي للمكفوفين وضعاف البصر.",
+                        "An AI accessibility assistant for blind and low-vision users."));
 
         host.addPlainText(host.t(
-                "بصير يساعدك في قراءة المستندات، وصف الصور، ترجمة النصوص، تنظيم محفوظاتك، والاستفادة من أدوات الذكاء الاصطناعي بطريقة آمنة وسهلة.\n\n" +
-                "مهم: التطبيق أداة مساعدة فقط، ولا يغني عن العصا البيضاء، الطبيب، المحامي، أو خدمات الطوارئ الرسمية في المواقف الخطرة.\n\n" +
-                "الخصوصية: لا يتم حفظ الصور أو الملفات تلقائيًا. تتم المعالجة بعد موافقة المستخدم، ويمكن حذف البيانات المحلية من الإعدادات.\n\n" +
-                "الإصدار: " + host.appVersion() + "\n" +
-                "المطور: عبدالله الراشدي\n" +
+                "يساعد بصير في وصف الصور والمشاهد، وقراءة النصوص والمستندات، والترجمة، والمحادثة، وتنظيم النتائج المحفوظة. تختلف بعض الميزات بين Android وiOS.\n\n" +
+                "تنبيه سلامة: بصير أداة مساعدة، ولا يحل محل العصا البيضاء أو الكلب المرشد أو المرافق البشري أو المختص أو خدمات الطوارئ. راجع المعلومات المهمة قبل الاعتماد عليها.\n\n" +
+                "الخصوصية: لا يلزم إنشاء حساب لدى المطوّر ولا توجد إعلانات. عند استخدام الذكاء الاصطناعي، يُرسل المحتوى الذي تختاره إلى Google Gemini مباشرة أو عبر الخادم الوسيط الذي أعددته. راجع سياسة الخصوصية لمعرفة الفروق بين الخدمة المجانية والمدفوعة ومدة الاحتفاظ.\n\n" +
+                "إصدار التطبيق: " + host.appVersion() + "\n" +
+                "المطوّر: عبدالله الراشدي\n" +
                 "البريد: " + host.contactEmail(),
 
-                "Basir helps you read documents, describe images, translate texts, organize your saved items, and use AI tools in a safe and simple way.\n\n" +
-                "Important: The app is assistive only and does not replace a white cane, a doctor, a lawyer, or official emergency services in dangerous situations.\n\n" +
-                "Privacy: Images and files are never saved automatically. Processing happens only after you confirm, and local data can be deleted from settings.\n\n" +
-                "Version: " + host.appVersion() + "\n" +
+                "Basir helps describe images and scenes, read text and documents, translate content, support conversation, and organize saved results. Some features differ between Android and iOS.\n\n" +
+                "Safety notice: Basir is assistive only. It does not replace a white cane, guide dog, human guide, qualified professional, or official emergency services. Verify important information before relying on it.\n\n" +
+                "Privacy: No Developer account is required and there are no ads. When AI is used, Content you choose is sent directly to Google Gemini or through the proxy server you configured. Review the Privacy Policy for the distinction between unpaid and paid services and applicable retention.\n\n" +
+                "App version: " + host.appVersion() + "\n" +
                 "Developer: Abdullah Al-Rashidi\n" +
                 "Email: " + host.contactEmail()));
 
-        host.addPrimaryButton(host.t("مراسلة المطور", "Email the developer"), v -> {
+        host.addPrimaryButton(host.t("مراسلة المطوّر", "Email the Developer"), v -> {
             Intent i = new Intent(Intent.ACTION_SENDTO);
             i.setData(Uri.parse("mailto:" + host.contactEmail()));
             i.putExtra(Intent.EXTRA_SUBJECT, "Basir feedback");
             try { host.launchIntent(i); } catch (Exception e) {
-                host.speak(host.t("تعذر فتح تطبيق البريد.", "Could not open the email app."));
+                host.speak(host.t("تعذّر فتح تطبيق البريد.", "The email app could not be opened."));
             }
         });
-        host.addOutlineButton(host.t("مشاركة التطبيق", "Share the app"), v -> {
+        host.addOutlineButton(host.t("مشاركة معلومات التطبيق", "Share App Information"), v -> {
             Intent i = new Intent(Intent.ACTION_SEND);
             i.setType("text/plain");
             i.putExtra(Intent.EXTRA_TEXT, host.t(
-                    "تطبيق بصير — مساعد ذكي للمكفوفين. تواصل: " + host.contactEmail(),
-                    "Basir — smart assistant for blind users. Contact: " + host.contactEmail()));
-            host.launchIntent(Intent.createChooser(i, host.t("مشاركة", "Share")));
+                    "بصير — مساعد وصول ذكي للمكفوفين وضعاف البصر. للتواصل: " + host.contactEmail(),
+                    "Basir — an AI accessibility assistant for blind and low-vision users. Contact: " + host.contactEmail()));
+            host.launchIntent(Intent.createChooser(i, host.t("اختيار تطبيق للمشاركة", "Choose an app to share")));
         });
         host.addBackButton();
     }

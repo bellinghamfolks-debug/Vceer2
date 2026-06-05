@@ -1,9 +1,7 @@
 // DocumentConvertView.swift
-// Single-shot PDF → structured-text conversion. The user picks a PDF
-// via UIDocumentPicker; we extract its text on-device with PDFKit,
-// hand the text to Gemini wrapped in the standard convert prompt, and
-// render the JSON sections into a plain-text result that lives in the
-// archive + can be shared.
+// Single-shot PDF or plain-text processing. PDF text is extracted
+// on-device with PDFKit; text and CSV files are read directly. The selected
+// text is sent to Gemini and the result is presented as shareable plain text.
 //
 // "Single-shot" means we do NOT chunk + run for minutes in the
 // background. iOS doesn't allow that. The trade-off: maximum 60
@@ -21,9 +19,8 @@ struct DocumentConvertView: View {
     @State private var errorMessage: String?
     @State private var showPicker = false
 
-    /// The single mode the iOS port supports today. Translation is the
-    /// next slice; non-translate "convert to structured Word" is too
-    /// dependent on a DocxBuilder port that's still to come.
+    /// Empty means organize the extracted text without translation.
+    /// A selected language requests translation while preserving structure.
     @State private var translateTo: String = ""
 
     var body: some View {
@@ -41,8 +38,8 @@ struct DocumentConvertView: View {
                 if isLoading {
                     HStack {
                         ProgressView()
-                        Text(L10n.t("جارٍ المعالجة عبر Gemini...",
-                                     "Processing via Gemini..."))
+                        Text(L10n.t("جارٍ تنفيذ الطلب عبر Gemini...",
+                                     "Processing the request with Gemini..."))
                     }
                 }
 
@@ -74,8 +71,8 @@ struct DocumentConvertView: View {
             }
             .padding(20)
         }
-        .navigationTitle(L10n.t("تحويل وترجمة المستندات",
-                                 "Convert and translate documents"))
+        .navigationTitle(L10n.t("قراءة مستند وترجمته",
+                                 "Read and translate a document"))
         .fileImporter(
             isPresented: $showPicker,
             allowedContentTypes: [.pdf, .commaSeparatedText, .plainText],
@@ -100,12 +97,12 @@ struct DocumentConvertView: View {
                 HStack {
                     Image(systemName: "doc.fill.badge.plus")
                         .font(.title)
-                    Text(L10n.t("اختر ملف PDF", "Pick a PDF"))
+                    Text(L10n.t("اختر PDF أو ملفًا نصيًا", "Choose a PDF or text file"))
                         .font(.title3.bold())
                 }
                 Text(L10n.t(
-                    "حدّ أقصى 60 صفحة في الدفعة الواحدة. للملفات الأطول قسّم الملف أولاً.",
-                    "Up to 60 pages per single-shot run. Split longer files first."
+                    "يدعم PDF حتى 60 صفحة، وملفات TXT وCSV. يُرسل النص المستخرج إلى Gemini، وتظهر النتيجة كنص قابل للنسخ والمشاركة.",
+                    "Supports PDFs of up to 60 pages and TXT or CSV files. Extracted text is sent to Gemini, and the result appears as copyable, shareable text."
                 ))
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -132,13 +129,13 @@ struct DocumentConvertView: View {
 
     private var translationPicker: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(L10n.t("اختياري: ترجمة إلى لغة معيّنة",
-                         "Optional: translate to a target language"))
+            Text(L10n.t("اختياري: ترجمة النص المستخرج",
+                         "Optional: translate the extracted text"))
                 .font(.subheadline.bold())
             Picker(L10n.t("لغة الترجمة", "Translation target"),
                     selection: $translateTo) {
-                Text(L10n.t("بدون ترجمة (تحليل فقط)",
-                             "No translation (analyse only)")).tag("")
+                Text(L10n.t("تنظيم النص دون ترجمة",
+                             "Structure the text without translation")).tag("")
                 ForEach(L10n.supportedTranslationLanguages.filter { $0.code != "auto" },
                          id: \.code) { lang in
                     Text(BasirSettings.shared.language == .arabic
@@ -157,7 +154,7 @@ struct DocumentConvertView: View {
                 if isLoading { ProgressView().tint(.white) }
                 Text(isLoading
                      ? L10n.t("جارٍ المعالجة...", "Processing...")
-                     : L10n.t("تشغيل", "Run"))
+                     : L10n.t("بدء المعالجة", "Start processing"))
                     .fontWeight(.semibold)
             }
             .frame(maxWidth: .infinity, minHeight: 56)
@@ -198,10 +195,22 @@ struct DocumentConvertView: View {
         defer { isLoading = false }
 
         do {
-            let extracted = try PdfReader.extractText(from: url)
+            let extracted: String
+            if url.pathExtension.lowercased() == "pdf" {
+                extracted = try PdfReader.extractText(from: url)
+            } else {
+                extracted = try String(contentsOf: url, encoding: .utf8)
+            }
+            guard !extracted.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw NSError(domain: "BasirDocument", code: 1,
+                              userInfo: [NSLocalizedDescriptionKey:
+                                L10n.t("لم يُعثر على نص قابل للقراءة في الملف.",
+                                       "No readable text was found in the file.")])
+            }
             var instruction = "You are processing a document for a blind user. "
                 + "Preserve heading levels, list items, and tables. "
-                + "Output a clean readable text version optimized for screen-readers."
+                + "Output clean, readable plain text optimized for screen readers. "
+                + "Do not claim that images or tables were read unless their content exists in the extracted text."
             if !translateTo.isEmpty {
                 let tgtName = GeminiPrompts.bcp47Name(translateTo)
                 instruction = "TRANSLATE the document into \(tgtName). "
@@ -219,14 +228,14 @@ struct DocumentConvertView: View {
             resultText = response
             // Auto-save to archive when enabled in settings.
             ArchiveStore.shared.addResult(ArchivedResult(
-                title: url.lastPathComponent,
+                title: L10n.t("معالجة: ", "Processed: ") + url.lastPathComponent,
                 kind: translateTo.isEmpty ? "convert" : "translate_doc",
                 text: response,
                 summary: String(response.prefix(140))
             ))
             UIAccessibility.post(notification: .announcement,
-                                  argument: L10n.t("اكتمل التحويل.",
-                                                    "Conversion complete."))
+                                  argument: L10n.t("اكتملت المعالجة. راجع النتيجة قبل استخدامها.",
+                                                    "Processing is complete. Review the result before using it."))
         } catch {
             errorMessage = UserFriendlyErrorMapper.map(error)
         }

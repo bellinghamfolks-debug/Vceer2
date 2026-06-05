@@ -4,29 +4,38 @@ import SwiftUI
 struct AboutView: View {
     private let contactEmail = "ubdallahalrashdee@gmail.com"
 
+    private var appVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
+    }
+
+    private var buildNumber: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "—"
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 Text(L10n.t(
-                    "بصير يساعدك في قراءة المستندات، وصف الصور، ترجمة النصوص، تنظيم محفوظاتك، والاستفادة من أدوات الذكاء الاصطناعي بطريقة آمنة وسهلة.",
-                    "Basir helps you read documents, describe images, translate text, organise saved items, and use AI tools in a safe and simple way."
+                    "بصير مساعد وصول ذكي للمكفوفين وضعاف البصر. يساعد في وصف الصور، وقراءة النصوص والمستندات، والترجمة، والمحادثة، وتنظيم النتائج المحفوظة.",
+                    "Basir is an AI accessibility assistant for blind and low-vision users. It helps describe images, read text and documents, translate content, support conversation, and organize saved results."
                 ))
 
                 Text(L10n.t(
-                    "مهم: التطبيق أداة مساعدة فقط، ولا يغني عن العصا البيضاء، الطبيب، المحامي، أو خدمات الطوارئ الرسمية في المواقف الخطرة.",
-                    "Important: The app is assistive only and does not replace a white cane, doctor, lawyer, or official emergency services in dangerous situations."
+                    "تنبيه سلامة: بصير أداة مساعدة، ولا يحل محل العصا البيضاء أو الكلب المرشد أو المرافق البشري أو المختص أو خدمات الطوارئ. راجع المعلومات المهمة قبل الاعتماد عليها.",
+                    "Safety notice: Basir is assistive only. It does not replace a white cane, guide dog, human guide, qualified professional, or official emergency services. Verify important information before relying on it."
                 ))
                 .foregroundStyle(.secondary)
 
                 Text(L10n.t(
-                    "الخصوصية: لا يتم حفظ الصور أو الملفات تلقائيًا. تتم المعالجة بعد موافقة المستخدم، ويمكن حذف البيانات المحلية من الإعدادات.",
-                    "Privacy: Images and files are never saved automatically. Processing happens only after you confirm, and local data can be deleted from settings."
+                    "الخصوصية: لا يلزم إنشاء حساب لدى المطوّر ولا توجد إعلانات. عند استخدام الذكاء الاصطناعي، يُرسل المحتوى الذي تختاره مباشرة إلى Google Gemini. راجع سياسة الخصوصية لمعرفة التخزين المحلي ومعالجة Google للخدمات المجانية والمدفوعة.",
+                    "Privacy: No Developer account is required and there are no ads. When AI is used, content you choose is sent directly to Google Gemini. Review the Privacy Policy for local storage and Google's handling of unpaid and paid services."
                 ))
                 .foregroundStyle(.secondary)
 
                 Group {
-                    Text(L10n.t("الإصدار: ", "Version: ") + "0.1 (iOS port)")
-                    Text(L10n.t("المطور: عبدالله الراشدي",
+                    Text(L10n.t("إصدار التطبيق: ", "App version: ") + appVersion)
+                    Text(L10n.t("رقم البناء: ", "Build: ") + buildNumber)
+                    Text(L10n.t("المطوّر: عبدالله الراشدي",
                                  "Developer: Abdullah Al-Rashidi"))
                     Text(L10n.t("البريد: ", "Email: ") + contactEmail)
                 }
@@ -34,13 +43,13 @@ struct AboutView: View {
                 .foregroundStyle(.secondary)
 
                 Button {
-                    if let url = URL(string: "mailto:\(contactEmail)") {
+                    if let url = URL(string: "mailto:\(contactEmail)?subject=Basir%20feedback") {
                         UIApplication.shared.open(url)
                     }
                 } label: {
                     HStack {
                         Image(systemName: "envelope.fill")
-                        Text(L10n.t("مراسلة المطور", "Email the developer"))
+                        Text(L10n.t("مراسلة المطوّر", "Email the developer"))
                             .fontWeight(.semibold)
                     }
                     .frame(maxWidth: .infinity, minHeight: 56)
@@ -48,9 +57,11 @@ struct AboutView: View {
                     .foregroundStyle(.white)
                     .clipShape(RoundedRectangle(cornerRadius: 14))
                 }
+                .accessibilityHint(L10n.t("يفتح تطبيق البريد برسالة جديدة.",
+                                          "Opens the email app with a new message."))
             }
             .padding(20)
         }
-        .navigationTitle(L10n.t("حول التطبيق", "About"))
+        .navigationTitle(L10n.t("حول بصير", "About Basir"))
     }
 }

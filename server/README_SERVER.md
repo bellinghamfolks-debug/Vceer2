@@ -1,59 +1,60 @@
-# Basir - Gemini Proxy Server (v1.0.1)
+# Basir Gemini Proxy Server
 
-Tiny Node.js server that powers Basir's AI features. Holds the Google Gemini
-API key so it never lives inside the APK.
+This folder contains a sample Node.js proxy for Basir Android. It keeps the Gemini API key on the server instead of placing it in the APK.
+
+Current server package version: **1.0.1**
 
 ## Endpoints
 
 ### `POST /api/basir`
-Text questions, image analysis, translation, replies.
+
+Handles text questions, image analysis, translation, and writing tasks.
+
+Example JSON body:
 
 ```json
 {
   "task": "ask",
-  "input": "What's on this page?",
-  "instruction": "Be concise.",
-  "language": "ar",
-  "image_base64": "...optional base64...",
+  "input": "What is shown on this page?",
+  "instruction": "Answer clearly for a screen reader.",
+  "language": "en",
+  "image_base64": "optional base64 data",
   "mime_type": "image/jpeg"
 }
 ```
-Returns: `{ "answer": "...", "task": "ask", "model": "gemini-3-flash-preview" }`
 
 ### `POST /api/convert`
-Convert a PDF or PPTX into a `.docx` file with image and table descriptions
-(multipart form-data). Form fields:
-- `file` (the .pdf or .pptx)
-- `language` ("ar" or "en")
-- `mode` ("full" | "simple" | "descriptions_only" | "text_only")
 
-Returns the `.docx` directly as a binary download.
+Accepts a PDF or PowerPoint file as multipart form data and returns a generated `.docx` file.
 
-## Quick start
+Fields:
+
+- `file`
+- `language`: `ar` or `en`
+- `mode`: `full`, `simple`, `descriptions_only`, or `text_only`
+
+## Setup
 
 ```bash
 cd server
 cp .env.example .env
-# Set GEMINI_API_KEY and BASIR_APP_TOKEN
 npm install
 npm start
 ```
 
-Then in the Basir Android app: **Settings → Gemini setup**, paste your public
-proxy URL and the same `BASIR_APP_TOKEN`, then tap **Test Gemini connection**.
+Set at least:
 
-## Models
+- `GEMINI_API_KEY`
+- `BASIR_APP_TOKEN`
 
-| Task type                | Model                       |
-|--------------------------|-----------------------------|
-| Quick Q&A, translation,  | `gemini-3-flash-preview`    |
-| polite reply, health check |                           |
-| Image analysis, docs,    | `gemini-3-pro-preview`      |
-| legal, medical, PDF→Word |                           |
+In Basir Android, open **Settings**, then **Gemini setup**, choose proxy mode, enter the public HTTPS URL and matching token, and test the connection.
 
-Override via `GEMINI_MODEL_FAST` and `GEMINI_MODEL_PRIMARY` in `.env`.
+## Data handling
 
-## Privacy
+- Temporary uploaded conversion files are deleted by this sample server after the request finishes.
+- The server does not intentionally create a user account or permanent content archive.
+- Hosting-provider logs, network logs, crash logs, backups, and operational monitoring may still retain metadata or content depending on deployment configuration.
+- The operator is responsible for HTTPS, access control, log settings, retention, deletion, breach handling, and a privacy notice that matches the deployed environment.
+- Content forwarded to Google Gemini remains subject to Google’s terms and data-handling rules.
 
-- Uploaded files are deleted immediately after the `.docx` is built.
-- No data is stored on the server beyond the temporary upload.
+Do not describe an independently deployed proxy as a “Basir server” unless its operator, configuration, and policy are actually controlled by the Basir publisher.

@@ -18,8 +18,8 @@ struct HomeView: View {
                             icon: "bubble.left.and.bubble.right.fill",
                             title: L10n.t("اسأل بصير", "Ask Basir"),
                             description: L10n.t(
-                                "اكتب سؤالك أو أمليه صوتيًا لتحصل على إجابة واضحة ومنظمة.",
-                                "Type or dictate your question to get a clear, structured answer."
+                                "اكتب سؤالك أو استخدم الإملاء الصوتي. راجع المعلومات المهمة قبل الاعتماد عليها.",
+                                "Type your question or use voice dictation. Verify important information before relying on it."
                             )
                         )
                     }
@@ -32,8 +32,8 @@ struct HomeView: View {
                             icon: "globe",
                             title: L10n.t("ترجمة وشرح", "Translate and explain"),
                             description: L10n.t(
-                                "ترجم النصوص بين 20 لغة، وافهم المعنى والنبرة والسياق.",
-                                "Translate text across 20 languages, with tone and context notes."
+                                "ترجم النصوص بين اللغات المدعومة، مع توضيح المعنى والنبرة والسياق عند طلبك.",
+                                "Translate text across supported languages, with tone and context notes when requested."
                             )
                         )
                     }
@@ -56,8 +56,8 @@ struct Hero: View {
                 .foregroundStyle(.white)
                 .accessibilityAddTraits(.isHeader)
             Text(L10n.t(
-                "مساعدك الذكي لقراءة النصوص ووصف الصور وترجمة المستندات",
-                "Your smart assistant for reading text, describing images, and translating documents"
+                "مساعد وصول ذكي للصور والمستندات والترجمة والمحادثة",
+                "An AI accessibility assistant for images, documents, translation, and conversation"
             ))
             .font(.body)
             .foregroundStyle(.white.opacity(0.85))
