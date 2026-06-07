@@ -96,7 +96,7 @@ struct AskBasirView: View {
         defer { isLoading = false }
 
         do {
-            let response = try await GeminiAiProvider().ask(
+            let response = try await AiProviderFactory.current().ask(
                 task: .ask,
                 input: q,
                 instruction: "Answer as Basir, screen-reader friendly and practical.",

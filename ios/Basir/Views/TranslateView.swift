@@ -164,7 +164,7 @@ struct TranslateView: View {
         )
 
         do {
-            let response = try await GeminiAiProvider().ask(
+            let response = try await AiProviderFactory.current().ask(
                 task: .translate,
                 input: text,
                 instruction: instruction,

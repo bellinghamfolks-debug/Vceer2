@@ -41,9 +41,14 @@ The current iOS implementation does not create a Word file and does not keep an 
 
 ## Connection behavior
 
-The current iOS implementation uses direct HTTPS requests to Google Gemini with a user-provided API key. Proxy mode is not implemented in the active iOS provider.
+iOS now supports the same two connection modes as Android:
 
-The API key is stored in the standard iOS Keychain. Content selected for an AI task is sent to Google Gemini. Review the in-app Privacy Policy before using personal, confidential, or sensitive content.
+- **Direct mode** — HTTPS requests go from the device to Google Gemini using a user-provided API key stored in the iOS Keychain. The default for new installs.
+- **Proxy mode** — requests go through a user-configured HTTPS proxy server that holds the Gemini API key. The shared wire format matches `server/index.js` and Android's `ProxyAiProvider`, so a single self-hosted proxy can serve both apps. An optional shared client token can be sent in the `X-Basir-Client-Token` header.
+
+The active mode and proxy URL/token are configurable from Settings → AI connection mode. iOS does not validate the proxy operator's identity or policy — the user is responsible for choosing a server they trust.
+
+Content selected for an AI task is sent to Google Gemini (direct) or to the configured proxy (proxy). Review the in-app Privacy Policy before using personal, confidential, or sensitive content.
 
 ## Safety behavior
 

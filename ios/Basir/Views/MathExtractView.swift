@@ -103,7 +103,7 @@ struct MathExtractView: View {
             let mime = "image/jpeg"
             let isEnglish = BasirSettings.shared.language == .english
             let instruction = GeminiPrompts.mathExtractionInstruction(english: isEnglish)
-            let response = try await GeminiAiProvider().ask(
+            let response = try await AiProviderFactory.current().ask(
                 task: .mathExtract,
                 input: "",
                 instruction: instruction,

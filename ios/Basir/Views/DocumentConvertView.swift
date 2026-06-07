@@ -217,7 +217,7 @@ struct DocumentConvertView: View {
                     + "Preserve structure — headings, lists, tables — exactly. "
                     + "Only the language of the text changes."
             }
-            let response = try await GeminiAiProvider().ask(
+            let response = try await AiProviderFactory.current().ask(
                 task: .convert,
                 input: extracted,
                 instruction: instruction,

@@ -142,7 +142,7 @@ struct DescribeImageView: View {
                 }.jpegData(compressionQuality: 0.85)
             } ?? data
 
-            let response = try await GeminiAiProvider().ask(
+            let response = try await AiProviderFactory.current().ask(
                 task: mode.task,
                 input: "",
                 instruction: mode.instruction,

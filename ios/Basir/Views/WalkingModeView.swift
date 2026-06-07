@@ -109,7 +109,7 @@ struct WalkingModeView: View {
             // 1600-px JPEG-85 compression — same wire-saving pass that
             // the Android version uses.
             let compressed = compressForAi(data: data) ?? data
-            let response = try await GeminiAiProvider().ask(
+            let response = try await AiProviderFactory.current().ask(
                 task: .describeImage,
                 input: "",
                 instruction: "Describe the scene for a blind walker. ONE concise paragraph (max 35 words): main objects, obstacles directly ahead, any text or signage, and one practical next-step suggestion. No greetings or filler.",
