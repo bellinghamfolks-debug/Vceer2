@@ -241,20 +241,29 @@ final class LiveSceneGuidanceController: NSObject, ObservableObject {
 
     private func sendToAi(jpeg: Data) async {
         do {
-            let key = KeychainStore.geminiKey()
-            let model = BasirSettings.shared.modelFor(task: .liveScene)
-            let systemText = GeminiPrompts.systemPrompt(
-                for: arabic ? .arabic : .english, instruction: nil)
             let prompt = GeminiPrompts.liveSceneGuidancePrompt(
                 arabic: arabic,
                 recentSummaries: snapshotRecentSummaries(),
                 locationLabel: locationLabel)
-            let resp = try await GeminiClient.generateJsonWithImage(
-                apiKey: key, model: model,
-                systemText: systemText, userMessage: prompt,
-                imageData: jpeg, mimeType: "image/jpeg",
-                maxOutputTokens: 1024)
-            handleResponse(resp)
+            // Route through the configured provider so Proxy mode
+            // works too. The Direct provider switches to JSON mode
+            // internally when it sees task == .liveScene; the Proxy
+            // provider passes the prompt through verbatim and the
+            // upstream server / Gemini still returns a JSON string.
+            let text = try await AiProviderFactory.current().ask(
+                task: .liveScene,
+                input: prompt,
+                instruction: nil,
+                language: arabic ? .arabic : .english,
+                imageData: jpeg,
+                mimeType: "image/jpeg")
+            let trimmed = stripJsonFence(text)
+            guard let data = trimmed.data(using: .utf8),
+                  let obj = try? JSONSerialization.jsonObject(with: data)
+                            as? [String: Any] else {
+                throw GeminiError.decode("liveScene response was not JSON")
+            }
+            handleResponse(obj)
         } catch {
             // Silent skip: a single failed frame should not break the
             // session — the next one in 2 seconds usually succeeds.
@@ -263,6 +272,21 @@ final class LiveSceneGuidanceController: NSObject, ObservableObject {
                           ? "تخطّي إطار: "
                           : "Skipped frame: ") + Self.shortError(mapped)
         }
+    }
+
+    /// Strip ```json fences when an upstream proxy doesn't honour
+    /// JSON mode and Gemini wraps the object in markdown. The Direct
+    /// path already returns bare JSON via responseMimeType, so this
+    /// is a no-op there.
+    private func stripJsonFence(_ s: String) -> String {
+        var t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        if t.hasPrefix("```") {
+            if let firstNewline = t.firstIndex(of: "\n") {
+                t = String(t[t.index(after: firstNewline)...])
+            }
+            if t.hasSuffix("```") { t = String(t.dropLast(3)) }
+        }
+        return t.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func handleResponse(_ resp: [String: Any]) {

@@ -94,6 +94,45 @@ struct GeminiClient {
 
     // MARK: - JSON-mode image request (v3.2 — live scene guidance)
 
+    /// JSON-mode variant that returns the response as a raw String
+    /// (the JSON text). Lets the AiProvider abstraction keep its
+    /// `String` return type while the caller decides when to parse.
+    /// Used by the Direct provider's `.liveScene` branch.
+    static func generateJsonStringWithImage(
+        apiKey: String,
+        model: String,
+        systemText: String,
+        userMessage: String,
+        imageData: Data,
+        mimeType: String,
+        maxOutputTokens: Int = 1024
+    ) async throws -> String {
+        try validate(apiKey)
+        let base64 = imageData.base64EncodedString()
+        let body: [String: Any] = [
+            "system_instruction": [
+                "parts": [["text": systemText]]
+            ],
+            "contents": [[
+                "role": "user",
+                "parts": [
+                    ["text": userMessage],
+                    ["inlineData": [
+                        "mimeType": mimeType,
+                        "data": base64
+                    ]]
+                ]
+            ]],
+            "generationConfig": [
+                "maxOutputTokens": maxOutputTokens,
+                "temperature": 0.2,
+                "responseMimeType": "application/json"
+            ]
+        ]
+        let json = try await post(model: model, apiKey: apiKey, body: body)
+        return try extractTextResponse(from: json)
+    }
+
     /// Mirrors GeminiDirectClient.generateJsonWithImage on Android.
     /// Asks Gemini for application/json output so the response can be
     /// parsed deterministically — used by the Live Scene Guidance loop
@@ -241,6 +280,17 @@ struct GeminiAiProvider: AiProvider {
         guard !key.isEmpty else { throw GeminiError.missingApiKey }
         let model = await MainActor.run { settings.modelFor(task: task) }
         let systemText = GeminiPrompts.systemPrompt(for: language, instruction: instruction)
+        // v3.2 — Live scene guidance carries its prompt as `input`
+        // (not `instruction`) so the proxy sees the full structured
+        // prompt verbatim. The JSON-mode response is requested
+        // server-side by responseMimeType=application/json.
+        if task == .liveScene, let imageData, let mimeType {
+            return try await GeminiClient.generateJsonStringWithImage(
+                apiKey: key, model: model,
+                systemText: systemText, userMessage: input,
+                imageData: imageData, mimeType: mimeType,
+                maxOutputTokens: 1024)
+        }
         let userMessage = GeminiPrompts.userMessage(
             task: task, input: input,
             instruction: instruction,
