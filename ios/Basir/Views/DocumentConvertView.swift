@@ -19,6 +19,26 @@ struct DocumentConvertView: View {
     @State private var errorMessage: String?
     @State private var showPicker = false
 
+    /// Document types iOS now extracts on-device. DOCX and PPTX go
+    /// through DocxReader / PptxReader (the iOS equivalents of
+    /// Android's DocxExtractor / PptxExtractor); PDF goes through
+    /// PdfReader; CSV / TXT are read as plain text.
+    private static let allowedTypes: [UTType] = {
+        var types: [UTType] = [.pdf, .commaSeparatedText, .plainText]
+        // DOCX / PPTX are declared by their MIME types so we work
+        // even on iOS releases that haven't promoted them to a
+        // first-class UTType identifier.
+        if let docx = UTType(mimeType:
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
+            types.append(docx)
+        }
+        if let pptx = UTType(mimeType:
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation") {
+            types.append(pptx)
+        }
+        return types
+    }()
+
     /// Empty means organize the extracted text without translation.
     /// A selected language requests translation while preserving structure.
     @State private var translateTo: String = ""
@@ -75,7 +95,7 @@ struct DocumentConvertView: View {
                                  "Read and translate a document"))
         .fileImporter(
             isPresented: $showPicker,
-            allowedContentTypes: [.pdf, .commaSeparatedText, .plainText],
+            allowedContentTypes: Self.allowedTypes,
             allowsMultipleSelection: false
         ) { result in
             switch result {
@@ -97,12 +117,13 @@ struct DocumentConvertView: View {
                 HStack {
                     Image(systemName: "doc.fill.badge.plus")
                         .font(.title)
-                    Text(L10n.t("اختر PDF أو ملفًا نصيًا", "Choose a PDF or text file"))
+                    Text(L10n.t("اختر مستندًا (PDF أو Word أو PowerPoint أو نص)",
+                                  "Choose a document (PDF, Word, PowerPoint, or text)"))
                         .font(.title3.bold())
                 }
                 Text(L10n.t(
-                    "يدعم PDF حتى 60 صفحة، وملفات TXT وCSV. يُرسل النص المستخرج إلى Gemini، وتظهر النتيجة كنص قابل للنسخ والمشاركة.",
-                    "Supports PDFs of up to 60 pages and TXT or CSV files. Extracted text is sent to Gemini, and the result appears as copyable, shareable text."
+                    "يدعم PDF حتى 60 صفحة، وملفات Word (DOCX) وPowerPoint (PPTX) وTXT وCSV. يُستخرج النص محليًا على الجهاز، ثم يُرسل إلى Gemini لتنظيمه أو ترجمته. النتيجة نص قابل للنسخ والمشاركة وليست ملف Word.",
+                    "Supports PDFs of up to 60 pages, Word (DOCX) and PowerPoint (PPTX) files, plus TXT and CSV. Text is extracted on-device then sent to Gemini for structuring or translation. The result is shareable text, not a Word file."
                 ))
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -179,7 +200,12 @@ struct DocumentConvertView: View {
         do {
             try FileManager.default.copyItem(at: url, to: dest)
             pickedURL = dest
-            pageCount = PdfReader.pageCount(of: dest)
+            // Only PDF has a meaningful page count we can show
+            // up-front. DOCX / PPTX page-equivalents are unknown
+            // until we extract — the convert step will tell us if
+            // they're empty.
+            pageCount = dest.pathExtension.lowercased() == "pdf"
+                ? PdfReader.pageCount(of: dest) : 0
             resultText = ""
             errorMessage = nil
         } catch {
@@ -196,9 +222,14 @@ struct DocumentConvertView: View {
 
         do {
             let extracted: String
-            if url.pathExtension.lowercased() == "pdf" {
+            switch url.pathExtension.lowercased() {
+            case "pdf":
                 extracted = try PdfReader.extractText(from: url)
-            } else {
+            case "docx":
+                extracted = try DocxReader.extractText(from: url)
+            case "pptx":
+                extracted = try PptxReader.extractText(from: url)
+            default:
                 extracted = try String(contentsOf: url, encoding: .utf8)
             }
             guard !extracted.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {

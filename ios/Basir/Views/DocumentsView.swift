@@ -17,11 +17,11 @@ struct DocumentsView: View {
                     } label: {
                         BasirCard(
                             icon: "doc.richtext.fill",
-                            title: L10n.t("معالجة PDF أو ملف نصي",
-                                          "Process a PDF or text file"),
+                            title: L10n.t("معالجة مستند (PDF أو Word أو PowerPoint)",
+                                          "Process a document (PDF, Word, or PowerPoint)"),
                             description: L10n.t(
-                                "استخرج النص من PDF حتى 60 صفحة أو افتح ملفًا نصيًا، ثم نظّمه أو ترجمه عبر Gemini. النتيجة نص قابل للنسخ والمشاركة وليست ملف Word.",
-                                "Extract text from a PDF of up to 60 pages or open a text file, then structure or translate it with Gemini. The result is shareable text, not a Word file."
+                                "استخرج النص من PDF حتى 60 صفحة، أو من ملف Word (DOCX) أو PowerPoint (PPTX) أو نص، ثم نظّمه أو ترجمه عبر Gemini. الاستخراج محلي على الجهاز، والنتيجة نص قابل للنسخ والمشاركة وليست ملف Word.",
+                                "Extract text from a PDF of up to 60 pages, a Word (DOCX) file, a PowerPoint (PPTX) file, or a text file, then structure or translate it with Gemini. Extraction runs on-device; the result is shareable text, not a Word file."
                             )
                         )
                     }
