@@ -21,6 +21,10 @@ struct DocumentConvertView: View {
     /// File URL of the latest generated DOCX, or nil if none was
     /// produced for the current result. Reset on every new conversion.
     @State private var lastDocxURL: URL?
+    /// Per-batch progress for the chunked conversion loop.
+    @State private var progress: (done: Int, total: Int) = (0, 0)
+    /// Cooperative cancel flag — checked at every batch boundary.
+    @State private var cancelRequested: Bool = false
 
     /// Document types iOS now extracts on-device. DOCX and PPTX go
     /// through DocxReader / PptxReader (the iOS equivalents of
@@ -59,11 +63,37 @@ struct DocumentConvertView: View {
                 }
 
                 if isLoading {
-                    HStack {
-                        ProgressView()
-                        Text(L10n.t("جارٍ تنفيذ الطلب عبر Gemini...",
-                                     "Processing the request with Gemini..."))
+                    VStack(alignment: .leading, spacing: 8) {
+                        if progress.total > 1 {
+                            ProgressView(value: Double(progress.done),
+                                          total: Double(progress.total))
+                                .progressViewStyle(.linear)
+                            Text(L10n.t(
+                                "جارٍ المعالجة — الدفعة \(progress.done) من \(progress.total)…",
+                                "Processing — batch \(progress.done) of \(progress.total)…"
+                            ))
+                                .font(.callout)
+                                .accessibilityAddTraits(.updatesFrequently)
+                        } else {
+                            HStack {
+                                ProgressView()
+                                Text(L10n.t("جارٍ تنفيذ الطلب عبر Gemini...",
+                                             "Processing the request with Gemini..."))
+                            }
+                        }
+                        Button(role: .destructive) {
+                            cancelRequested = true
+                        } label: {
+                            Label(L10n.t("إيقاف", "Cancel"),
+                                  systemImage: "stop.circle")
+                        }
+                        .accessibilityHint(L10n.t(
+                            "يوقف المعالجة بعد إنهاء الدفعة الحالية ويحفظ ما تم.",
+                            "Stops after the current batch finishes and keeps what was produced."))
                     }
+                    .padding(12)
+                    .background(Color(.secondarySystemBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
                 }
 
                 if !resultText.isEmpty {
@@ -161,8 +191,8 @@ struct DocumentConvertView: View {
                         .font(.title3.bold())
                 }
                 Text(L10n.t(
-                    "يدعم PDF حتى 60 صفحة، وملفات Word (DOCX) وPowerPoint (PPTX) وTXT وCSV. يُستخرج النص محليًا على الجهاز، ثم يُرسل إلى Gemini لتنظيمه أو ترجمته. النتيجة نص قابل للنسخ والمشاركة وليست ملف Word.",
-                    "Supports PDFs of up to 60 pages, Word (DOCX) and PowerPoint (PPTX) files, plus TXT and CSV. Text is extracted on-device then sent to Gemini for structuring or translation. The result is shareable text, not a Word file."
+                    "يدعم PDF حتى 500 صفحة، وملفات Word (DOCX) وPowerPoint (PPTX) وTXT وCSV. يُستخرج النص محليًا، ثم يعالجه بصير عبر Gemini على دفعات ثمان صفحات لكل دفعة مع تقدّم حي. اترك التطبيق مفتوحًا أثناء التشغيل. النتيجة نص قابل للمشاركة، ويمكنك أيضًا إنشاء ملف Word منه.",
+                    "Supports PDFs of up to 500 pages, Word (DOCX) and PowerPoint (PPTX) files, plus TXT and CSV. Text is extracted on-device, then Basir processes it through Gemini in eight-page batches with live progress. Keep the app open while it runs. The result is shareable text — and you can also build a Word file from it."
                 ))
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -257,61 +287,144 @@ struct DocumentConvertView: View {
         isLoading = true
         errorMessage = nil
         resultText = ""
-        // Invalidate any previously-built DOCX so the user can't share
-        // a file that belongs to an older Gemini run.
+        progress = (done: 0, total: 0)
+        cancelRequested = false
         lastDocxURL = nil
-        defer { isLoading = false }
+        defer {
+            isLoading = false
+            progress = (done: 0, total: 0)
+        }
 
         do {
-            let extracted: String
+            let pages: [String]
             switch url.pathExtension.lowercased() {
             case "pdf":
-                extracted = try PdfReader.extractText(from: url)
+                pages = try PdfReader.extractPages(from: url)
             case "docx":
-                extracted = try DocxReader.extractText(from: url)
+                // Split DOCX/PPTX text by an empty-line heuristic so
+                // a long Word doc still chunks into Gemini-sized bites.
+                pages = Self.splitByCharBudget(
+                    try DocxReader.extractText(from: url))
             case "pptx":
-                extracted = try PptxReader.extractText(from: url)
+                // PptxReader already labels slides; treat each as a
+                // page-equivalent.
+                pages = Self.splitByCharBudget(
+                    try PptxReader.extractText(from: url))
             default:
-                extracted = try String(contentsOf: url, encoding: .utf8)
+                pages = Self.splitByCharBudget(
+                    try String(contentsOf: url, encoding: .utf8))
             }
-            guard !extracted.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            guard pages.contains(where: { !$0.isEmpty }) else {
                 throw NSError(domain: "BasirDocument", code: 1,
                               userInfo: [NSLocalizedDescriptionKey:
                                 L10n.t("لم يُعثر على نص قابل للقراءة في الملف.",
                                        "No readable text was found in the file.")])
             }
-            var instruction = "You are processing a document for a blind user. "
-                + "Preserve heading levels, list items, and tables. "
-                + "Output clean, readable plain text optimized for screen readers. "
-                + "Do not claim that images or tables were read unless their content exists in the extracted text."
-            if !translateTo.isEmpty {
-                let tgtName = GeminiPrompts.bcp47Name(translateTo)
-                instruction = "TRANSLATE the document into \(tgtName). "
-                    + "Preserve structure — headings, lists, tables — exactly. "
-                    + "Only the language of the text changes."
+
+            // Batch pages into Gemini-sized chunks.
+            let batches = Self.batch(pages, pagesPerBatch: PdfReader.pagesPerBatch)
+            progress = (done: 0, total: batches.count)
+
+            let baseInstruction = translateTo.isEmpty
+                ? "You are processing a document for a blind user. "
+                  + "Preserve heading levels, list items, and tables. "
+                  + "Output clean, readable plain text optimized for screen readers. "
+                  + "Do not claim that images or tables were read unless their content exists in the extracted text."
+                : {
+                    let tgtName = GeminiPrompts.bcp47Name(translateTo)
+                    return "TRANSLATE the document into \(tgtName). "
+                        + "Preserve structure — headings, lists, tables — exactly. "
+                        + "Only the language of the text changes."
+                }()
+
+            var aggregated = ""
+            for (i, batch) in batches.enumerated() {
+                if cancelRequested { break }
+                let pageRange = batch.range
+                let scoped = baseInstruction
+                    + " IMPORTANT: process ONLY the page range \(pageRange.lowerBound)-\(pageRange.upperBound). "
+                    + "Do NOT echo content from earlier pages. Continue the document; do not re-introduce it."
+                let response = try await AiProviderFactory.current().ask(
+                    task: .convert,
+                    input: batch.text,
+                    instruction: scoped,
+                    language: BasirSettings.shared.language,
+                    imageData: nil,
+                    mimeType: nil
+                )
+                if !aggregated.isEmpty { aggregated += "\n\n" }
+                aggregated += response
+                progress = (done: i + 1, total: batches.count)
+                // Show partial results live so a long run feels
+                // responsive — the user can already read the first
+                // batches while later ones are still in flight.
+                resultText = aggregated
             }
-            let response = try await AiProviderFactory.current().ask(
-                task: .convert,
-                input: extracted,
-                instruction: instruction,
-                language: BasirSettings.shared.language,
-                imageData: nil,
-                mimeType: nil
-            )
-            resultText = response
-            // Auto-save to archive when enabled in settings.
-            ArchiveStore.shared.addResult(ArchivedResult(
-                title: L10n.t("معالجة: ", "Processed: ") + url.lastPathComponent,
-                kind: translateTo.isEmpty ? "convert" : "translate_doc",
-                text: response,
-                summary: String(response.prefix(140))
-            ))
-            UIAccessibility.post(notification: .announcement,
-                                  argument: L10n.t("اكتملت المعالجة. راجع النتيجة قبل استخدامها.",
-                                                    "Processing is complete. Review the result before using it."))
+
+            if !cancelRequested {
+                ArchiveStore.shared.addResult(ArchivedResult(
+                    title: L10n.t("معالجة: ", "Processed: ") + url.lastPathComponent,
+                    kind: translateTo.isEmpty ? "convert" : "translate_doc",
+                    text: aggregated,
+                    summary: String(aggregated.prefix(140))
+                ))
+                UIAccessibility.post(notification: .announcement,
+                                      argument: L10n.t("اكتملت المعالجة. راجع النتيجة قبل استخدامها.",
+                                                        "Processing is complete. Review the result before using it."))
+            }
         } catch {
             errorMessage = UserFriendlyErrorMapper.map(error)
         }
+    }
+
+    // MARK: - Chunking helpers
+
+    /// Split a flat string into "page-equivalent" pieces so DOCX /
+    /// PPTX / TXT inputs can ride the same batching pipeline as PDF.
+    /// Targets ~4000 characters per piece (≈600-800 tokens),
+    /// preferring paragraph boundaries. Empty input collapses to a
+    /// single empty entry so the page-count guard upstream still
+    /// fires correctly.
+    private static func splitByCharBudget(_ text: String,
+                                            target: Int = 4000) -> [String] {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [""] }
+        var out: [String] = []
+        var current = ""
+        for paragraph in trimmed.components(separatedBy: "\n\n") {
+            if current.count + paragraph.count + 2 > target && !current.isEmpty {
+                out.append(current)
+                current = ""
+            }
+            if !current.isEmpty { current += "\n\n" }
+            current += paragraph
+        }
+        if !current.isEmpty { out.append(current) }
+        return out
+    }
+
+    /// Group `pages` into batches of `pagesPerBatch` and stamp each
+    /// page with its "[Page N]" header so the model can refer back to
+    /// page numbers in the output. Empty pages still count toward the
+    /// numbering so subsequent batches stay aligned.
+    private static func batch(_ pages: [String],
+                                pagesPerBatch: Int)
+                              -> [(text: String, range: ClosedRange<Int>)] {
+        var result: [(text: String, range: ClosedRange<Int>)] = []
+        var i = 0
+        while i < pages.count {
+            let end = min(i + pagesPerBatch, pages.count)
+            var sb = ""
+            for j in i..<end {
+                let body = pages[j].isEmpty
+                    ? "(no readable text on this page)"
+                    : pages[j]
+                sb += "[Page \(j + 1)]\n\(body)\n\n"
+            }
+            result.append((sb, (i + 1)...end))
+            i = end
+        }
+        return result
     }
 
     /// Build a .docx file from the current resultText and stash its

@@ -20,8 +20,8 @@ struct DocumentsView: View {
                             title: L10n.t("معالجة مستند (PDF أو Word أو PowerPoint)",
                                           "Process a document (PDF, Word, or PowerPoint)"),
                             description: L10n.t(
-                                "استخرج النص من PDF حتى 60 صفحة، أو من ملف Word (DOCX) أو PowerPoint (PPTX) أو نص، ثم نظّمه أو ترجمه عبر Gemini. الاستخراج محلي على الجهاز، والنتيجة نص قابل للنسخ والمشاركة وليست ملف Word.",
-                                "Extract text from a PDF of up to 60 pages, a Word (DOCX) file, a PowerPoint (PPTX) file, or a text file, then structure or translate it with Gemini. Extraction runs on-device; the result is shareable text, not a Word file."
+                                "استخرج النص من PDF حتى 500 صفحة، أو من ملف Word (DOCX) أو PowerPoint (PPTX) أو نص، ثم نظّمه أو ترجمه عبر Gemini على دفعات. يمكنك إنشاء ملف Word من النتيجة. اترك التطبيق مفتوحًا أثناء التشغيل.",
+                                "Extract text from a PDF of up to 500 pages, a Word (DOCX) file, a PowerPoint (PPTX) file, or a text file, then structure or translate it with Gemini in batches. You can build a Word file from the result. Keep the app open while it runs."
                             )
                         )
                     }
