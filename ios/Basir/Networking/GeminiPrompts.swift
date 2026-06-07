@@ -146,6 +146,52 @@ enum GeminiPrompts {
         return p
     }
 
+    // MARK: - Live scene guidance (v3.2 parity)
+
+    /// Per-frame prompt for the Live Scene Guidance loop. Mirrors the
+    /// Android AiClient.liveWalkingPrompt — asks Gemini for a tight
+    /// JSON payload describing the next 2-second slice of the world
+    /// in front of a blind walker.
+    ///
+    /// - Parameters:
+    ///   - arabic: when true, the model must respond in Arabic.
+    ///   - recentSummaries: rolling 3-frame history so the model
+    ///     doesn't re-narrate what it already said.
+    ///   - locationLabel: optional reverse-geocoded "Near X, City"
+    ///     hint to disambiguate landmarks. nil when GPS is off.
+    static func liveSceneGuidancePrompt(arabic: Bool,
+                                         recentSummaries: String,
+                                         locationLabel: String?) -> String {
+        var p = ""
+        p += "TASK: live_scene_guidance\n"
+        p += "You are Basir, a real-time scene-description assistant for a BLIND person\n"
+        p += "walking and holding the phone forward. EACH frame arrives every 2 seconds.\n\n"
+        p += "Respond in " + (arabic ? "Arabic" : "English") + ".\n\n"
+        p += "Return a JSON object with these EXACT fields:\n"
+        p += "  hazard: { level: \"stop\" | \"caution\" | \"none\", description: string }\n"
+        p += "  path:   string   — one short line on what the path ahead looks like.\n"
+        p += "  scene:  string   — optional one-line ambient note (street, indoor, etc).\n\n"
+        p += "RULES:\n"
+        p += "- hazard.level=\"stop\" ONLY for imminent dangers: stairs descending, a hole,\n"
+        p += "  a wall right ahead, a moving vehicle in the path, a crossing without signal.\n"
+        p += "- hazard.level=\"caution\" for things to notice without stopping: a person\n"
+        p += "  in the path, a low object, a doorway, a curb, a wet floor sign.\n"
+        p += "- hazard.level=\"none\" when nothing actionable is in the frame.\n"
+        p += "- path: <=12 words, plain prose. Examples: \"a clear corridor ahead\",\n"
+        p += "  \"sidewalk continues straight\", \"a doorway is on your right\".\n"
+        p += "- scene: empty string unless the setting CHANGED (e.g. \"you stepped indoors\").\n"
+        p += "- Be conservative. False alarms train the user to ignore you.\n"
+        p += "- Never identify real people by face.\n"
+        p += "- DO NOT re-narrate what you already said in the previous frames below.\n\n"
+        p += "RECENT FRAMES (do not repeat):\n"
+        p += recentSummaries + "\n"
+        if let label = locationLabel, !label.isEmpty {
+            p += "\nCONTEXT: the user is " + (arabic ? "بالقرب من " : "near ") + label + ".\n"
+        }
+        p += "\nOutput valid JSON only. No prose around it."
+        return p
+    }
+
     // MARK: - Translation instruction
 
     static func translateInstruction(sourceCode: String, targetCode: String) -> String {

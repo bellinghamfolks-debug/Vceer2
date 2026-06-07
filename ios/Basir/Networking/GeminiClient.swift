@@ -92,6 +92,52 @@ struct GeminiClient {
         return try extractTextResponse(from: json)
     }
 
+    // MARK: - JSON-mode image request (v3.2 — live scene guidance)
+
+    /// Mirrors GeminiDirectClient.generateJsonWithImage on Android.
+    /// Asks Gemini for application/json output so the response can be
+    /// parsed deterministically — used by the Live Scene Guidance loop
+    /// where every 2 seconds we need {hazard, path, scene} not prose.
+    static func generateJsonWithImage(
+        apiKey: String,
+        model: String,
+        systemText: String,
+        userMessage: String,
+        imageData: Data,
+        mimeType: String,
+        maxOutputTokens: Int = 1024
+    ) async throws -> [String: Any] {
+        try validate(apiKey)
+        let base64 = imageData.base64EncodedString()
+        let body: [String: Any] = [
+            "system_instruction": [
+                "parts": [["text": systemText]]
+            ],
+            "contents": [[
+                "role": "user",
+                "parts": [
+                    ["text": userMessage],
+                    ["inlineData": [
+                        "mimeType": mimeType,
+                        "data": base64
+                    ]]
+                ]
+            ]],
+            "generationConfig": [
+                "maxOutputTokens": maxOutputTokens,
+                "temperature": 0.2,
+                "responseMimeType": "application/json"
+            ]
+        ]
+        let json = try await post(model: model, apiKey: apiKey, body: body)
+        let text = try extractTextResponse(from: json)
+        guard let data = text.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw GeminiError.decode("response was not JSON: \(text.prefix(120))")
+        }
+        return obj
+    }
+
     // MARK: - Internals
 
     private static func post(model: String,

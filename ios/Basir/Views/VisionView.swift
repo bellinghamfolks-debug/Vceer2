@@ -69,6 +69,48 @@ struct VisionView: View {
                     .buttonStyle(.plain)
 
                     NavigationLink {
+                        DescribeImageView(mode: .medical)
+                    } label: {
+                        BasirCard(
+                            icon: "cross.case.fill",
+                            title: L10n.t("قراءة نص طبي", "Read medical text"),
+                            description: L10n.t(
+                                "تقرأ بصير وصفة أو نشرة دواء أو نتيجة تحليل ظاهرة في الصورة. هذه قراءة فقط؛ راجِع طبيبك أو الصيدلي قبل أي قرار.",
+                                "Basir reads a prescription, drug leaflet, or lab result visible in the image. This is text reading only — consult your doctor or pharmacist before any decision."
+                            )
+                        )
+                    }
+                    .buttonStyle(.plain)
+
+                    NavigationLink {
+                        DescribeImageView(mode: .legal)
+                    } label: {
+                        BasirCard(
+                            icon: "doc.text.magnifyingglass",
+                            title: L10n.t("قراءة نص قانوني", "Read legal text"),
+                            description: L10n.t(
+                                "تقرأ بصير عقدًا أو وثيقة قانونية وتشرح بنوده بإيجاز. هذه قراءة عامة وليست رأيًا قانونيًا؛ راجِع محاميًا قبل التوقيع.",
+                                "Basir reads a contract or legal document and summarizes its clauses. This is general reading, not legal advice — consult a lawyer before signing."
+                            )
+                        )
+                    }
+                    .buttonStyle(.plain)
+
+                    NavigationLink {
+                        DescribeImageView(mode: .table)
+                    } label: {
+                        BasirCard(
+                            icon: "tablecells.fill",
+                            title: L10n.t("قراءة جدول", "Read a table"),
+                            description: L10n.t(
+                                "صوّر جدولًا (جدول حصص، نتائج، مواعيد، فاتورة جداول) وستقرأه بصير صفًا بصف بترتيب يسهل سماعه.",
+                                "Photograph a table (timetable, results, schedules, line-item invoice) and Basir reads it row by row in a screen-reader-friendly order."
+                            )
+                        )
+                    }
+                    .buttonStyle(.plain)
+
+                    NavigationLink {
                         MathExtractView()
                     } label: {
                         BasirCard(
@@ -87,10 +129,26 @@ struct VisionView: View {
                     } label: {
                         BasirCard(
                             icon: "figure.walk",
-                            title: L10n.t("وضع المشي", "Walking mode"),
+                            title: L10n.t("وضع المشي (لقطة واحدة)",
+                                          "Walking mode (single shot)"),
                             description: L10n.t(
                                 "التقط صورة واحدة لما أمامك واستمع إلى وصف موجز. هذه الميزة مساعدة وليست وسيلة تنقل مستقلة.",
                                 "Capture one image of what is ahead and hear a brief description. This is an aid, not an independent mobility tool."
+                            )
+                        )
+                    }
+                    .buttonStyle(.plain)
+
+                    NavigationLink {
+                        LiveSceneGuidanceView()
+                    } label: {
+                        BasirCard(
+                            icon: "video.fill",
+                            title: L10n.t("الوصف المباشر أثناء التنقل",
+                                          "Live scene guidance"),
+                            description: L10n.t(
+                                "وصف متواصل لما أمامك: صورة كل ثانيتين، تنبيه فوري للمخاطر باهتزاز ونطق. يعمل فقط أثناء فتح التطبيق.",
+                                "Continuous scene description: one frame every two seconds with instant haptic and spoken hazard alerts. Works only while the app is open."
                             )
                         )
                     }

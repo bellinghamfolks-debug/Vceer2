@@ -8,6 +8,7 @@ import PhotosUI
 
 enum DescribeImageMode {
     case detailed, altText, screenshot, currencyOrReceipt
+    case medical, legal, table
 
     var title: String {
         switch self {
@@ -16,6 +17,9 @@ enum DescribeImageMode {
         case .screenshot:         return L10n.t("قراءة لقطة شاشة", "Screenshot reading")
         case .currencyOrReceipt:  return L10n.t("قارئ العملات والفواتير",
                                                  "Currency and receipt reader")
+        case .medical:            return L10n.t("قراءة نص طبي", "Read medical text")
+        case .legal:              return L10n.t("قراءة نص قانوني", "Read legal text")
+        case .table:              return L10n.t("قراءة جدول", "Read a table")
         }
     }
 
@@ -25,6 +29,9 @@ enum DescribeImageMode {
         case .altText:            return .altText
         case .screenshot:         return .screenshot
         case .currencyOrReceipt:  return .currencyOrReceipt
+        case .medical:            return .medicalText
+        case .legal:              return .legalText
+        case .table:              return .tableRead
         }
     }
 
@@ -38,6 +45,14 @@ enum DescribeImageMode {
             return "Explain the screenshot for a screen-reader user: page, buttons, messages, errors, and the next useful step."
         case .currencyOrReceipt:
             return "You are Basir, an assistant for blind and low-vision users. The image contains either banknotes/coins OR a paid receipt/invoice. BANKNOTES/COINS: state the currency and denomination in the FIRST sentence. RECEIPTS/INVOICES: state the grand total and the currency in the FIRST sentence. Keep the answer under 80 words, plain prose, no markdown."
+        case .medical:
+            // Mirrors Android's medical-text prompt: READING ONLY, no diagnosis.
+            return "You are Basir, an assistant for blind and low-vision users. The image contains medical text (a prescription, drug leaflet, lab result, or doctor's note). FIRST: read the document type and the most important fact in one sentence (drug name + dose, or test name + value). THEN: list the other readable fields plainly: patient name if visible, date, dosage instructions, frequency, warnings, allergies, expiry. Render numbers and units exactly as printed. DO NOT diagnose, do NOT recommend treatment, do NOT suggest stopping or starting medication. End with: \"راجِع طبيبك أو الصيدلي قبل أي قرار.\" / \"Consult your doctor or pharmacist before any decision.\" No markdown."
+        case .legal:
+            // Mirrors Android's legal-text prompt: SUMMARIZING ONLY.
+            return "You are Basir, an assistant for blind and low-vision users. The image contains a legal document (contract, lease, agreement, terms, court paper, or official form). FIRST: state the document type and the parties in one sentence. THEN: bullet the key clauses in plain language: obligations, dates, monetary amounts, penalties, termination conditions, signatures. Quote any critical number or date verbatim. DO NOT give legal advice, do NOT predict outcomes, do NOT recommend signing or refusing. End with: \"راجِع محاميًا قبل التوقيع.\" / \"Consult a lawyer before signing.\" No markdown."
+        case .table:
+            return "You are Basir, an assistant for blind and low-vision users. The image contains a TABLE (timetable, results sheet, schedule, line-item invoice, lecture grid). Read the column headers first as a header line. Then read each row as: \"Row 1: <header1> <cell1>, <header2> <cell2>, ...\". Preserve numbers, times, and units exactly. If the table is a lecture / class schedule, treat the LEFT column as the time / period label and announce it FIRST per row. Keep the response under 200 words; if the table is longer, end with \"…and \" + how many more rows are visible. No markdown."
         }
     }
 }

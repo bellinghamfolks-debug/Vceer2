@@ -69,7 +69,12 @@ final class BasirSettings: ObservableObject {
     }
 
     func modelFor(task: TaskKind) -> String {
-        let quick: Set<TaskKind> = [.ask, .translate, .reply, .quick, .health]
+        // Live scene guidance ALWAYS uses Flash regardless of the user's
+        // selected quality — navigation latency beats Pro-level fidelity
+        // (matches Android LiveWalkingController's QUALITY_BALANCED pick).
+        if task == .liveScene { return modelForQuality("balanced") }
+        let quick: Set<TaskKind> = [.ask, .translate, .reply, .quick, .health,
+                                     .medicalText, .legalText, .tableRead]
         let preset = quick.contains(task) ? quickQuality : docQuality
         return modelForQuality(preset)
     }
@@ -81,7 +86,11 @@ enum TaskKind: String {
     case altText = "alt_text"
     case screenshot
     case currencyOrReceipt = "currency_or_receipt"
+    case medicalText = "medical_text"
+    case legalText = "legal_text"
+    case tableRead = "table_read"
     case mathExtract = "math_extract"
+    case liveScene = "live_scene"
     case convert
     case askDocument = "ask_document"
 }
