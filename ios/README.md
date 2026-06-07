@@ -27,9 +27,10 @@ UI: **SwiftUI**
 - Select a PDF of up to 60 pages, a Word file (DOCX), a PowerPoint file (PPTX), or a TXT or CSV file.
 - Extract readable text locally on the device. PDF uses Apple's PDFKit; DOCX uses Basir's `DocxReader`; PPTX uses Basir's `PptxReader`. Both DOCX and PPTX rely on a built-in zero-dependency ZIP reader (`Documents/ZipReader.swift`) that does not require any external library.
 - Send the extracted text to Gemini for structure or translation.
-- Display the result as copyable and shareable text.
+- Display the result as copyable, shareable text.
+- Optionally export the result as a real Word file (DOCX). Tap "Create a Word file" to generate an OOXML package on-device (`Documents/DocxWriter.swift` + `Documents/ZipWriter.swift`); the file is shared through the standard iOS share sheet.
 
-The current iOS implementation does not produce a Word file as output and does not keep an uploaded document for later follow-up questions.
+The current iOS implementation does not keep an uploaded document for later follow-up questions.
 
 ### More
 

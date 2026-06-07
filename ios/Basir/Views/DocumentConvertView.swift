@@ -18,6 +18,9 @@ struct DocumentConvertView: View {
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var showPicker = false
+    /// File URL of the latest generated DOCX, or nil if none was
+    /// produced for the current result. Reset on every new conversion.
+    @State private var lastDocxURL: URL?
 
     /// Document types iOS now extracts on-device. DOCX and PPTX go
     /// through DocxReader / PptxReader (the iOS equivalents of
@@ -73,11 +76,47 @@ struct DocumentConvertView: View {
                         ShareLink(item: resultText) {
                             Image(systemName: "square.and.arrow.up")
                         }
-                        .accessibilityLabel(L10n.t("مشاركة", "Share"))
+                        .accessibilityLabel(L10n.t("مشاركة كنص",
+                                                     "Share as text"))
                     }
                     Text(resultText)
                         .textSelection(.enabled)
                         .accessibilityLabel(resultText)
+
+                    // v3.2 — produce an actual .docx file the user can
+                    // share, save to Files, or hand to Word. Mirrors
+                    // the Android "convert to Word" pathway.
+                    if let docxURL = lastDocxURL {
+                        ShareLink(item: docxURL) {
+                            HStack {
+                                Image(systemName: "doc.fill")
+                                Text(L10n.t("مشاركة كملف Word (DOCX)",
+                                             "Share as Word file (DOCX)"))
+                            }
+                            .frame(maxWidth: .infinity, minHeight: 48)
+                            .background(Color.accentColor.opacity(0.15))
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                        }
+                        .accessibilityHint(L10n.t(
+                            "ينشئ ملف Word ويفتح ورقة المشاركة لحفظه أو إرساله.",
+                            "Builds a Word file and opens the share sheet to save or send it."))
+                    } else {
+                        Button {
+                            buildDocxFile()
+                        } label: {
+                            HStack {
+                                Image(systemName: "doc.badge.plus")
+                                Text(L10n.t("إنشاء ملف Word (DOCX)",
+                                             "Create a Word file (DOCX)"))
+                            }
+                            .frame(maxWidth: .infinity, minHeight: 48)
+                            .background(Color.accentColor.opacity(0.15))
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                        }
+                        .accessibilityHint(L10n.t(
+                            "يحوّل النتيجة إلى ملف Word قابل للمشاركة.",
+                            "Converts the result into a shareable Word file."))
+                    }
                 }
 
                 if let errorMessage {
@@ -218,6 +257,9 @@ struct DocumentConvertView: View {
         isLoading = true
         errorMessage = nil
         resultText = ""
+        // Invalidate any previously-built DOCX so the user can't share
+        // a file that belongs to an older Gemini run.
+        lastDocxURL = nil
         defer { isLoading = false }
 
         do {
@@ -267,6 +309,34 @@ struct DocumentConvertView: View {
             UIAccessibility.post(notification: .announcement,
                                   argument: L10n.t("اكتملت المعالجة. راجع النتيجة قبل استخدامها.",
                                                     "Processing is complete. Review the result before using it."))
+        } catch {
+            errorMessage = UserFriendlyErrorMapper.map(error)
+        }
+    }
+
+    /// Build a .docx file from the current resultText and stash its
+    /// URL into lastDocxURL so the ShareLink shows up. Writes into the
+    /// caches dir so the share sheet can read it without sandbox
+    /// surprises; the OS reaps the file when caches are pruned.
+    private func buildDocxFile() {
+        guard !resultText.isEmpty else { return }
+        let rtl = BasirSettings.shared.language == .arabic
+        var writer = DocxWriter(rtl: rtl)
+        writer.appendPlain(resultText)
+        let baseName = pickedURL?
+            .deletingPathExtension()
+            .lastPathComponent ?? "Basir"
+        let outURL = FileManager.default
+            .temporaryDirectory
+            .appendingPathComponent("\(baseName)-basir.docx")
+        try? FileManager.default.removeItem(at: outURL)
+        do {
+            try writer.write(to: outURL)
+            lastDocxURL = outURL
+            UIAccessibility.post(notification: .announcement,
+                                  argument: L10n.t(
+                                      "تم إنشاء ملف Word. استخدم زر المشاركة لحفظه.",
+                                      "Word file created. Use the share button to save it."))
         } catch {
             errorMessage = UserFriendlyErrorMapper.map(error)
         }
