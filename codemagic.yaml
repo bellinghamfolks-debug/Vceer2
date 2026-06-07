@@ -27,6 +27,16 @@
 #   Actions setup works and is free.
 # - App Store / TestFlight publishing is set up but disabled by default
 #   (needs Apple Developer credentials uploaded to Codemagic first).
+#
+# Which workflows run automatically
+# ─────────────────────────────────
+# v3.3 — every push to claude/**, main, or master triggers BOTH:
+#   1. ios-simulator-build  → fast .app smoke test (~3-5 min)
+#   2. ios-unsigned-ipa     → real .ipa archive (~5-8 min)
+# The IPA is emailed + posted as a Codemagic artifact so the user
+# always has a downloadable installer-shaped file. The simulator
+# build catches compile errors a couple of minutes earlier in case
+# the IPA archive step would have caught the same regression later.
 
 workflows:
 
@@ -107,18 +117,33 @@ workflows:
 
   # ---------------------------------------------------------------------
   # Device-ready unsigned IPA. Boots the .app into an IPA wrapper that
-  # can be inspected and (with proper signing later) installed.
-  # Useful as a smoke test that "everything that needs to compile for
-  # arm64-on-device, does."
+  # can be inspected and (with proper signing later) installed on a real
+  # iPhone via AltStore / Sideloadly / Xcode resigning.
+  #
+  # v3.3 — promoted to auto-trigger. Every push to the watched branches
+  # now produces an IPA email + downloadable artifact in addition to the
+  # simulator smoke build above. The two workflows run in parallel on
+  # Codemagic so the IPA never blocks the faster simulator feedback.
   # ---------------------------------------------------------------------
   ios-unsigned-ipa:
-    name: Basir iOS — unsigned IPA (manual trigger)
+    name: Basir iOS — unsigned IPA (auto-built on every push)
     instance_type: mac_mini_m2
     max_build_duration: 30
     environment:
       xcode: 15.4
       vars:
         XCODE_PROJECT_DIR: "ios"
+
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: "claude/**"
+          include: true
+        - pattern: "main"
+          include: true
+        - pattern: "master"
+          include: true
 
     scripts:
       - name: Install XcodeGen
@@ -129,7 +154,17 @@ workflows:
           cd $XCODE_PROJECT_DIR
           xcodegen generate
 
-      - name: Archive (unsigned, for inspection only)
+      - name: Stamp build number from commit count
+        # Codemagic's UI lets us set CFBundleVersion via agvtool, which
+        # keeps every IPA distinguishable in TestFlight / archive
+        # records. The marketing version (CFBundleShortVersionString)
+        # stays at whatever Info.plist declares.
+        script: |
+          cd $XCODE_PROJECT_DIR
+          BUILD_NUMBER=$(git rev-list HEAD --count)
+          agvtool new-version -all $BUILD_NUMBER || true
+
+      - name: Archive (unsigned, for inspection or external resigning)
         script: |
           cd $XCODE_PROJECT_DIR
           xcodebuild archive \
@@ -144,20 +179,31 @@ workflows:
             | xcpretty || exit 1
 
       - name: Wrap .app into unsigned .ipa
-        # An unsigned IPA cannot install on a real iPhone. It is a
-        # diagnostic artifact that proves the Release build links for
-        # arm64 device. Once we have an Apple Developer cert it'll
-        # produce a real installable IPA via the next workflow.
+        # An unsigned IPA cannot install on a stock iPhone without
+        # further signing. It DOES install via AltStore, Sideloadly, or
+        # by re-signing with an Apple Developer certificate in Xcode's
+        # "Archives" → "Distribute App" → "Custom" pipeline. The
+        # ios-app-store-build workflow further down replaces this once
+        # a developer account is connected.
         script: |
           cd $XCODE_PROJECT_DIR/build
           mkdir -p Payload
           cp -r Basir.xcarchive/Products/Applications/Basir.app Payload/
-          zip -r Basir-unsigned.ipa Payload
-          du -sh Basir-unsigned.ipa
+          # Name the IPA after the commit SHA so successive builds
+          # don't overwrite each other when downloaded into the same
+          # folder.
+          SHORT_SHA=$(git -C .. rev-parse --short HEAD)
+          IPA_NAME="Basir-${SHORT_SHA}-unsigned.ipa"
+          zip -qr "$IPA_NAME" Payload
+          du -sh "$IPA_NAME"
           rm -rf Payload
+          # Also drop a stable-named symlink so the artifacts: glob
+          # picks the latest build without needing the SHA.
+          cp "$IPA_NAME" Basir-unsigned.ipa
 
     artifacts:
       - ios/build/Basir-unsigned.ipa
+      - ios/build/Basir-*-unsigned.ipa
       - ios/build/Basir.xcarchive
 
     publishing:
