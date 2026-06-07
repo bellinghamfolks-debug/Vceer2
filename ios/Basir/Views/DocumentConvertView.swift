@@ -1,15 +1,44 @@
 // DocumentConvertView.swift
-// Single-shot PDF or plain-text processing. PDF text is extracted
-// on-device with PDFKit; text and CSV files are read directly. The selected
-// text is sent to Gemini and the result is presented as shareable plain text.
+// Chunked PDF / DOCX / PPTX / TXT processing for iOS. Text is
+// extracted on-device; Gemini sees one batch (≤8 pages) at a time
+// and the loop runs in the foreground with a live progress bar +
+// cancel button.
 //
-// "Single-shot" means we do NOT chunk + run for minutes in the
-// background. iOS doesn't allow that. The trade-off: maximum 60
-// pages per pass (PdfReader.maxPagesPerShot). For longer documents
-// the user is told to split.
+// v3.3 — per-batch retry
+// ──────────────────────
+// Long-document runs sometimes lose one or two batches to a
+// transient Gemini hiccup (timeout, rate-limit, content-filter
+// false positive). v3.3 keeps the rest of the run: a failing
+// batch is recorded, the loop continues, and the user gets a
+// "Retry failed batches" button at the end — same pattern as
+// Android's ConversionState.retainedSnapshot retry path. This
+// closes the last big iOS↔Android gap for document conversion.
 
 import SwiftUI
 import UniformTypeIdentifiers
+
+/// One Gemini call's worth of pages. The Identifiable id keeps
+/// SwiftUI's @State diffing stable across success → failure → retry
+/// transitions.
+struct ConvertBatch: Identifiable {
+    let id: Int
+    let range: ClosedRange<Int>
+    let input: String
+    enum Status {
+        case pending
+        case success(output: String)
+        case failed(error: String)
+    }
+    var status: Status
+    var output: String? {
+        if case let .success(o) = status { return o }
+        return nil
+    }
+    var isFailed: Bool {
+        if case .failed = status { return true }
+        return false
+    }
+}
 
 struct DocumentConvertView: View {
     @State private var pickedURL: URL?
@@ -25,6 +54,16 @@ struct DocumentConvertView: View {
     @State private var progress: (done: Int, total: Int) = (0, 0)
     /// Cooperative cancel flag — checked at every batch boundary.
     @State private var cancelRequested: Bool = false
+    /// Per-batch state for the current run. Populated when run()
+    /// builds the batches; mutated as each one finishes. Used by
+    /// the retry button to identify which batches still need a
+    /// rerun.
+    @State private var batches: [ConvertBatch] = []
+    /// v3.3 — optional math-extraction mode. When ON, the prompt
+    /// asks Gemini to also render every equation in the document
+    /// using the spoken-math + LaTeX format the math card uses.
+    /// Mirrors the toggle on Android's convert screen.
+    @AppStorage("convert_math_mode") private var mathMode: Bool = false
 
     /// Document types iOS now extracts on-device. DOCX and PPTX go
     /// through DocxReader / PptxReader (the iOS equivalents of
@@ -58,6 +97,7 @@ struct DocumentConvertView: View {
                 if pickedURL != nil {
                     Section {
                         translationPicker
+                        mathToggle
                         runButton
                     }
                 }
@@ -148,6 +188,8 @@ struct DocumentConvertView: View {
                             "Converts the result into a shareable Word file."))
                     }
                 }
+
+                failedBatchesSection
 
                 if let errorMessage {
                     Text(errorMessage)
@@ -255,6 +297,77 @@ struct DocumentConvertView: View {
         .disabled(isLoading)
     }
 
+    /// v3.3 — opt-in math extraction directive for the convert flow.
+    /// Hidden by default because most documents are prose; turning it
+    /// on instructs Gemini to render every equation as spoken text +
+    /// [LaTeX:] using the same vocabulary as the dedicated math card.
+    private var mathToggle: some View {
+        Toggle(isOn: $mathMode) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(L10n.t("تحويل الرياضيات داخل المستند",
+                             "Convert math inside the document"))
+                    .font(.callout.bold())
+                Text(L10n.t(
+                    "فعّل هذا الخيار عند معالجة مستند يحتوي على معادلات. عند تشغيله ينطق كل معادلة بالعربية ويرفق LaTeX للمراجعة.",
+                    "Turn on when processing a document with equations. Each equation is spoken in your language and tagged with [LaTeX:] for review."
+                ))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+        }
+        .disabled(isLoading)
+    }
+
+    /// v3.3 — surfaces any batches that failed during the last run
+    /// (transient timeouts, rate limit, content-filter false
+    /// positives) with a single "Retry failed batches" button. Mirrors
+    /// the retainedSnapshot / retryFailedChunks flow on Android.
+    @ViewBuilder
+    private var failedBatchesSection: some View {
+        let failed = batches.filter { $0.isFailed }
+        if !failed.isEmpty && !isLoading {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    Text(L10n.t(
+                        "فشلت \(failed.count) من \(batches.count) دفعة",
+                        "\(failed.count) of \(batches.count) batches failed"))
+                        .font(.subheadline.bold())
+                }
+                ForEach(failed) { batch in
+                    if case let .failed(err) = batch.status {
+                        Text(L10n.t(
+                            "الصفحات \(batch.range.lowerBound)-\(batch.range.upperBound): \(err)",
+                            "Pages \(batch.range.lowerBound)-\(batch.range.upperBound): \(err)"))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Button {
+                    Task { await retryFailedBatches() }
+                } label: {
+                    HStack {
+                        Image(systemName: "arrow.clockwise")
+                        Text(L10n.t("إعادة محاولة الدفعات الفاشلة فقط",
+                                     "Retry failed batches only"))
+                            .fontWeight(.semibold)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 48)
+                    .background(Color.accentColor)
+                    .foregroundStyle(.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                }
+                .accessibilityHint(L10n.t(
+                    "يُعيد محاولة الدفعات الفاشلة فقط دون لمس النتائج الناجحة.",
+                    "Re-runs only the failed batches and keeps the successful results."))
+            }
+            .padding(12)
+            .background(Color.orange.opacity(0.08))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+        }
+    }
+
     private func handlePicked(url: URL) {
         // iOS hands back a security-scoped URL — we have to start an
         // access session before we can read it, and stop it after.
@@ -290,6 +403,7 @@ struct DocumentConvertView: View {
         progress = (done: 0, total: 0)
         cancelRequested = false
         lastDocxURL = nil
+        batches = []
         defer {
             isLoading = false
             progress = (done: 0, total: 0)
@@ -321,59 +435,121 @@ struct DocumentConvertView: View {
                                        "No readable text was found in the file.")])
             }
 
-            // Batch pages into Gemini-sized chunks.
-            let batches = Self.batch(pages, pagesPerBatch: PdfReader.pagesPerBatch)
+            // Batch pages into Gemini-sized chunks and seed state.
+            let rawBatches = Self.batch(pages, pagesPerBatch: PdfReader.pagesPerBatch)
+            batches = rawBatches.enumerated().map { idx, b in
+                ConvertBatch(id: idx, range: b.range,
+                              input: b.text, status: .pending)
+            }
             progress = (done: 0, total: batches.count)
 
-            let baseInstruction = translateTo.isEmpty
-                ? "You are processing a document for a blind user. "
-                  + "Preserve heading levels, list items, and tables. "
-                  + "Output clean, readable plain text optimized for screen readers. "
-                  + "Do not claim that images or tables were read unless their content exists in the extracted text."
-                : {
-                    let tgtName = GeminiPrompts.bcp47Name(translateTo)
-                    return "TRANSLATE the document into \(tgtName). "
-                        + "Preserve structure — headings, lists, tables — exactly. "
-                        + "Only the language of the text changes."
-                }()
+            await runBatches(allIndices: Array(batches.indices),
+                              sourceName: url.lastPathComponent)
+        } catch {
+            errorMessage = UserFriendlyErrorMapper.map(error)
+        }
+    }
 
-            var aggregated = ""
-            for (i, batch) in batches.enumerated() {
-                if cancelRequested { break }
-                let pageRange = batch.range
-                let scoped = baseInstruction
-                    + " IMPORTANT: process ONLY the page range \(pageRange.lowerBound)-\(pageRange.upperBound). "
-                    + "Do NOT echo content from earlier pages. Continue the document; do not re-introduce it."
+    /// v3.3 — retry only the FAILED batches from the previous run.
+    /// Successful batches keep their output verbatim; the retry loop
+    /// re-runs the failed ones in order and re-aggregates resultText.
+    private func retryFailedBatches() async {
+        let failedIdx = batches.enumerated()
+            .filter { $0.element.isFailed }
+            .map(\.offset)
+        guard !failedIdx.isEmpty else { return }
+        isLoading = true
+        errorMessage = nil
+        cancelRequested = false
+        // Reset the retry candidates back to .pending so the UI flips
+        // out of the warning banner while they're in flight.
+        for i in failedIdx { batches[i].status = .pending }
+        progress = (done: 0, total: failedIdx.count)
+        defer {
+            isLoading = false
+            progress = (done: 0, total: 0)
+        }
+        let sourceName = pickedURL?.lastPathComponent ?? "document"
+        await runBatches(allIndices: failedIdx, sourceName: sourceName)
+    }
+
+    /// Shared loop body for the initial run + the retry run. Walks
+    /// the requested batch indices, calls Gemini per batch, records
+    /// success or failure into `batches[i].status`, and rebuilds
+    /// `resultText` from the union of successful outputs in order.
+    private func runBatches(allIndices: [Int], sourceName: String) async {
+        let baseInstruction = translateTo.isEmpty
+            ? "You are processing a document for a blind user. "
+              + "Preserve heading levels, list items, and tables. "
+              + "Output clean, readable plain text optimized for screen readers. "
+              + "Do not claim that images or tables were read unless their content exists in the extracted text."
+            : {
+                let tgtName = GeminiPrompts.bcp47Name(translateTo)
+                return "TRANSLATE the document into \(tgtName). "
+                    + "Preserve structure — headings, lists, tables — exactly. "
+                    + "Only the language of the text changes."
+            }()
+        // v3.3 — opt-in math directive (mirrors the dedicated math
+        // card's vocabulary). Added to every batch when the toggle
+        // is on.
+        let mathDirective = mathMode
+            ? "\n\nMATH MODE — render every equation in the document as "
+              + "spoken text in the response language, followed by "
+              + "[LaTeX: ...]. Do not skip any equation. "
+              + "Vocabulary: square root = \"الجذر التربيعي لـ\", "
+              + "integral = \"تكامل\", derivative = \"مشتقة\", "
+              + "sum = \"مجموع\"."
+            : ""
+
+        for (loopIdx, batchIdx) in allIndices.enumerated() {
+            if cancelRequested { break }
+            let b = batches[batchIdx]
+            let scoped = baseInstruction
+                + " IMPORTANT: process ONLY the page range \(b.range.lowerBound)-\(b.range.upperBound). "
+                + "Do NOT echo content from earlier pages. Continue the document; do not re-introduce it."
+                + mathDirective
+            do {
                 let response = try await AiProviderFactory.current().ask(
                     task: .convert,
-                    input: batch.text,
+                    input: b.input,
                     instruction: scoped,
                     language: BasirSettings.shared.language,
                     imageData: nil,
                     mimeType: nil
                 )
-                if !aggregated.isEmpty { aggregated += "\n\n" }
-                aggregated += response
-                progress = (done: i + 1, total: batches.count)
-                // Show partial results live so a long run feels
-                // responsive — the user can already read the first
-                // batches while later ones are still in flight.
-                resultText = aggregated
+                batches[batchIdx].status = .success(output: response)
+            } catch {
+                // v3.3 — a single batch failure does NOT abort the run.
+                // We record it, keep going, and surface a retry button
+                // when the loop ends.
+                batches[batchIdx].status = .failed(
+                    error: UserFriendlyErrorMapper.map(error))
             }
+            progress = (done: loopIdx + 1, total: allIndices.count)
+            // Rebuild resultText from every success in original order.
+            resultText = batches.compactMap(\.output).joined(separator: "\n\n")
+            // Invalidate any stale DOCX whenever we change resultText.
+            lastDocxURL = nil
+        }
 
-            if !cancelRequested {
+        if !cancelRequested {
+            let failedCount = batches.filter(\.isFailed).count
+            if failedCount == 0 {
                 ArchiveStore.shared.addResult(ArchivedResult(
-                    title: L10n.t("معالجة: ", "Processed: ") + url.lastPathComponent,
+                    title: L10n.t("معالجة: ", "Processed: ") + sourceName,
                     kind: translateTo.isEmpty ? "convert" : "translate_doc",
-                    text: aggregated,
-                    summary: String(aggregated.prefix(140))
+                    text: resultText,
+                    summary: String(resultText.prefix(140))
                 ))
                 UIAccessibility.post(notification: .announcement,
                                       argument: L10n.t("اكتملت المعالجة. راجع النتيجة قبل استخدامها.",
                                                         "Processing is complete. Review the result before using it."))
+            } else {
+                UIAccessibility.post(notification: .announcement,
+                                      argument: L10n.t(
+                                          "اكتملت المعالجة مع \(failedCount) دفعة فاشلة. يمكنك إعادة المحاولة.",
+                                          "Processing finished with \(failedCount) failed batches. You can retry them."))
             }
-        } catch {
-            errorMessage = UserFriendlyErrorMapper.map(error)
         }
     }
 

@@ -27,6 +27,8 @@ UI: **SwiftUI**
 - Select a PDF of up to 500 pages, a Word file (DOCX), a PowerPoint file (PPTX), or a TXT or CSV file.
 - Extract readable text locally on the device. PDF uses Apple's PDFKit; DOCX uses Basir's `DocxReader`; PPTX uses Basir's `PptxReader`. Both DOCX and PPTX rely on a built-in zero-dependency ZIP reader (`Documents/ZipReader.swift`) that does not require any external library.
 - Send the extracted text to Gemini in eight-page batches (configurable via `PdfReader.pagesPerBatch`). The screen shows a live progress bar — "batch X of Y" — and a Cancel button that stops cleanly after the current batch finishes and keeps whatever was already produced. Long documents must run with the app open in the foreground.
+- A single failed batch does NOT abort the whole run. Failures are recorded per-batch, the loop continues, and a "Retry failed batches only" button appears at the end so the user can re-run just the missing pages without re-processing the rest. This matches the `ConversionState.retainedSnapshot` retry path on Android.
+- Optional math mode (`Convert math inside the document`) instructs Gemini to render every equation as spoken text plus a `[LaTeX:]` trailer, using the same vocabulary as the dedicated math card.
 - Display the result as copyable, shareable text.
 - Optionally export the result as a real Word file (DOCX). Tap "Create a Word file" to generate an OOXML package on-device (`Documents/DocxWriter.swift` + `Documents/ZipWriter.swift`); the file is shared through the standard iOS share sheet.
 
