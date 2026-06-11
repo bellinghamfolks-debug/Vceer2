@@ -8,9 +8,9 @@
  *
  * Required env vars (.env):
  *   GEMINI_API_KEY                Google AI Studio key (required)
- *   GEMINI_MODEL_FLASH_LITE       default: gemini-2.5-flash-lite
- *   GEMINI_MODEL_FLASH            default: gemini-2.5-flash
- *   GEMINI_MODEL_PRO              default: gemini-2.5-pro
+ *   GEMINI_MODEL_FLASH_LITE       default: gemini-3-flash-lite
+ *   GEMINI_MODEL_FLASH            default: gemini-3-flash
+ *   GEMINI_MODEL_PRO              default: gemini-3-pro
  *   BASIR_APP_TOKEN               shared secret with the Android app
  *   PORT                          default: 3000
  */
@@ -30,12 +30,15 @@ app.use(express.json({ limit: '20mb' }));
 const PORT = process.env.PORT || 3000;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
-// Real Gemini 2.5 model ids. The previous defaults (gemini-3-*-preview) did
-// not exist, so every direct call failed for new users until they overrode
-// them manually — the root cause of the "doesn't work in direct mode" bug.
-const MODEL_FLASH_LITE = process.env.GEMINI_MODEL_FLASH_LITE || 'gemini-2.5-flash-lite';
-const MODEL_FLASH      = process.env.GEMINI_MODEL_FLASH      || 'gemini-2.5-flash';
-const MODEL_PRO        = process.env.GEMINI_MODEL_PRO        || 'gemini-2.5-pro';
+// v3.3 — Gemini 3 family defaults, matching the Android + iOS apps.
+// Google released the 3.x lineup with better vision, longer context,
+// and lower latency at parity cost with 2.5, so all three presets
+// move forward together. Operators who need to pin to 2.5 can set
+// the env var (e.g. GEMINI_MODEL_FLASH=gemini-2.5-flash) per
+// preset without touching this file.
+const MODEL_FLASH_LITE = process.env.GEMINI_MODEL_FLASH_LITE || 'gemini-3-flash-lite';
+const MODEL_FLASH      = process.env.GEMINI_MODEL_FLASH      || 'gemini-3-flash';
+const MODEL_PRO        = process.env.GEMINI_MODEL_PRO        || 'gemini-3-pro';
 
 // Legacy env var aliases — still honoured.
 const LEGACY_FAST    = process.env.GEMINI_MODEL_FAST;

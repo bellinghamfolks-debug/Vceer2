@@ -60,11 +60,14 @@ final class BasirSettings: ObservableObject {
     /// Map a quality preset to the actual Gemini model ID. Matches
     /// AiClient.modelForQuality on Android.
     func modelForQuality(_ quality: String) -> String {
+        // v3.3 — defaults promoted to the Gemini 3 family to match
+        // the Android side. The user can still override per-preset
+        // via the model picker; this is just the fall-through.
         switch quality {
-        case "fast":     return "gemini-2.5-flash-lite"
-        case "best":     return "gemini-2.5-pro"
+        case "fast":     return "gemini-3-flash-lite"
+        case "best":     return "gemini-3-pro"
         case "balanced": fallthrough
-        default:         return "gemini-2.5-flash"
+        default:         return "gemini-3-flash"
         }
     }
 

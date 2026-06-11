@@ -32,9 +32,21 @@ public final class GeminiDirectClient {
     //   FLASH_LITE -> "Fast"      (cheapest, fastest)
     //   FLASH      -> "Balanced"  (default)
     //   PRO        -> "Best"      (highest quality, slowest)
-    public static final String DEFAULT_FLASH_LITE = "gemini-2.5-flash-lite";
-    public static final String DEFAULT_FLASH      = "gemini-2.5-flash";
-    public static final String DEFAULT_PRO        = "gemini-2.5-pro";
+    //
+    // v3.3 — promoted to the Gemini 3 family. Google's Gemini 3
+    // lineup landed late 2025 / early 2026 with better vision,
+    // longer context, and lower latency at the same price point as
+    // the 2.5 generation, so there is no downside to defaulting
+    // every preset to v3 for new installs.
+    //
+    // The model picker in Settings still lets the user override
+    // these per-preset via "gemini_model_fast_lite",
+    // "gemini_model_quick", and "gemini_model_doc" SharedPreferences
+    // keys, so anyone who needs to pin to 2.5 (cost, eval baseline)
+    // can do so without an app update.
+    public static final String DEFAULT_FLASH_LITE = "gemini-3-flash-lite";
+    public static final String DEFAULT_FLASH      = "gemini-3-flash";
+    public static final String DEFAULT_PRO        = "gemini-3-pro";
 
     // Legacy aliases (kept so older code paths keep compiling).
     public static final String DEFAULT_FAST = DEFAULT_FLASH;
