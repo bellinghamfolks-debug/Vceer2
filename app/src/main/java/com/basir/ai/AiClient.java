@@ -117,9 +117,21 @@ public final class AiClient {
         }
         boolean quick = "ask".equals(task) || "translate".equals(task)
                     || "reply".equals(task) || "quick".equals(task) || "health".equals(task);
+        // v3.3 — doc conversion defaults to QUALITY_BALANCED (Flash) not
+        // QUALITY_BEST (Pro). Reason: with the Gemini 3 default bump,
+        // Pro is currently shipped as "gemini-3.1-pro-preview". Preview
+        // models — even with billing enabled — have:
+        //   • stricter per-minute and per-day quotas,
+        //   • partial responseSchema (JSON-mode) support, and
+        //   • inconsistent Files API behaviour for PDF references
+        //     used by the chunked-conversion loop.
+        // Flash 3.5 is GA and supports both Files API + JSON mode
+        // reliably, so it's the right default for the "convert"
+        // pathway. Users who explicitly pick the "Best" quality in
+        // Settings still get Pro — the override is honoured.
         String preset = quick
                 ? prefs.getString("quick_quality", QUALITY_BALANCED)
-                : prefs.getString("doc_quality",   QUALITY_BEST);
+                : prefs.getString("doc_quality",   QUALITY_BALANCED);
         return modelForQuality(prefs, preset);
     }
 
@@ -300,8 +312,11 @@ public final class AiClient {
         else if (mime.contains("presentation")) filename = "document.pptx";
 
         // Pick the same model the user chose for direct mode, so proxy mode honours
-        // the Quality picker. The server reads this optional field.
-        String quality = prefs.getString("doc_quality", QUALITY_BEST);
+        // the Quality picker. The server reads this optional field. v3.3:
+        // default changed to BALANCED — see pickModel() for the full rationale
+        // (Pro is currently a -preview snapshot with stricter quotas / partial
+        // Files API + JSON mode support).
+        String quality = prefs.getString("doc_quality", QUALITY_BALANCED);
         String model = modelForQuality(prefs, quality);
 
         HttpURLConnection conn = (HttpURLConnection) new URL(convertEndpoint(baseUrl)).openConnection();

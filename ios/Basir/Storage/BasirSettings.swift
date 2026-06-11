@@ -33,7 +33,12 @@ final class BasirSettings: ObservableObject {
     // MARK: - AI mode + quality presets
     @AppStorage("ai_mode") var aiMode: String = "direct"    // "direct" | "proxy"
     @AppStorage("quick_quality") var quickQuality: String = "balanced"
-    @AppStorage("doc_quality") var docQuality: String = "best"
+    // v3.3 — default flipped to "balanced" (Flash 3.5 GA) because the
+    // "best" default routed through gemini-3.1-pro-preview, whose
+    // preview-tier quotas + partial JSON-mode coverage break the
+    // document conversion pipeline even with billing enabled. Users
+    // who explicitly pick "best" still get Pro.
+    @AppStorage("doc_quality") var docQuality: String = "balanced"
     @AppStorage("ai_server_url") var proxyURL: String = ""
     @AppStorage("ai_app_token") var proxyToken: String = ""
 

@@ -154,6 +154,25 @@ public class MainActivity extends Activity
         // plaintext slot into the Keystore-encrypted slot. Idempotent; runs
         // on every launch but only does real work the first time.
         SecurePrefs.migrateLegacyKeyOnStartup(prefs);
+        // v3.3 — one-shot migration of doc_quality. Existing installs that
+        // saved doc_quality="best" while we were defaulting to it will keep
+        // routing document conversion at Pro 3.1-preview — a model that
+        // breaks the Files API + JSON-mode pipeline for many billing tiers.
+        // Flip those installs to "balanced" (Flash 3.5 GA) once. Users who
+        // had EXPLICITLY changed away from "best" already have a different
+        // value and aren't touched. Users who genuinely want Pro can
+        // re-pick it from the quality settings; the override is honoured.
+        if (!prefs.getBoolean("doc_quality_v33_migrated", false)) {
+            String saved = prefs.getString("doc_quality", null);
+            if (AiClient.QUALITY_BEST.equals(saved)) {
+                prefs.edit()
+                        .putString("doc_quality", AiClient.QUALITY_BALANCED)
+                        .putBoolean("doc_quality_v33_migrated", true)
+                        .apply();
+            } else {
+                prefs.edit().putBoolean("doc_quality_v33_migrated", true).apply();
+            }
+        }
         // v2.5 — keep the activity log + archived documents bounded. Runs
         // off the main thread because old installs may have thousands of
         // rows; doing this on the UI thread would block startup. autoTrim

@@ -22,6 +22,19 @@ struct BasirApp: App {
         // UserDefaults from an older build, move it into Keychain.
         // Idempotent across launches.
         KeychainStore.migrateLegacyKeyIfNeeded()
+        // v3.3 — one-shot migration of doc_quality. Existing installs
+        // that saved doc_quality="best" while we were defaulting to it
+        // would keep routing through gemini-3.1-pro-preview, which is
+        // unreliable under the preview quota tier. Flip those installs
+        // to "balanced" once. Users who had explicitly picked another
+        // value are not touched.
+        let defaults = UserDefaults.standard
+        if !defaults.bool(forKey: "doc_quality_v33_migrated") {
+            if defaults.string(forKey: "doc_quality") == "best" {
+                defaults.set("balanced", forKey: "doc_quality")
+            }
+            defaults.set(true, forKey: "doc_quality_v33_migrated")
+        }
     }
 
     var body: some Scene {
