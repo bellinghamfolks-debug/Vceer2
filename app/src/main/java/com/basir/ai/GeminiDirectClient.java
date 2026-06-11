@@ -37,11 +37,14 @@ public final class GeminiDirectClient {
     // available in Google AI Studio:
     //   Fast       gemini-3.1-flash-lite
     //   Balanced   gemini-3.5-flash
-    //   Best       gemini-3.1-pro
+    //   Best       gemini-3.1-pro-preview
     //
     // The minor numbers (3.1 vs 3.5) are NOT a typo — Google
-    // shipped the Flash and Flash-Lite refreshes ahead of the Pro
-    // bump, so the active checkpoints don't share a single minor.
+    // shipped the Flash refresh ahead of the Pro / Flash-Lite line,
+    // so the active checkpoints don't share a single minor. Pro
+    // still carries the "-preview" suffix until Google flips it to
+    // GA, at which point a maintainer should drop the suffix.
+    //
     // The user-visible Settings → "Model picker" UI still lets the
     // user override these per-preset via the SharedPreferences
     // keys "gemini_model_fast_lite", "gemini_model_quick", and
@@ -50,7 +53,7 @@ public final class GeminiDirectClient {
     // the next default bump.
     public static final String DEFAULT_FLASH_LITE = "gemini-3.1-flash-lite";
     public static final String DEFAULT_FLASH      = "gemini-3.5-flash";
-    public static final String DEFAULT_PRO        = "gemini-3.1-pro";
+    public static final String DEFAULT_PRO        = "gemini-3.1-pro-preview";
 
     // Legacy aliases (kept so older code paths keep compiling).
     public static final String DEFAULT_FAST = DEFAULT_FLASH;

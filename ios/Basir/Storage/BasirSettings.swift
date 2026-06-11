@@ -61,14 +61,14 @@ final class BasirSettings: ObservableObject {
     /// AiClient.modelForQuality on Android.
     func modelForQuality(_ quality: String) -> String {
         // v3.3 — defaults promoted to the Gemini 3 family per the
-        // IDs currently available in Google AI Studio. Flash + Flash
-        // Lite are on 3.5 / 3.1 respectively; Pro is on 3.1. The
-        // minor numbers don't share a value because Google shipped
-        // each refresh on its own cadence. Override per-preset via
-        // BasirSettings if Google rotates the checkpoint.
+        // IDs currently available in Google AI Studio. Flash is on
+        // 3.5; Flash Lite + Pro are on 3.1. Pro still carries the
+        // "-preview" suffix until Google flips it to GA — drop the
+        // suffix at that point. Override per-preset via
+        // BasirSettings if the checkpoint rotates.
         switch quality {
         case "fast":     return "gemini-3.1-flash-lite"
-        case "best":     return "gemini-3.1-pro"
+        case "best":     return "gemini-3.1-pro-preview"
         case "balanced": fallthrough
         default:         return "gemini-3.5-flash"
         }

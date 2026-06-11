@@ -10,7 +10,7 @@
  *   GEMINI_API_KEY                Google AI Studio key (required)
  *   GEMINI_MODEL_FLASH_LITE       default: gemini-3.1-flash-lite
  *   GEMINI_MODEL_FLASH            default: gemini-3.5-flash
- *   GEMINI_MODEL_PRO              default: gemini-3.1-pro
+ *   GEMINI_MODEL_PRO              default: gemini-3.1-pro-preview
  *   BASIR_APP_TOKEN               shared secret with the Android app
  *   PORT                          default: 3000
  */
@@ -33,12 +33,13 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 // v3.3 — Gemini 3 family defaults matching the IDs Google AI Studio
 // exposes today. Flash and Flash-Lite are on different minor numbers
 // (3.5 vs 3.1) because Google shipped each refresh on its own
-// cadence — not a typo. Operators who need to pin to 2.5 (eval
-// baseline, cost reasons) can set the env var per preset without
-// touching this file.
+// cadence — not a typo. Pro is still on a "-preview" snapshot
+// pending GA; drop the suffix once Google flips it. Operators who
+// need to pin to 2.5 (eval baseline, cost reasons) can set the env
+// var per preset without touching this file.
 const MODEL_FLASH_LITE = process.env.GEMINI_MODEL_FLASH_LITE || 'gemini-3.1-flash-lite';
 const MODEL_FLASH      = process.env.GEMINI_MODEL_FLASH      || 'gemini-3.5-flash';
-const MODEL_PRO        = process.env.GEMINI_MODEL_PRO        || 'gemini-3.1-pro';
+const MODEL_PRO        = process.env.GEMINI_MODEL_PRO        || 'gemini-3.1-pro-preview';
 
 // Legacy env var aliases — still honoured.
 const LEGACY_FAST    = process.env.GEMINI_MODEL_FAST;
