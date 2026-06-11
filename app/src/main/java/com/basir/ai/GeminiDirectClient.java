@@ -33,20 +33,24 @@ public final class GeminiDirectClient {
     //   FLASH      -> "Balanced"  (default)
     //   PRO        -> "Best"      (highest quality, slowest)
     //
-    // v3.3 — promoted to the Gemini 3 family. Google's Gemini 3
-    // lineup landed late 2025 / early 2026 with better vision,
-    // longer context, and lower latency at the same price point as
-    // the 2.5 generation, so there is no downside to defaulting
-    // every preset to v3 for new installs.
+    // v3.3 — promoted to the Gemini 3 family per the IDs currently
+    // available in Google AI Studio:
+    //   Fast       gemini-3.1-flash-lite
+    //   Balanced   gemini-3.5-flash
+    //   Best       gemini-3.1-pro
     //
-    // The model picker in Settings still lets the user override
-    // these per-preset via "gemini_model_fast_lite",
-    // "gemini_model_quick", and "gemini_model_doc" SharedPreferences
-    // keys, so anyone who needs to pin to 2.5 (cost, eval baseline)
-    // can do so without an app update.
-    public static final String DEFAULT_FLASH_LITE = "gemini-3-flash-lite";
-    public static final String DEFAULT_FLASH      = "gemini-3-flash";
-    public static final String DEFAULT_PRO        = "gemini-3-pro";
+    // The minor numbers (3.1 vs 3.5) are NOT a typo — Google
+    // shipped the Flash and Flash-Lite refreshes ahead of the Pro
+    // bump, so the active checkpoints don't share a single minor.
+    // The user-visible Settings → "Model picker" UI still lets the
+    // user override these per-preset via the SharedPreferences
+    // keys "gemini_model_fast_lite", "gemini_model_quick", and
+    // "gemini_model_doc" — useful for pinning to 2.5 for cost or
+    // eval baselines, or adopting a later 3.x snapshot ahead of
+    // the next default bump.
+    public static final String DEFAULT_FLASH_LITE = "gemini-3.1-flash-lite";
+    public static final String DEFAULT_FLASH      = "gemini-3.5-flash";
+    public static final String DEFAULT_PRO        = "gemini-3.1-pro";
 
     // Legacy aliases (kept so older code paths keep compiling).
     public static final String DEFAULT_FAST = DEFAULT_FLASH;
