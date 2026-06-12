@@ -1865,6 +1865,13 @@ public class MainActivity extends Activity
             }
             confirmAndPickFile();
         });
+        // v3.3.1 — always-available diagnostic share button on the
+        // convert screen. The user can grab the full per-step log
+        // before, during, or after any attempt — useful when the
+        // failure is a silent regression instead of a thrown error.
+        addOutlineButton(t("مشاركة سجل تشخيص التحويل",
+                            "Share conversion diagnostic log"),
+                v -> shareConversionDiagnostic());
         addBackButton();
     }
 
@@ -2247,6 +2254,17 @@ public class MainActivity extends Activity
                 addPrimaryButton(t("إعادة المحاولة", "Try again"),
                         v -> showConvertScreen());
             }
+            // v3.3.1 — diagnostic share button. The diagnostic file
+            // captures EVERY step of every conversion attempt across
+            // sessions and days (never truncated, never overwritten)
+            // so a maintainer can pinpoint the exact root cause
+            // instead of guessing.
+            addOutlineButton(t("مشاركة سجل التشخيص للمصان",
+                                "Share diagnostic log for maintainer"),
+                    v -> shareConversionDiagnostic());
+            addPlainText(t(
+                    "السجل يحوي كل الخطوات وأرقام الصفحات والأخطاء بالتفصيل. لا يحذف من نفسه — يحفظ كل المحاولات.",
+                    "The log holds every step, page, and error in detail. It is never auto-deleted — every attempt is preserved."));
             addBackButton();
         } else if (status == ConversionState.Status.CANCELLED) {
             state.clear();
@@ -3109,6 +3127,31 @@ public class MainActivity extends Activity
         i.setType("text/plain");
         i.putExtra(Intent.EXTRA_TEXT, loc);
         startActivity(Intent.createChooser(i, t("مشاركة الموقع", "Share location")));
+    }
+
+    /**
+     * v3.3.1 — share the persistent conversion diagnostic file.
+     * Surfaces a preview of where the log lives on disk so the
+     * user can also attach it manually if the share sheet
+     * truncates EXTRA_TEXT for their messenger of choice.
+     */
+    private void shareConversionDiagnostic() {
+        ConversionDiagnostic diag = ConversionDiagnostic.get();
+        long bytes = diag.reportFileSize();
+        String path = diag.externalReportPath();
+        String hint = t(
+                "حجم السجل الحالي: " + (bytes / 1024) + " كيلوبايت\n"
+                        + "المسار للنسخ اليدوي: " + path,
+                "Current log size: " + (bytes / 1024) + " KB\n"
+                        + "Manual attach path: " + path);
+        // Surface the path through a Toast so a power user can grab
+        // the file with a file-manager when the share sheet truncates.
+        try {
+            android.widget.Toast.makeText(this, hint,
+                    android.widget.Toast.LENGTH_LONG).show();
+        } catch (Throwable ignore) {}
+        diag.shareViaActivity(this,
+                t("مشاركة سجل تشخيص بصير", "Share Basir diagnostic"));
     }
 
     private String getLastKnownLocation() {

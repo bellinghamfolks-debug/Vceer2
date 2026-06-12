@@ -73,6 +73,8 @@ jobs:
           # v3.3 strict per-page conversion engine
           test -f app/src/main/java/com/basir/ai/DocumentPageExtractor.java
           test -f app/src/main/java/com/basir/ai/PdfPageRasterizer.java
+          # v3.3.1 deep conversion diagnostic (append-only log)
+          test -f app/src/main/java/com/basir/ai/ConversionDiagnostic.java
           test -f app/src/main/res/values/strings.xml
           test -f app/src/main/res/values/styles.xml
           test -f app/src/main/res/drawable/ic_basir.xml

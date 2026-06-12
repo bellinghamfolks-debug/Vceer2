@@ -201,8 +201,45 @@ public final class AiClient {
     public static String convertToDocx(Context ctx, SharedPreferences prefs, Uri sourceUri,
                                        String mode, String language, File outFile,
                                        ProgressCallback progress) throws Exception {
-        // v2.3.1 — same delegation pattern as ask().
-        return provider(prefs).convertToDocx(ctx, sourceUri, mode, language, outFile, progress);
+        // v3.3.1 — wrap the call in a diagnostic envelope so we
+        // capture the entry context, the exit outcome (success or
+        // exception chain), and a wall-clock duration. The deep
+        // pipeline emits step()/pageEnd()/etc. between these two
+        // bookends. Wrapping here means every caller (Activity,
+        // ConversionService, retry path, share-extension) gets
+        // instrumented automatically without per-site changes.
+        ConversionDiagnostic diag = ConversionDiagnostic.get();
+        long sizeBytes = -1L;
+        String fileName = sourceUri == null ? "(resume)" : sourceUri.getLastPathSegment();
+        String mime = "";
+        if (ctx != null && sourceUri != null) {
+            try { mime = ctx.getContentResolver().getType(sourceUri); } catch (Throwable ignore) {}
+            try {
+                android.os.ParcelFileDescriptor pfd = ctx.getContentResolver()
+                        .openFileDescriptor(sourceUri, "r");
+                if (pfd != null) {
+                    sizeBytes = pfd.getStatSize();
+                    pfd.close();
+                }
+            } catch (Throwable ignore) {}
+        }
+        // Page count is unknown at the public entry — the deep
+        // pipeline logs it via step("pdf-page-count", ...) once
+        // PdfPageRasterizer opens the file. Pass 0 here.
+        diag.start(ctx, fileName, mime, sizeBytes, 0, mode, language);
+        diag.step("entry", "convertToDocx invoked, mode=" + getMode(prefs)
+                + " configured=" + isConfigured(prefs));
+        try {
+            String result = provider(prefs).convertToDocx(ctx, sourceUri, mode, language, outFile, progress);
+            long outBytes = (outFile != null && outFile.exists()) ? outFile.length() : -1L;
+            diag.success(result, outBytes);
+            return result;
+        } catch (Throwable t) {
+            diag.failure("convertToDocx", t);
+            diag.aborted(t.getClass().getSimpleName() + ": " + t.getMessage());
+            if (t instanceof Exception) throw (Exception) t;
+            throw new Exception(t);
+        }
     }
 
     /** Reports incremental conversion progress to the caller. */
