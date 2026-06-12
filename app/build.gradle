@@ -10,8 +10,8 @@ android {
         applicationId 'com.basir.ai'
         minSdk 23
         targetSdk 34
-        versionCode 54
-        versionName '3.2.0'
+        versionCode 55
+        versionName '3.3.0'
     }
 
     buildTypes {
