@@ -18,6 +18,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
@@ -1168,6 +1169,34 @@ public final class AiClient {
     /** Base64-encode a byte[] for inline image / file parts. */
     public static String encodeBase64(byte[] data) {
         return Base64.encodeToString(data, Base64.NO_WRAP);
+    }
+
+    /**
+     * Public byte-reader used by ImageCompressor and any other
+     * caller that wants the raw bytes behind a content / file URI
+     * with a size cap. Mirrors the internal {@link #readUriBytesRaw}
+     * but throws {@link IOException} instead of a generic Exception
+     * so the call site can map it through standard I/O error
+     * channels. Passing {@code maxBytes <= 0} disables the size cap.
+     */
+    public static byte[] readUriBytes(Context context, Uri uri, int maxBytes) throws IOException {
+        try (InputStream input = context.getContentResolver().openInputStream(uri);
+             ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            if (input == null) {
+                throw new IOException("Unable to open input stream for URI");
+            }
+            byte[] buffer = new byte[8192];
+            int total = 0;
+            int read;
+            while ((read = input.read(buffer)) != -1) {
+                total += read;
+                if (maxBytes > 0 && total > maxBytes) {
+                    throw new IOException("File exceeds max allowed bytes");
+                }
+                output.write(buffer, 0, read);
+            }
+            return output.toByteArray();
+        }
     }
 
     /**
