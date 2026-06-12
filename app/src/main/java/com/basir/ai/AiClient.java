@@ -210,8 +210,10 @@ public final class AiClient {
         // instrumented automatically without per-site changes.
         ConversionDiagnostic diag = ConversionDiagnostic.get();
         long sizeBytes = -1L;
+        int  pageCount = 0;
         String fileName = sourceUri == null ? "(resume)" : sourceUri.getLastPathSegment();
         String mime = "";
+        String pageCountError = null;
         if (ctx != null && sourceUri != null) {
             try { mime = ctx.getContentResolver().getType(sourceUri); } catch (Throwable ignore) {}
             try {
@@ -222,11 +224,40 @@ public final class AiClient {
                     pfd.close();
                 }
             } catch (Throwable ignore) {}
+            // v3.3.2 — actually count PDF pages so "Source pages"
+            // is not always 0. We open a fresh ParcelFileDescriptor,
+            // hand it to PdfRenderer, read the page count, and
+            // close both — the rasterizer used later in the
+            // pipeline opens its own descriptor so this preview
+            // open does not interfere.
+            if (mime != null && mime.contains("pdf")) {
+                android.os.ParcelFileDescriptor pfd = null;
+                android.graphics.pdf.PdfRenderer renderer = null;
+                try {
+                    pfd = ctx.getContentResolver()
+                            .openFileDescriptor(sourceUri, "r");
+                    if (pfd == null) {
+                        pageCountError = "openFileDescriptor returned null";
+                    } else {
+                        renderer = new android.graphics.pdf.PdfRenderer(pfd);
+                        pageCount = renderer.getPageCount();
+                    }
+                } catch (Throwable t) {
+                    pageCountError = t.getClass().getSimpleName()
+                            + ": " + t.getMessage();
+                } finally {
+                    try { if (renderer != null) renderer.close(); } catch (Throwable ignore) {}
+                    try { if (pfd != null) pfd.close(); } catch (Throwable ignore) {}
+                }
+            }
         }
-        // Page count is unknown at the public entry — the deep
-        // pipeline logs it via step("pdf-page-count", ...) once
-        // PdfPageRasterizer opens the file. Pass 0 here.
-        diag.start(ctx, fileName, mime, sizeBytes, 0, mode, language);
+        diag.start(ctx, fileName, mime, sizeBytes, pageCount, mode, language);
+        diag.memorySnapshot("entry");
+        if (pageCountError != null) {
+            // Pages=0 is no longer a guessing game: if the count
+            // failed we record the exact reason here.
+            diag.step("pdf-page-count-failed", pageCountError);
+        }
         diag.step("entry", "convertToDocx invoked, mode=" + getMode(prefs)
                 + " configured=" + isConfigured(prefs));
         try {
@@ -652,6 +683,8 @@ public final class AiClient {
                         // us WHY each page was rejected; this hook does.
                         ConversionDiagnostic.get().pageStart(pageNumber,
                                 0, 0, 0);
+                        ConversionDiagnostic.get().memorySnapshot(
+                                "page-" + pageNumber + "-start");
                         try {
                             JSONObject result;
                             if (!fResume) {
@@ -660,12 +693,22 @@ public final class AiClient {
                                 }
                                 PdfPageRasterizer.PageImage pageImage =
                                         fRasterizer.renderPage(pageNumber);
-                                ConversionDiagnostic.get().step("rasterized",
-                                        "page " + pageNumber + " image ready, jpeg-bytes="
-                                        + (pageImage == null || pageImage.jpegBytes == null
-                                            ? -1 : pageImage.jpegBytes.length)
-                                        + " rotation=" + (pageImage == null
-                                            ? "?" : pageImage.rotationDegrees));
+                                // v3.3.2 — richer per-page render record
+                                int jpegLen = (pageImage == null
+                                        || pageImage.jpegBytes == null)
+                                        ? -1 : pageImage.jpegBytes.length;
+                                ConversionDiagnostic.get().pageRendered(
+                                        pageNumber,
+                                        pageImage == null ? -1 : pageImage.width,
+                                        pageImage == null ? -1 : pageImage.height,
+                                        pageImage == null ? -1 : pageImage.rotationDegrees,
+                                        pageImage != null && pageImage.visuallyBlank,
+                                        pageImage == null ? 0d : pageImage.inkRatio,
+                                        jpegLen);
+                                if (jpegLen > 0) {
+                                    ConversionDiagnostic.get().uploadObserved(
+                                            pageNumber, jpegLen);
+                                }
                                 result = DocumentPageExtractor.extractFromImage(
                                         key, model, pageNumber, fTotalPages,
                                         fMode, fOutputLanguageName, pageImage);
@@ -674,8 +717,21 @@ public final class AiClient {
                                         key, model, pageNumber, fTotalPages,
                                         fMode, fOutputLanguageName, retainedPdfPart);
                             }
+                            // Validator already ran inside the
+                            // extractor — record the pass + the
+                            // section / table counts so the SUMMARY
+                            // block carries useful per-page totals.
+                            int sections = 0, tables = 0;
+                            if (result != null) {
+                                JSONArray secs = result.optJSONArray("sections");
+                                sections = secs == null ? 0 : secs.length();
+                                tables = countTableSections(secs);
+                            }
+                            ConversionDiagnostic.get().validatorPass(
+                                    pageNumber, sections, tables);
                             ConversionDiagnostic.get().pageEnd(pageNumber,
-                                    true, "extractor returned valid JSON");
+                                    true, "sections=" + sections
+                                    + " tables=" + tables);
                             return result;
                         } catch (Exception pageError) {
                             // Log the FULL underlying error before we

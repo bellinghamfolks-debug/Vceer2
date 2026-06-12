@@ -85,6 +85,15 @@ public final class ConversionDiagnostic {
     private String sessionId = "";
     private Context appCtx = null;
 
+    // v3.3.2 — session-level counters surfaced in the summary block.
+    private int httpCallCount  = 0;
+    private int httpFailCount  = 0;
+    private int pagesRendered  = 0;
+    private int pagesValidated = 0;
+    private int pagesRejected  = 0;
+    private long bytesUploaded = 0;
+    private long bytesReceived = 0;
+
     private ConversionDiagnostic() {}
 
     // ─────────────────── lifecycle ───────────────────
@@ -102,6 +111,16 @@ public final class ConversionDiagnostic {
         if (context != null) this.appCtx = context.getApplicationContext();
         sessionStartMs = SystemClock.elapsedRealtime();
         sessionId = String.format(Locale.US, "S%d", System.currentTimeMillis());
+        // Reset session counters for a clean per-attempt summary at
+        // the end. The on-disk file still has previous sessions'
+        // counters in their own SUMMARY blocks.
+        httpCallCount = 0;
+        httpFailCount = 0;
+        pagesRendered = 0;
+        pagesValidated = 0;
+        pagesRejected = 0;
+        bytesUploaded = 0;
+        bytesReceived = 0;
         // Note: events list is NOT cleared — multiple sessions can
         // coexist in the in-memory window if they fit. The file on
         // disk accumulates forever regardless.
@@ -138,6 +157,7 @@ public final class ConversionDiagnostic {
 
     public synchronized void validatorReject(int pageNumber,
                                               String rule, String why) {
+        pagesRejected++;
         add("REJECT", "page " + pageNumber + "  rule=" + nullSafe(rule)
                 + (why == null ? "" : "  why=" + why));
     }
@@ -147,11 +167,60 @@ public final class ConversionDiagnostic {
                                            String responseSnippet) {
         String trimmed = (url == null) ? "" : url;
         trimmed = trimmed.replaceAll("(?i)([?&]key=)[^&]+", "$1***REDACTED***");
+        httpCallCount++;
+        if (statusCode < 200 || statusCode >= 300) httpFailCount++;
+        if (responseSnippet != null) bytesReceived += responseSnippet.length();
         add("HTTP", method + " " + statusCode + "  " + elapsedMs + "ms"
                 + "\n           url=" + trimmed
                 + (responseSnippet == null || responseSnippet.isEmpty()
                     ? ""
                     : "\n           body=" + safeSnippet(responseSnippet, HTTP_SNIPPET)));
+    }
+
+    /** Record an outbound upload size so the summary can show total
+     *  bytes Gemini received from the device (image bytes + prompt). */
+    public synchronized void uploadObserved(int pageNumber, long bytes) {
+        bytesUploaded += bytes;
+        add("UPLOAD", "page " + pageNumber + "  bytes=" + bytes);
+    }
+
+    /** Snapshot of Java heap usage at the current moment. */
+    public synchronized void memorySnapshot(String label) {
+        Runtime r = Runtime.getRuntime();
+        long total = r.totalMemory();
+        long free  = r.freeMemory();
+        long used  = total - free;
+        long max   = r.maxMemory();
+        add("MEM", label
+                + "  used=" + (used / (1024 * 1024)) + "MB"
+                + "  total=" + (total / (1024 * 1024)) + "MB"
+                + "  max=" + (max / (1024 * 1024)) + "MB"
+                + "  free=" + (free / (1024 * 1024)) + "MB");
+    }
+
+    /** Page-rendering specific hook with the rich info the user
+     *  flagged as missing in v3.3.1: dims, rotation, ink ratio,
+     *  blank-detection verdict, jpeg byte count. */
+    public synchronized void pageRendered(int pageNumber, int width, int height,
+                                            int rotationDegrees,
+                                            boolean visuallyBlank, double inkRatio,
+                                            int jpegBytes) {
+        pagesRendered++;
+        add("RENDER", "page " + pageNumber
+                + "  dims=" + width + "x" + height
+                + "  rot=" + rotationDegrees
+                + "  ink=" + String.format(Locale.US, "%.4f", inkRatio)
+                + "  blank=" + visuallyBlank
+                + "  jpeg=" + jpegBytes + "B");
+    }
+
+    /** Validator passed for a page. Pair with pageEnd(true, ...). */
+    public synchronized void validatorPass(int pageNumber, int sections,
+                                            int tablesDetected) {
+        pagesValidated++;
+        add("PASS", "page " + pageNumber
+                + "  sections=" + sections
+                + "  tables=" + tablesDetected);
     }
 
     public synchronized void jsonObserved(String stage, JSONObject json,
@@ -181,11 +250,36 @@ public final class ConversionDiagnostic {
         add("DONE", "✅ success  path=" + nullSafe(outputPath)
                 + "  size=" + outputBytes + " bytes"
                 + "  elapsed=" + elapsedMs() + "ms");
+        writeSummary();
     }
 
     public synchronized void aborted(String summary) {
         add("DONE", "❌ aborted  " + nullSafe(summary)
                 + "  elapsed=" + elapsedMs() + "ms");
+        writeSummary();
+    }
+
+    /**
+     * Final summary block. Closes every session — success or
+     * failure — with a counters snapshot so a maintainer can read
+     * the SUMMARY line and immediately know how far the pipeline
+     * got before stopping (5 HTTP calls / 2 pages rendered / 0
+     * validated → all three pages rejected at the validator).
+     */
+    private void writeSummary() {
+        Runtime r = Runtime.getRuntime();
+        long used = (r.totalMemory() - r.freeMemory()) / (1024 * 1024);
+        addRaw("──────── SESSION SUMMARY ────────");
+        addRaw("  elapsed         : " + elapsedMs() + " ms");
+        addRaw("  http calls      : " + httpCallCount
+                + "  (failures: " + httpFailCount + ")");
+        addRaw("  bytes uploaded  : " + bytesUploaded);
+        addRaw("  bytes received  : " + bytesReceived);
+        addRaw("  pages rendered  : " + pagesRendered);
+        addRaw("  pages validated : " + pagesValidated);
+        addRaw("  pages rejected  : " + pagesRejected);
+        addRaw("  heap used at end: " + used + " MB");
+        addRaw("─────────────────────────────────");
     }
 
     // ─────────────────── sharing ───────────────────
