@@ -70,6 +70,9 @@ jobs:
           test -f app/src/main/java/com/basir/ai/LiveWalkingController.java
           # v3.2 live walking foreground service
           test -f app/src/main/java/com/basir/ai/LiveWalkingService.java
+          # v3.3 strict per-page conversion engine
+          test -f app/src/main/java/com/basir/ai/DocumentPageExtractor.java
+          test -f app/src/main/java/com/basir/ai/PdfPageRasterizer.java
           test -f app/src/main/res/values/strings.xml
           test -f app/src/main/res/values/styles.xml
           test -f app/src/main/res/drawable/ic_basir.xml

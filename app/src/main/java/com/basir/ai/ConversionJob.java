@@ -7,53 +7,23 @@ import java.util.Collections;
 import java.util.List;
 
 /**
- * v2.4 — orchestrator for a chunked PDF → DOCX conversion.
+ * Ordered conversion orchestrator.
  *
- * Previous architecture (pre-v2.4)
- * ─────────────────────────────────
- *   The PDF batched loop lived inline in AiClient.directConvertToDocx.
- *   If ANY batch threw (network glitch, JSON parse error, safety block,
- *   timeout) the whole loop bailed and the partial output was discarded.
- *   A user converting a 200-page document who saw batch #15 of 50 fail
- *   got nothing — not the 14 batches that already succeeded, not even an
- *   indication of where the failure was.
- *
- * v2.4 model
- * ──────────
- *   The job holds a list of {@link ConversionChunk}s, one per batch.
- *   {@link #runAll} processes them in order. A chunk failure marks that
- *   chunk FAILED but the loop continues — every successful chunk still
- *   contributes its sections to the DocxBuilder. After the loop the
- *   caller checks {@link #failedChunks()}; if non-empty the resulting
- *   DOCX gets a footer listing the failed page ranges, so the user
- *   knows exactly which pages to retry instead of the whole document.
- *
- *   Cancellation is propagated by re-throwing from {@link ChunkProcessor}
- *   — the job recognises any exception whose message contains "cancel"
- *   and aborts the whole loop. Real cancellation should also surface via
- *   the {@link CancelCheck} hook between chunks.
- *
- * What this class does NOT do (yet)
- * ─────────────────────────────────
- *   - On-disk checkpointing across process death. The job state lives
- *     in-process for now. A later phase will serialise this to a JSON
- *     file in cache so a service-killed conversion can resume from the
- *     last completed chunk, using the same Gemini Files API upload
- *     (file persists 48 h on Gemini's side).
- *   - Retry of failed chunks. The job marks failure and moves on; the
- *     "retry just the failed pages" UI is a future deliverable too.
+ * Each chunk has an explicit state and may be restored from a previously
+ * validated snapshot. Non-cancellation failures are recorded so the caller can
+ * retain successful pages for a later retry. The production caller in
+ * {@link AiClient} deliberately refuses to write a partial DOCX when any chunk
+ * fails; this class only manages execution state and does not choose the output
+ * policy.
  */
 public final class ConversionJob {
 
-    /** Processes one chunk, returning the parsed JSON. May throw on
-     *  network or parsing failures — the job treats throws as chunk
-     *  failures, not job failures. */
+    /** Processes one chunk and returns validated JSON. */
     public interface ChunkProcessor {
         JSONObject process(ConversionChunk chunk) throws Exception;
     }
 
-    /** Called once per successfully-parsed chunk so the caller can fold
-     *  its sections into a DocxBuilder. */
+    /** Called once per successfully validated chunk. */
     public interface ChunkRenderer {
         void render(ConversionChunk chunk);
     }
@@ -102,14 +72,9 @@ public final class ConversionJob {
     }
 
     /**
-     * Process every chunk in order. A chunk failure does NOT abort the
-     * job — it just marks that chunk FAILED and the loop continues to
-     * the next one. The exception is re-raised only if its message
-     * indicates cancellation (so an interrupt from
-     * {@link CancelCheck#throwIfCancelled} reliably ends the job).
-     *
-     * Returns the highest effectiveEnd reached across successful chunks,
-     * mostly useful for the progress bar's final tick.
+     * Process every chunk in order. Non-cancellation failures are recorded and
+     * processing continues so successful pages can be checkpointed. The caller
+     * must inspect {@link #failedChunkCount()} before creating any output.
      */
     public int runAll(ChunkProcessor processor,
                       ChunkRenderer renderer,

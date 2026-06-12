@@ -32,9 +32,9 @@ public final class GeminiDirectClient {
     //   FLASH_LITE -> "Fast"      (cheapest, fastest)
     //   FLASH      -> "Balanced"  (default)
     //   PRO        -> "Best"      (highest quality, slowest)
-    public static final String DEFAULT_FLASH_LITE = "gemini-2.5-flash-lite";
-    public static final String DEFAULT_FLASH      = "gemini-2.5-flash";
-    public static final String DEFAULT_PRO        = "gemini-2.5-pro";
+    public static final String DEFAULT_FLASH_LITE = "gemini-3.1-flash-lite";
+    public static final String DEFAULT_FLASH      = "gemini-3.5-flash";
+    public static final String DEFAULT_PRO        = "gemini-3.1-pro-preview";
 
     // Legacy aliases (kept so older code paths keep compiling).
     public static final String DEFAULT_FAST = DEFAULT_FLASH;
@@ -80,7 +80,7 @@ public final class GeminiDirectClient {
 
     /**
      * v3.0 — vision call that forces JSON output via the Gemini
-     * responseMimeType + responseSchema mechanism. Used by the math
+     * responseFormat + JSON Schema mechanism. Used by the math
      * extraction flow: schema constrains the model to emit only LaTeX,
      * and the on-device {@link LatexToSpeech} parser handles the
      * spoken-form rendering deterministically.
@@ -101,13 +101,12 @@ public final class GeminiDirectClient {
         }
         JSONObject body = baseBody(systemText);
         JSONObject gen = body.getJSONObject("generationConfig");
-        gen.put("responseMimeType", "application/json");
-        if (responseSchema != null) gen.put("responseSchema", responseSchema);
+        putJsonResponseFormat(gen, responseSchema);
         gen.put("maxOutputTokens", maxOutputTokens);
-        // Math extraction wants deterministic output; lower the
-        // temperature so the model picks the most likely LaTeX
-        // transcription rather than exploring alternatives.
-        gen.put("temperature", 0.1);
+        // Gemini 3.x is optimized for its default temperature. Lowering it
+        // can degrade reasoning and structured extraction, so keep 1.0.
+        gen.put("temperature", 1.0);
+        gen.put("mediaResolution", "MEDIA_RESOLUTION_HIGH");
 
         JSONArray parts = new JSONArray();
         parts.put(new JSONObject().put("text", userText == null ? "" : userText));
@@ -126,6 +125,45 @@ public final class GeminiDirectClient {
         // tolerant of trailing whitespace / fence markers some prompts
         // can elicit even in JSON mode.
         return parseJsonLenient(raw);
+    }
+
+    /**
+     * Strict structured-output call for a single page image. Unlike the
+     * lenient legacy helpers, this method rejects truncated JSON and any
+     * candidate whose finishReason is not STOP. Document conversion must
+     * never silently salvage a half-written table.
+     */
+    public static JSONObject generateStrictJsonWithImageBytes(
+            String apiKey, String model,
+            String systemText, String userText,
+            byte[] imageBytes, String mimeType,
+            JSONObject responseJsonSchema,
+            int maxOutputTokens) throws Exception {
+        if (apiKey == null || apiKey.trim().isEmpty()) {
+            throw new Exception("Gemini API key is empty");
+        }
+        if (imageBytes == null || imageBytes.length == 0) {
+            throw new Exception("Page image is empty");
+        }
+        if (imageBytes.length > INLINE_MAX_BYTES) {
+            throw new Exception("Page image exceeds the safe inline request limit");
+        }
+
+        JSONObject body = baseBody(systemText);
+        configureStrictJson(body, responseJsonSchema, maxOutputTokens, true);
+
+        JSONArray parts = new JSONArray();
+        parts.put(new JSONObject().put("text", userText == null ? "" : userText));
+        JSONObject inline = new JSONObject();
+        inline.put("mimeType", (mimeType == null || mimeType.isEmpty())
+                ? "image/jpeg" : mimeType);
+        inline.put("data", Base64.encodeToString(imageBytes, Base64.NO_WRAP));
+        parts.put(new JSONObject().put("inlineData", inline));
+        body.put("contents", new JSONArray().put(
+                new JSONObject().put("role", "user").put("parts", parts)));
+
+        JSONObject response = postJsonWithRetry(generateEndpoint(model, apiKey), body);
+        return parseJsonStrict(extractTextStrict(response));
     }
 
     /**
@@ -173,7 +211,7 @@ public final class GeminiDirectClient {
                                                       JSONObject filePart) throws Exception {
         JSONObject body = baseBody(systemText);
         JSONObject gen = body.getJSONObject("generationConfig");
-        gen.put("responseMimeType", "application/json");
+        putJsonResponseFormat(gen, null);
 
         JSONArray parts = new JSONArray();
         parts.put(new JSONObject().put("text", userPrompt == null ? "" : userPrompt));
@@ -189,6 +227,56 @@ public final class GeminiDirectClient {
         return parseJsonLenient(text);
     }
 
+    /** Strict structured-output variant for an uploaded PDF/file part. */
+    public static JSONObject generateStrictJsonWithFilePart(
+            String apiKey, String model,
+            String systemText, String userPrompt,
+            JSONObject filePart, JSONObject responseJsonSchema,
+            int maxOutputTokens) throws Exception {
+        if (apiKey == null || apiKey.trim().isEmpty()) {
+            throw new Exception("Gemini API key is empty");
+        }
+        if (filePart == null) throw new Exception("File part is missing");
+
+        JSONObject body = baseBody(systemText);
+        configureStrictJson(body, responseJsonSchema, maxOutputTokens, false);
+        JSONArray parts = new JSONArray();
+        parts.put(new JSONObject().put("text", userPrompt == null ? "" : userPrompt));
+        parts.put(filePart);
+        body.put("contents", new JSONArray().put(
+                new JSONObject().put("role", "user").put("parts", parts)));
+
+        JSONObject response = postJsonWithRetry(generateEndpoint(model, apiKey), body);
+        return parseJsonStrict(extractTextStrict(response));
+    }
+
+    /** Configure current Gemini REST structured output format. */
+    private static void putJsonResponseFormat(JSONObject generationConfig,
+                                              JSONObject schema) throws Exception {
+        JSONObject text = new JSONObject();
+        text.put("mimeType", "application/json");
+        if (schema != null) text.put("schema", schema);
+        generationConfig.put("responseFormat",
+                new JSONObject().put("text", text));
+    }
+
+    private static void configureStrictJson(JSONObject body,
+                                            JSONObject responseJsonSchema,
+                                            int maxOutputTokens,
+                                            boolean highImageResolution) throws Exception {
+        JSONObject gen = body.getJSONObject("generationConfig");
+        putJsonResponseFormat(gen, responseJsonSchema);
+        // Gemini 3.x documentation recommends the default 1.0 temperature.
+        // Accuracy comes from schema validation and independent verification,
+        // not from forcing a low temperature that can cause degraded behavior.
+        gen.put("temperature", 1.0);
+        gen.put("candidateCount", 1);
+        gen.put("maxOutputTokens", Math.max(1024, maxOutputTokens));
+        if (highImageResolution) {
+            gen.put("mediaResolution", "MEDIA_RESOLUTION_HIGH");
+        }
+    }
+
     /**
      * Multi-part request with a list of inline parts. Used for PPTX processing,
      * where we send all slide images at once together with text instructions.
@@ -197,7 +285,7 @@ public final class GeminiDirectClient {
                                                    String systemText, JSONArray userParts) throws Exception {
         JSONObject body = baseBody(systemText);
         JSONObject gen = body.getJSONObject("generationConfig");
-        gen.put("responseMimeType", "application/json");
+        putJsonResponseFormat(gen, null);
         body.put("contents", new JSONArray().put(new JSONObject().put("role", "user").put("parts", userParts)));
 
         JSONObject resp = postJsonWithRetry(generateEndpoint(model, apiKey), body);
@@ -338,52 +426,134 @@ public final class GeminiDirectClient {
         if (apiKey == null || apiKey.trim().isEmpty()) {
             throw new Exception("Gemini API key is empty");
         }
-        String url = UPLOAD_BASE + "?key=" + URLEncoder.encode(apiKey, "UTF-8");
+        if (bytes == null || bytes.length == 0) {
+            throw new Exception("Cannot upload an empty file");
+        }
+        String mt = (mimeType == null || mimeType.trim().isEmpty())
+                ? "application/octet-stream" : mimeType.trim();
+        String startUrl = UPLOAD_BASE + "?key="
+                + URLEncoder.encode(apiKey, "UTF-8");
         Exception lastErr = null;
+
         for (int attempt = 0; attempt < RETRY_ATTEMPTS; attempt++) {
             checkInterrupted();
-            HttpURLConnection conn = null;
+            HttpURLConnection startConn = null;
+            HttpURLConnection uploadConn = null;
             try {
-                conn = (HttpURLConnection) new URL(url).openConnection();
-                conn.setRequestMethod("POST");
-                conn.setConnectTimeout(30_000);
-                conn.setReadTimeout(600_000);
-                conn.setDoOutput(true);
-                conn.setFixedLengthStreamingMode(bytes.length);
-                conn.setRequestProperty("X-Goog-Upload-Protocol", "raw");
-                conn.setRequestProperty("X-Goog-Upload-Header-Content-Type", mimeType);
-                conn.setRequestProperty("Content-Type", mimeType);
-                if (displayName != null && !displayName.isEmpty()) {
-                    conn.setRequestProperty("X-Goog-File-Display-Name", displayName);
-                }
-                conn.setRequestProperty("User-Agent", "Basir-Android/1.0.7");
+                // Official Files API flow: start a resumable session, then
+                // upload and finalize the bytes to the returned session URL.
+                startConn = (HttpURLConnection) new URL(startUrl).openConnection();
+                startConn.setRequestMethod("POST");
+                startConn.setConnectTimeout(30_000);
+                startConn.setReadTimeout(60_000);
+                startConn.setDoOutput(true);
+                startConn.setRequestProperty("X-Goog-Upload-Protocol", "resumable");
+                startConn.setRequestProperty("X-Goog-Upload-Command", "start");
+                startConn.setRequestProperty("X-Goog-Upload-Header-Content-Length",
+                        String.valueOf(bytes.length));
+                startConn.setRequestProperty("X-Goog-Upload-Header-Content-Type", mt);
+                startConn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+                startConn.setRequestProperty("Accept", "application/json");
+                startConn.setRequestProperty("User-Agent", "Basir-Android/2.0");
 
-                try (OutputStream os = conn.getOutputStream()) {
-                    os.write(bytes);
+                JSONObject metadata = new JSONObject();
+                JSONObject fileMetadata = new JSONObject();
+                if (displayName != null && !displayName.trim().isEmpty()) {
+                    fileMetadata.put("display_name", displayName.trim());
                 }
-                int code = conn.getResponseCode();
-                String body = readAll(code >= 200 && code < 300 ? conn.getInputStream() : conn.getErrorStream());
-                if (code >= 200 && code < 300) {
-                    JSONObject obj = new JSONObject(body);
-                    JSONObject file = obj.optJSONObject("file");
-                    if (file == null) throw new Exception("Upload response missing 'file'");
-                    String name = file.optString("name", "");
-                    String uri  = file.optString("uri", "");
-                    String mt   = file.optString("mimeType", mimeType);
-                    if (uri.isEmpty()) throw new Exception("Upload response missing 'uri'");
-                    return new UploadedFile(name, uri, mt);
+                metadata.put("file", fileMetadata);
+                byte[] metadataBytes = metadata.toString().getBytes(StandardCharsets.UTF_8);
+                startConn.setFixedLengthStreamingMode(metadataBytes.length);
+                try (OutputStream os = startConn.getOutputStream()) {
+                    os.write(metadataBytes);
                 }
-                if (isRetryable(code)) {
-                    lastErr = new Exception("HTTP " + code + " uploading file: " + truncate(extractError(body), 200));
-                    sleepBackoff(attempt);
-                    continue;
+
+                int startCode = startConn.getResponseCode();
+                String startBody = readAll(startCode >= 200 && startCode < 300
+                        ? startConn.getInputStream() : startConn.getErrorStream());
+                if (startCode < 200 || startCode >= 300) {
+                    String error = "HTTP " + startCode + " starting file upload: "
+                            + truncate(extractError(startBody), 400);
+                    if (isRetryable(startCode)) throw new RetryableException(new Exception(error));
+                    throw new Exception(error);
                 }
-                throw new Exception("HTTP " + code + " uploading file: " + truncate(extractError(body), 400));
-            } catch (java.io.IOException e) {
-                lastErr = new Exception("Upload failed: " + e.getMessage());
+
+                String uploadUrl = startConn.getHeaderField("X-Goog-Upload-URL");
+                if (uploadUrl == null || uploadUrl.trim().isEmpty()) {
+                    // Header lookup is case-insensitive on Android, but walk the
+                    // map as a defensive fallback for unusual HTTP stacks.
+                    java.util.Map<String, java.util.List<String>> headers =
+                            startConn.getHeaderFields();
+                    if (headers != null) {
+                        for (java.util.Map.Entry<String, java.util.List<String>> entry
+                                : headers.entrySet()) {
+                            if (entry.getKey() != null
+                                    && "x-goog-upload-url".equalsIgnoreCase(entry.getKey())
+                                    && entry.getValue() != null
+                                    && !entry.getValue().isEmpty()) {
+                                uploadUrl = entry.getValue().get(0);
+                                break;
+                            }
+                        }
+                    }
+                }
+                if (uploadUrl == null || uploadUrl.trim().isEmpty()) {
+                    throw new Exception("Files API did not return a resumable upload URL");
+                }
+
+                uploadConn = (HttpURLConnection) new URL(uploadUrl.trim()).openConnection();
+                uploadConn.setRequestMethod("POST");
+                uploadConn.setConnectTimeout(30_000);
+                uploadConn.setReadTimeout(600_000);
+                uploadConn.setDoOutput(true);
+                uploadConn.setFixedLengthStreamingMode(bytes.length);
+                uploadConn.setRequestProperty("Content-Type", mt);
+                uploadConn.setRequestProperty("Content-Length", String.valueOf(bytes.length));
+                uploadConn.setRequestProperty("X-Goog-Upload-Offset", "0");
+                uploadConn.setRequestProperty("X-Goog-Upload-Command", "upload, finalize");
+                uploadConn.setRequestProperty("Accept", "application/json");
+                uploadConn.setRequestProperty("User-Agent", "Basir-Android/2.0");
+
+                try (OutputStream os = uploadConn.getOutputStream()) {
+                    int offset = 0;
+                    final int block = 64 * 1024;
+                    while (offset < bytes.length) {
+                        checkInterrupted();
+                        int count = Math.min(block, bytes.length - offset);
+                        os.write(bytes, offset, count);
+                        offset += count;
+                    }
+                }
+
+                int code = uploadConn.getResponseCode();
+                String responseBody = readAll(code >= 200 && code < 300
+                        ? uploadConn.getInputStream() : uploadConn.getErrorStream());
+                if (code < 200 || code >= 300) {
+                    String error = "HTTP " + code + " uploading file: "
+                            + truncate(extractError(responseBody), 400);
+                    if (isRetryable(code)) throw new RetryableException(new Exception(error));
+                    throw new Exception(error);
+                }
+
+                JSONObject obj = new JSONObject(responseBody);
+                JSONObject file = obj.optJSONObject("file");
+                if (file == null) throw new Exception("Upload response missing 'file'");
+                String name = file.optString("name", "");
+                String uri = file.optString("uri", "");
+                String returnedMime = file.optString("mimeType", mt);
+                if (name.isEmpty() || uri.isEmpty()) {
+                    throw new Exception("Upload response is missing the file name or URI");
+                }
+                return new UploadedFile(name, uri, returnedMime);
+            } catch (RetryableException retryable) {
+                lastErr = retryable.cause;
+                sleepBackoff(attempt);
+            } catch (java.io.IOException io) {
+                lastErr = new Exception("Upload failed: " + io.getMessage(), io);
                 sleepBackoff(attempt);
             } finally {
-                if (conn != null) conn.disconnect();
+                if (uploadConn != null) uploadConn.disconnect();
+                if (startConn != null) startConn.disconnect();
             }
         }
         if (lastErr == null) lastErr = new Exception("Upload failed after retries");
@@ -400,7 +570,7 @@ public final class GeminiDirectClient {
             body.put("systemInstruction", sys);
         }
         JSONObject gen = new JSONObject();
-        gen.put("temperature", 0.7);
+        gen.put("temperature", 1.0);
         // v2.1.1: explicitly request the headroom we need for batched PDF
         // conversion. The user reported "Unterminated array at character X"
         // crashes around page 40 — that's Gemini cutting the response off
@@ -612,6 +782,52 @@ public final class GeminiDirectClient {
             }
         }
         return sb.toString();
+    }
+
+    private static String extractTextStrict(JSONObject response) throws Exception {
+        JSONArray candidates = response.optJSONArray("candidates");
+        if (candidates == null || candidates.length() == 0) {
+            String feedback = response.optJSONObject("promptFeedback") == null
+                    ? "" : response.optJSONObject("promptFeedback").toString();
+            throw new Exception("Gemini returned no candidate. " + feedback);
+        }
+        JSONObject candidate = candidates.optJSONObject(0);
+        if (candidate == null) throw new Exception("Gemini candidate is malformed");
+        String finishReason = candidate.optString("finishReason", "");
+        if (!finishReason.isEmpty() && !"STOP".equals(finishReason)) {
+            throw new Exception("Gemini output was incomplete or blocked (finishReason="
+                    + finishReason + ")");
+        }
+        JSONObject content = candidate.optJSONObject("content");
+        if (content == null) throw new Exception("Gemini response has no content");
+        JSONArray parts = content.optJSONArray("parts");
+        if (parts == null) throw new Exception("Gemini response has no text parts");
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i < parts.length(); i++) {
+            JSONObject part = parts.optJSONObject(i);
+            if (part != null && part.has("text")) text.append(part.optString("text", ""));
+        }
+        String result = text.toString().trim();
+        if (result.isEmpty()) throw new Exception("Gemini returned an empty structured response");
+        return result;
+    }
+
+    private static JSONObject parseJsonStrict(String text) throws Exception {
+        String cleaned = text == null ? "" : text.trim();
+        // JSON mode should not emit fences, but stripping one complete fence
+        // is harmless. We deliberately do NOT repair truncated JSON.
+        if (cleaned.startsWith("```")) {
+            int newline = cleaned.indexOf('\n');
+            if (newline >= 0) cleaned = cleaned.substring(newline + 1);
+            if (cleaned.endsWith("```")) cleaned = cleaned.substring(0, cleaned.length() - 3);
+            cleaned = cleaned.trim();
+        }
+        try {
+            return new JSONObject(cleaned);
+        } catch (Exception e) {
+            throw new Exception("Gemini returned invalid or truncated JSON: "
+                    + truncate(cleaned, 240), e);
+        }
     }
 
     private static String readAll(InputStream stream) throws Exception {

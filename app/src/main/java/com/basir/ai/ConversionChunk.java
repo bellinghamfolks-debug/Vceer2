@@ -34,7 +34,7 @@ public final class ConversionChunk {
         if (endPage < startPage) endPage = startPage;
         this.startPage = startPage;
         this.endPage = endPage;
-        this.effectiveEnd = endPage;
+        this.effectiveEnd = startPage - 1;
     }
 
     public int startPage()    { return startPage; }
@@ -64,6 +64,8 @@ public final class ConversionChunk {
 
     void markFailed(String errorMessage) {
         this.status = Status.FAILED;
+        this.parsed = null;
+        this.effectiveEnd = startPage - 1;
         this.errorMessage = errorMessage == null ? "" : errorMessage;
     }
 
@@ -72,6 +74,8 @@ public final class ConversionChunk {
      *  ConversionJob.runAll skips them based on isSucceeded(). */
     void markPendingForRetry() {
         this.status = Status.PENDING;
+        this.parsed = null;
+        this.effectiveEnd = startPage - 1;
         this.errorMessage = "";
     }
 }

@@ -3,11 +3,13 @@ package com.basir.ai;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
+import java.util.zip.ZipFile;
 
 /**
  * Minimal pure-Java .docx writer (no Apache POI / docx4j dependency).
@@ -26,7 +28,7 @@ import java.util.zip.ZipOutputStream;
  */
 public final class DocxBuilder {
 
-    public enum BlockType { TITLE, HEADING, PARAGRAPH, TABLE }
+    public enum BlockType { TITLE, HEADING, PARAGRAPH, TABLE, PAGE_BREAK }
 
     public static final class Block {
         final BlockType type;
@@ -40,20 +42,29 @@ public final class DocxBuilder {
         // header" rendering for schedule-style tables.
         final boolean headerRow;
         final boolean headerCol;
+        final String tableCaption;
+        final String tableDescription;
         Block(BlockType type, int level, String text) {
-            this(type, level, text, null, true, false);
+            this(type, level, text, null, true, false, "", "");
         }
         Block(BlockType type, int level, String text, List<List<String>> cells) {
-            this(type, level, text, cells, true, false);
+            this(type, level, text, cells, true, false, "", "");
         }
         Block(BlockType type, int level, String text, List<List<String>> cells,
               boolean headerRow, boolean headerCol) {
+            this(type, level, text, cells, headerRow, headerCol, "", "");
+        }
+        Block(BlockType type, int level, String text, List<List<String>> cells,
+              boolean headerRow, boolean headerCol,
+              String tableCaption, String tableDescription) {
             this.type = type;
             this.level = level;
             this.text = text == null ? "" : text;
             this.cells = cells;
             this.headerRow = headerRow;
             this.headerCol = headerCol;
+            this.tableCaption = tableCaption == null ? "" : tableCaption;
+            this.tableDescription = tableDescription == null ? "" : tableDescription;
         }
     }
 
@@ -62,9 +73,13 @@ public final class DocxBuilder {
     private final String langTag; // BCP 47 e.g. "ar" or "en-US"
 
     public DocxBuilder(String language) {
-        boolean isArabic = language != null && language.toLowerCase().startsWith("ar");
-        this.rtl = isArabic;
-        this.langTag = isArabic ? "ar-SA" : "en-US";
+        String normalized = language == null ? "" : language.trim();
+        String low = normalized.toLowerCase(java.util.Locale.ROOT);
+        this.rtl = low.startsWith("ar") || low.startsWith("he")
+                || low.startsWith("fa") || low.startsWith("ur");
+        if (normalized.isEmpty()) this.langTag = "en-US";
+        else if (low.equals("ar")) this.langTag = "ar-SA";
+        else this.langTag = normalized;
     }
 
     public DocxBuilder title(String text) {
@@ -80,6 +95,12 @@ public final class DocxBuilder {
 
     public DocxBuilder paragraph(String text) {
         blocks.add(new Block(BlockType.PARAGRAPH, 0, text));
+        return this;
+    }
+
+    /** Begin the next source page on a new physical Word page. */
+    public DocxBuilder pageBreak() {
+        blocks.add(new Block(BlockType.PAGE_BREAK, 0, ""));
         return this;
     }
 
@@ -125,7 +146,30 @@ public final class DocxBuilder {
             while (r.size() < maxCols) r.add("");
             padded.add(r);
         }
-        blocks.add(new Block(BlockType.TABLE, 0, "", padded, headerRow, headerCol));
+        blocks.add(new Block(BlockType.TABLE, 0, "", padded,
+                headerRow, headerCol, "", ""));
+        return this;
+    }
+
+    /** Accessible table overload with assistive-technology metadata. */
+    public DocxBuilder table(List<List<String>> cells,
+                             boolean headerRow, boolean headerCol,
+                             String caption, String description) {
+        if (cells == null || cells.isEmpty()) return this;
+        int maxCols = 0;
+        for (List<String> row : cells) {
+            if (row != null && row.size() > maxCols) maxCols = row.size();
+        }
+        if (maxCols == 0) return this;
+        List<List<String>> padded = new ArrayList<>(cells.size());
+        for (List<String> row : cells) {
+            List<String> copy = new ArrayList<>(maxCols);
+            if (row != null) for (String value : row) copy.add(value == null ? "" : value);
+            while (copy.size() < maxCols) copy.add("");
+            padded.add(copy);
+        }
+        blocks.add(new Block(BlockType.TABLE, 0, "", padded,
+                headerRow, headerCol, caption, description));
         return this;
     }
 
@@ -179,7 +223,11 @@ public final class DocxBuilder {
                     sb.append(paragraphXml(b.text, "Heading" + b.level, hSize));
                     break;
                 case TABLE:
-                    sb.append(tableXml(b.cells, b.headerRow, b.headerCol));
+                    sb.append(tableXml(b.cells, b.headerRow, b.headerCol,
+                            b.tableCaption, b.tableDescription));
+                    break;
+                case PAGE_BREAK:
+                    sb.append("<w:p><w:r><w:br w:type=\"page\"/></w:r></w:p>");
                     break;
                 default:
                     sb.append(paragraphXml(b.text, "Normal", 22));
@@ -202,13 +250,28 @@ public final class DocxBuilder {
      * can navigate row-by-row with screen-reader shortcuts.
      */
     private String tableXml(List<List<String>> rows,
-                             boolean headerRow, boolean headerCol) {
+                             boolean headerRow, boolean headerCol,
+                             String caption, String description) {
         if (rows == null || rows.isEmpty()) return "";
         StringBuilder sb = new StringBuilder();
         sb.append("<w:tbl>");
         // Table properties: full width, single-line borders on every edge.
         sb.append("<w:tblPr>");
+        sb.append("<w:tblStyle w:val=\"TableGrid\"/>");
         sb.append("<w:tblW w:w=\"5000\" w:type=\"pct\"/>");
+        if (caption != null && !caption.trim().isEmpty()) {
+            sb.append("<w:tblCaption w:val=\"")
+              .append(escapeAttribute(caption)).append("\"/>");
+        }
+        if (description != null && !description.trim().isEmpty()) {
+            sb.append("<w:tblDescription w:val=\"")
+              .append(escapeAttribute(description)).append("\"/>");
+        }
+        sb.append("<w:tblLook w:val=\"04A0\" w:firstRow=\"")
+          .append(headerRow ? "1" : "0")
+          .append("\" w:lastRow=\"0\" w:firstColumn=\"")
+          .append(headerCol ? "1" : "0")
+          .append("\" w:lastColumn=\"0\" w:noHBand=\"0\" w:noVBand=\"1\"/>");
         if (rtl) sb.append("<w:bidiVisual/>");
         sb.append("<w:tblBorders>")
           .append("<w:top    w:val=\"single\" w:sz=\"6\" w:color=\"888888\"/>")
@@ -246,10 +309,12 @@ public final class DocxBuilder {
             List<String> row = rows.get(r);
             boolean inHeaderRow = headerRow && r == 0;
             sb.append("<w:tr>");
+            sb.append("<w:trPr><w:cantSplit/>");
             if (inHeaderRow) {
                 // Repeat header row on each page break.
-                sb.append("<w:trPr><w:tblHeader/></w:trPr>");
+                sb.append("<w:tblHeader/>");
             }
+            sb.append("</w:trPr>");
             for (int c = 0; c < row.size(); c++) {
                 String cell = row.get(c);
                 if (cell == null || cell.isEmpty()) cell = " ";
@@ -277,15 +342,7 @@ public final class DocxBuilder {
                 sb.append("<w:pPr>");
                 if (rtl) sb.append("<w:bidi/>");
                 sb.append("</w:pPr>");
-                sb.append("<w:r><w:rPr>");
-                if (rtl) sb.append("<w:rtl/>");
-                if (isBold) sb.append("<w:b/><w:bCs/>");
-                sb.append("<w:sz w:val=\"22\"/><w:szCs w:val=\"22\"/>");
-                sb.append("<w:lang w:val=\"").append(langTag)
-                  .append("\" w:bidi=\"").append(langTag).append("\"/>");
-                sb.append("</w:rPr>");
-                sb.append("<w:t xml:space=\"preserve\">").append(escape(cell)).append("</w:t>");
-                sb.append("</w:r>");
+                appendRuns(sb, cell, 22, isBold);
                 sb.append("</w:p>");
                 sb.append("</w:tc>");
             }
@@ -307,22 +364,28 @@ public final class DocxBuilder {
         if (rtl) sb.append("<w:bidi/>");
         sb.append("</w:pPr>");
 
-        // Split on newline so explicit line breaks survive in Word.
-        String[] lines = text.split("\\r?\\n", -1);
+        appendRuns(sb, text, halfPointSize, false);
+        sb.append("</w:p>");
+        return sb.toString();
+    }
+
+    private void appendRuns(StringBuilder sb, String text,
+                            int halfPointSize, boolean bold) {
+        String safe = text == null ? "" : text;
+        String[] lines = safe.split("\r?\n", -1);
         for (int i = 0; i < lines.length; i++) {
-            sb.append("<w:r>");
-            sb.append("<w:rPr>");
+            sb.append("<w:r><w:rPr>");
             if (rtl) sb.append("<w:rtl/>");
+            if (bold) sb.append("<w:b/><w:bCs/>");
             sb.append("<w:sz w:val=\"").append(halfPointSize).append("\"/>");
             sb.append("<w:szCs w:val=\"").append(halfPointSize).append("\"/>");
-            sb.append("<w:lang w:val=\"").append(langTag).append("\" w:bidi=\"").append(langTag).append("\"/>");
+            sb.append("<w:lang w:val=\"").append(escapeAttribute(langTag))
+              .append("\" w:bidi=\"").append(escapeAttribute(langTag)).append("\"/>");
             sb.append("</w:rPr>");
             sb.append("<w:t xml:space=\"preserve\">").append(escape(lines[i])).append("</w:t>");
             if (i < lines.length - 1) sb.append("<w:br/>");
             sb.append("</w:r>");
         }
-        sb.append("</w:p>");
-        return sb.toString();
     }
 
     private String buildStyles() {
@@ -375,6 +438,67 @@ public final class DocxBuilder {
             }
         }
         return sb.toString();
+    }
+
+    private static String escapeAttribute(String s) {
+        return escape(s == null ? "" : s).replace("\n", " ").replace("\r", " ");
+    }
+
+    /** Structural post-write validation for the generated DOCX package. */
+    public static void validatePackage(File file, int expectedPages,
+                                       boolean expectTables) throws Exception {
+        if (file == null || !file.isFile() || file.length() < 500) {
+            throw new Exception("Generated DOCX is missing or too small.");
+        }
+        try (ZipFile zip = new ZipFile(file)) {
+            ZipEntry document = zip.getEntry("word/document.xml");
+            ZipEntry styles = zip.getEntry("word/styles.xml");
+            if (document == null || styles == null) {
+                throw new Exception("Generated DOCX is missing required Word parts.");
+            }
+            String xml;
+            try (InputStream in = zip.getInputStream(document);
+                 ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+                byte[] buffer = new byte[8192];
+                int read;
+                while ((read = in.read(buffer)) != -1) out.write(buffer, 0, read);
+                xml = new String(out.toByteArray(), StandardCharsets.UTF_8);
+            }
+            if (!xml.contains("<w:document") || !xml.contains("</w:document>")) {
+                throw new Exception("Generated Word XML is incomplete.");
+            }
+            boolean hasWordTable = xml.contains("<w:tbl>");
+            if (expectTables && !hasWordTable) {
+                throw new Exception("Expected Word tables are missing from the generated DOCX.");
+            }
+            // A common catastrophic conversion writes table rows as ordinary
+            // paragraphs separated by | characters. Even when the caller did
+            // not know beforehand that the source had tables, reject this
+            // unmistakable flattened-grid signature instead of presenting it
+            // as a successful Word document.
+            if (!hasWordTable && countOccurrences(xml, "|") >= 4) {
+                throw new Exception("The generated DOCX appears to contain a flattened table instead of real Word cells.");
+            }
+            if (expectedPages > 0) {
+                int pageLabels = countOccurrences(xml, "الصفحة ")
+                        + countOccurrences(xml, "Page ");
+                if (pageLabels < expectedPages) {
+                    throw new Exception("Generated DOCX contains only " + pageLabels
+                            + " page headings for " + expectedPages + " source pages.");
+                }
+            }
+        }
+    }
+
+    private static int countOccurrences(String text, String token) {
+        int count = 0;
+        int from = 0;
+        while (true) {
+            int at = text.indexOf(token, from);
+            if (at < 0) return count;
+            count++;
+            from = at + token.length();
+        }
     }
 
     private static void putEntry(ZipOutputStream zos, String name, String content) throws Exception {
