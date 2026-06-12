@@ -452,6 +452,14 @@ public final class AiClient {
                                               ProgressCallback progress) throws Exception {
         String key = SecurePrefs.getGeminiKey(prefs);
         String model = pickModel(prefs, "convert");
+        // v3.3.1 — log the resolved model name + key presence so the
+        // diagnostic log makes the model-vs-Gemini-tier conflict
+        // diagnosable without re-running. We never log the key
+        // itself; only whether it's set + its length.
+        ConversionDiagnostic.get().step("model-pick",
+                "task=convert  model=" + model
+                + "  key.present=" + (key != null && !key.isEmpty())
+                + "  key.len=" + (key == null ? 0 : key.length()));
 
         // v3.1.1 — detect a resume call BEFORE any sourceUri operation,
         // because the retry path passes sourceUri=null on purpose (the
@@ -638,21 +646,53 @@ public final class AiClient {
             job.runAll(
                     chunk -> {
                         int pageNumber = chunk.startPage();
+                        // v3.3.1 — capture per-page boundary + failure
+                        // reason in the diagnostic log. The aggregate
+                        // exception ("pages 1,2,3 failed") never tells
+                        // us WHY each page was rejected; this hook does.
+                        ConversionDiagnostic.get().pageStart(pageNumber,
+                                0, 0, 0);
                         try {
+                            JSONObject result;
                             if (!fResume) {
                                 if (fRasterizer == null) {
                                     throw new Exception("PDF page renderer is unavailable.");
                                 }
                                 PdfPageRasterizer.PageImage pageImage =
                                         fRasterizer.renderPage(pageNumber);
-                                return DocumentPageExtractor.extractFromImage(
+                                ConversionDiagnostic.get().step("rasterized",
+                                        "page " + pageNumber + " image ready, jpeg-bytes="
+                                        + (pageImage == null || pageImage.jpegBytes == null
+                                            ? -1 : pageImage.jpegBytes.length)
+                                        + " rotation=" + (pageImage == null
+                                            ? "?" : pageImage.rotationDegrees));
+                                result = DocumentPageExtractor.extractFromImage(
                                         key, model, pageNumber, fTotalPages,
                                         fMode, fOutputLanguageName, pageImage);
+                            } else {
+                                result = DocumentPageExtractor.extractFromPdfFilePart(
+                                        key, model, pageNumber, fTotalPages,
+                                        fMode, fOutputLanguageName, retainedPdfPart);
                             }
-                            return DocumentPageExtractor.extractFromPdfFilePart(
-                                    key, model, pageNumber, fTotalPages,
-                                    fMode, fOutputLanguageName, retainedPdfPart);
+                            ConversionDiagnostic.get().pageEnd(pageNumber,
+                                    true, "extractor returned valid JSON");
+                            return result;
                         } catch (Exception pageError) {
+                            // Log the FULL underlying error before we
+                            // wrap it. Without this the diagnostic file
+                            // only ever sees the aggregate "1,2,3
+                            // failed" message and never the real cause
+                            // (404 model not found, schema mismatch,
+                            // finishReason != STOP, blank response).
+                            ConversionDiagnostic.get().validatorReject(
+                                    pageNumber,
+                                    pageError.getClass().getSimpleName(),
+                                    pageError.getMessage());
+                            ConversionDiagnostic.get().failure(
+                                    "page-" + pageNumber, pageError);
+                            ConversionDiagnostic.get().pageEnd(pageNumber,
+                                    false, pageError.getClass().getSimpleName()
+                                        + ": " + pageError.getMessage());
                             throw new Exception("Page " + pageNumber + ": "
                                     + pageError.getMessage(), pageError);
                         }

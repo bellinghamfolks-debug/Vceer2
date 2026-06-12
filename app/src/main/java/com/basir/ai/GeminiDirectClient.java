@@ -599,6 +599,9 @@ public final class GeminiDirectClient {
 
     private static JSONObject postJsonOnce(String url, JSONObject payload) throws Exception {
         HttpURLConnection conn = null;
+        long started = android.os.SystemClock.elapsedRealtime();
+        int code = 0;
+        String text = "";
         try {
             conn = (HttpURLConnection) new URL(url).openConnection();
             conn.setRequestMethod("POST");
@@ -612,9 +615,17 @@ public final class GeminiDirectClient {
             byte[] bytes = payload.toString().getBytes(StandardCharsets.UTF_8);
             try (OutputStream os = conn.getOutputStream()) { os.write(bytes); }
 
-            int code = conn.getResponseCode();
+            code = conn.getResponseCode();
             InputStream in = (code >= 200 && code < 300) ? conn.getInputStream() : conn.getErrorStream();
-            String text = readAll(in);
+            text = readAll(in);
+            // v3.3.1 — wire-level capture into the diagnostic log.
+            // This is the SINGLE most important hook: without it we
+            // never see what Gemini actually returned (404 model
+            // not found / 400 schema mismatch / blank candidate).
+            try {
+                ConversionDiagnostic.get().httpExchange("POST", url, code,
+                        android.os.SystemClock.elapsedRealtime() - started, text);
+            } catch (Throwable ignore) {}
             if (code < 200 || code >= 300) {
                 String message = extractError(text);
                 if (isRetryable(code)) {
@@ -624,7 +635,11 @@ public final class GeminiDirectClient {
             }
             return new JSONObject(text);
         } catch (java.io.IOException ioe) {
-            // Network glitch — retry.
+            try {
+                ConversionDiagnostic.get().httpExchange("POST", url,
+                        code, android.os.SystemClock.elapsedRealtime() - started,
+                        "IOException: " + ioe.getMessage());
+            } catch (Throwable ignore) {}
             throw new RetryableException(new Exception("Network error: " + ioe.getMessage()));
         } finally {
             if (conn != null) conn.disconnect();
