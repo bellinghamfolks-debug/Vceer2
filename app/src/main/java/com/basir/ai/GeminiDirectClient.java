@@ -193,6 +193,14 @@ public final class GeminiDirectClient {
         JSONObject body = baseBody(systemText);
         JSONObject gen = body.getJSONObject("generationConfig");
         gen.put("responseMimeType", "application/json");
+        // v3.3 — document transcription must be faithful, not
+        // creative. Lock temperature at 0.1 + topP=0.9 so the model
+        // picks the most likely token at every step. Without this
+        // the Gemini 3 family invented column headers, paraphrased
+        // paragraphs, and added "summary" tail rows to extracted
+        // tables that didn't exist in the PDF.
+        gen.put("temperature", 0.1);
+        gen.put("topP", 0.9);
 
         JSONArray parts = new JSONArray();
         parts.put(new JSONObject().put("text", userPrompt == null ? "" : userPrompt));
@@ -217,6 +225,12 @@ public final class GeminiDirectClient {
         JSONObject body = baseBody(systemText);
         JSONObject gen = body.getJSONObject("generationConfig");
         gen.put("responseMimeType", "application/json");
+        // v3.3 — same fidelity lock as generateJsonWithFilePart.
+        // PPTX slide processing reads visible text + image
+        // descriptions; we don't want the model inventing slide
+        // titles or paraphrasing bullets.
+        gen.put("temperature", 0.1);
+        gen.put("topP", 0.9);
         body.put("contents", new JSONArray().put(new JSONObject().put("role", "user").put("parts", userParts)));
 
         JSONObject resp = postJsonWithRetry(generateEndpoint(model, apiKey), body);
@@ -419,7 +433,17 @@ public final class GeminiDirectClient {
             body.put("systemInstruction", sys);
         }
         JSONObject gen = new JSONObject();
-        gen.put("temperature", 0.7);
+        // v3.3 — temperature lowered from 0.7 → 0.2. The 0.7 default
+        // was set when the Q&A / chat surface dominated; with the
+        // Gemini 3 family it became aggressive on fidelity tasks
+        // (document transcription, image OCR, table extraction),
+        // inventing words, dates, and table cells that don't exist
+        // in the source. 0.2 keeps the model conservative enough
+        // for transcription without breaking the chat flow where
+        // some variation is fine. Callers that need creative writing
+        // (rephrasing, tone adaptation) can still override after
+        // baseBody() returns.
+        gen.put("temperature", 0.2);
         // v2.1.1: explicitly request the headroom we need for batched PDF
         // conversion. The user reported "Unterminated array at character X"
         // crashes around page 40 — that's Gemini cutting the response off
