@@ -482,12 +482,23 @@ struct DocumentConvertView: View {
             ? "You are processing a document for a blind user. "
               + "Preserve heading levels, list items, and tables. "
               + "Output clean, readable plain text optimized for screen readers. "
-              + "Do not claim that images or tables were read unless their content exists in the extracted text."
+              + "Do not claim that images or tables were read unless their content exists in the extracted text. "
+              // v3.2.1 — explicit anti-fabrication rules mirroring the
+              // Android AiClient prompts. Stops the model from inventing
+              // an introductory "summary" paragraph, substituting course
+              // codes / grade letters, or dropping bilingual English text.
+              + "DO NOT add a summary or introductory paragraph that paraphrases the document — only output what is actually present. "
+              + "Read codes letter-by-letter exactly as printed: do not replace a code letter with a more familiar one. "
+              + "Read Arabic grade letters EXACTLY (أ+ / أ / ب+ / ب / ج+ / ج / د+ / د / هـ / و / ع); never substitute a near letter for a far one. "
+              + "Read numbers digit-by-digit; do not round or normalise. "
+              + "If a character is unreadable, write \"[غير واضح]\" / \"[unclear]\" — never guess. "
+              + "Preserve EVERY visible language: if the source carries both Arabic and English text, transcribe BOTH in the order they appear."
             : {
                 let tgtName = GeminiPrompts.bcp47Name(translateTo)
                 return "TRANSLATE the document into \(tgtName). "
                     + "Preserve structure — headings, lists, tables — exactly. "
-                    + "Only the language of the text changes."
+                    + "Only the language of the text changes. "
+                    + "Do not add a summary or introductory paragraph of your own."
             }()
         // v3.3 — opt-in math directive (mirrors the dedicated math
         // card's vocabulary). Added to every batch when the toggle
