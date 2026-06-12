@@ -569,8 +569,9 @@ public final class AiClient {
                     if (!wroteHeader[0]) {
                         String title = chunk.parsed().optString("title", "");
                         if (!title.isEmpty()) doc.title(title);
-                        String summary = chunk.parsed().optString("summary", "");
-                        if (!summary.isEmpty()) doc.paragraph(summary);
+                        // v3.2.1 — never emit a "summary" paragraph. See
+                        // the matching comment in directConvertToDocx
+                        // single-shot path for the rationale.
                         wroteHeader[0] = true;
                     }
                     // v3.1.1 — drop sections whose page_marker / context
@@ -788,7 +789,6 @@ public final class AiClient {
         prompt.append("Return a SINGLE JSON object (no markdown, no code fences) with:\n");
         prompt.append("{\n");
         prompt.append("  \"title\": \"...\",\n");
-        prompt.append("  \"summary\": \"1-3 sentences\",\n");
         prompt.append("  \"sections\": [\n");
         prompt.append("    { \"type\": \"heading\", \"level\": 1, \"text\": \"...\" },\n");
         prompt.append("    { \"type\": \"paragraph\", \"text\": \"...\" },\n");
@@ -797,9 +797,12 @@ public final class AiClient {
         prompt.append("  ]\n");
         prompt.append("}\n\n");
         prompt.append("Rules:\n");
+        prompt.append("- DO NOT add a \"summary\" or introductory paragraph that paraphrases the document.\n");
         prompt.append("- Preserve heading levels exactly as marked in the input.\n");
         prompt.append("- Preserve table structure exactly: same number of rows and columns.\n");
         prompt.append("- Do not invent content that is not present in the source.\n");
+        prompt.append("- If a cell or word is unreadable, write \"[غير واضح]\" / \"[unclear]\".\n");
+        prompt.append("- Preserve EVERY visible language. If the source carries both Arabic and English text, transcribe both in the order they appear.\n");
         prompt.append("- Output valid JSON only.\n\n");
         prompt.append("DOCUMENT TEXT (between the tags):\n");
         prompt.append("<<<BASIR_DOC_BEGIN>>>\n");
@@ -818,8 +821,10 @@ public final class AiClient {
         DocxBuilder doc = new DocxBuilder(docxLang);
         String title = json.optString("title", "");
         if (!title.isEmpty()) doc.title(title);
-        String summary = json.optString("summary", "");
-        if (!summary.isEmpty()) doc.paragraph(summary);
+        // v3.2.1 — never render a "summary" paragraph even if the model
+        // returns one. The prompt now asks for transcription-only, but
+        // some model snapshots still attach a paraphrased summary; we
+        // drop it on the way to the DOCX so the output stays faithful.
         renderSectionsInto(doc, json.optJSONArray("sections"), language);
         doc.writeTo(outFile);
         if (progress != null) progress.onProgress(0, 0, "done");
@@ -835,7 +840,6 @@ public final class AiClient {
               + "Return a SINGLE JSON object (no markdown, no code fences) with this shape:\n"
               + "{\n"
               + "  \"title\": \"...\",\n"
-              + "  \"summary\": \"short summary 1-3 sentences\",\n"
               + "  \"sections\": [\n"
               + "    { \"type\": \"page_marker\", \"label\": \"Page 1\" },\n"
               + "    { \"type\": \"heading\", \"level\": 1, \"text\": \"...\" },\n"
@@ -848,6 +852,29 @@ public final class AiClient {
               + "  ]\n"
               + "}\n\n"
               + "Rules:\n"
+              + "- DO NOT add a \"summary\" or any introductory paragraph that\n"
+              + "  paraphrases the document. The user wants a faithful conversion,\n"
+              + "  not your description of it. Only output what is actually in\n"
+              + "  the source.\n"
+              + "- TRANSCRIPTION FIDELITY (critical for transcripts, certificates,\n"
+              + "  invoices, contracts, medical / legal documents):\n"
+              + "  • Read codes letter-by-letter exactly as printed. If a course\n"
+              + "    code reads \"101 نجم\", write \"101 نجم\" — DO NOT replace\n"
+              + "    \"نجم\" with the more familiar \"انجل\" or \"إنجليزي\".\n"
+              + "  • Read Arabic grade letters EXACTLY: أ+ / أ / ب+ / ب / ج+ / ج\n"
+              + "    / د+ / د / هـ / و / ع. Never substitute a near letter for a\n"
+              + "    far one (do not write أ+ when the cell shows ب+).\n"
+              + "  • Read numbers digit-by-digit. Do not round, normalise digit\n"
+              + "    systems, or \"correct\" what looks unusual.\n"
+              + "  • If any character is unreadable or partially cut off, write\n"
+              + "    the literal placeholder \"[غير واضح]\" (Arabic) or\n"
+              + "    \"[unclear]\" (English). Never guess.\n"
+              + "- PRESERVE EVERY VISIBLE LANGUAGE. If the page carries Arabic\n"
+              + "  AND English text side-by-side (university headers, bilingual\n"
+              + "  labels, captions, footers, codes mixing Arabic letters with\n"
+              + "  English words), transcribe BOTH versions, in the order they\n"
+              + "  appear. Do NOT drop the English half just because the\n"
+              + "  document language is Arabic.\n"
               + "- Describe every image thoroughly (type, main elements, layout, visible text, purpose).\n"
               + "- v2.2 — for EVERY table you see, output a 'table' section with the ACTUAL cell\n"
               + "  values in a 2-D array. The first row MUST be the header row. Preserve column order\n"
@@ -1080,8 +1107,8 @@ public final class AiClient {
         DocxBuilder doc = new DocxBuilder(arabic ? "ar" : "en");
         String title = parsed.optString("title", "");
         if (!title.isEmpty()) doc.title(title);
-        String summary = parsed.optString("summary", "");
-        if (!summary.isEmpty()) doc.paragraph(summary);
+        // v3.2.1 — no summary paragraph. See directConvertToDocx for
+        // the rationale (transcription-only output).
         renderSectionsInto(doc, parsed.optJSONArray("sections"), language);
         doc.writeTo(outFile);
     }
@@ -1223,13 +1250,12 @@ public final class AiClient {
         p.append("  • Do not repeat the same paragraph more than once.\n");
         p.append("- Include the field \"end_page\" with the last page you actually processed.\n");
         if (!isFirstBatch) {
-            p.append("- This is a continuation batch: do NOT repeat the document title or summary.\n");
+            p.append("- This is a continuation batch: do NOT repeat the document title.\n");
         }
         p.append("\nReturn a SINGLE JSON object (no markdown, no code fences):\n");
         p.append("{\n");
         if (isFirstBatch) {
             p.append("  \"title\": \"...\",\n");
-            p.append("  \"summary\": \"short summary 1-3 sentences\",\n");
         }
         p.append("  \"end_page\": <integer>,\n");
         p.append("  \"sections\": [\n");
@@ -1244,6 +1270,24 @@ public final class AiClient {
         p.append("  ]\n");
         p.append("}\n\n");
         p.append("Quality rules:\n");
+        p.append("- DO NOT add a \"summary\" or any introductory paragraph that\n");
+        p.append("  paraphrases the document. Only output what is actually in\n");
+        p.append("  the source.\n");
+        p.append("- TRANSCRIPTION FIDELITY (critical for transcripts, certificates,\n");
+        p.append("  invoices, contracts, medical / legal documents):\n");
+        p.append("  • Read codes letter-by-letter exactly as printed. If a course\n");
+        p.append("    code reads \"101 نجم\", write \"101 نجم\" — DO NOT replace\n");
+        p.append("    \"نجم\" with the more familiar \"انجل\" or \"إنجليزي\".\n");
+        p.append("  • Read Arabic grade letters EXACTLY: أ+ / أ / ب+ / ب / ج+ / ج\n");
+        p.append("    / د+ / د / هـ / و / ع. Never substitute a near letter for a\n");
+        p.append("    far one (do not write أ+ when the cell shows ب+).\n");
+        p.append("  • Read numbers digit-by-digit. Do not round or normalise digit systems.\n");
+        p.append("  • If any character is unreadable, write \"[غير واضح]\" or\n");
+        p.append("    \"[unclear]\" — never guess.\n");
+        p.append("- PRESERVE EVERY VISIBLE LANGUAGE. If the page carries Arabic\n");
+        p.append("  AND English text side-by-side (university headers, bilingual\n");
+        p.append("  labels, captions, footers), transcribe BOTH versions, in the\n");
+        p.append("  order they appear. Do NOT drop the English half.\n");
         p.append("- Describe every image thoroughly (type, main elements, layout, visible text, purpose).\n");
         p.append("- v2.2 — for EVERY table you see, output a 'table' section with the ACTUAL cell\n");
         p.append("  values in a 2-D array. The first row MUST be the header row. Preserve column order\n");
