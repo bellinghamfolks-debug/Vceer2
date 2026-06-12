@@ -50,10 +50,7 @@ struct GeminiClient {
             ]],
             "generationConfig": [
                 "maxOutputTokens": maxOutputTokens,
-                // v3.3 — lowered from 0.4 to 0.2 to curb hallucination
-                // from the Gemini 3 family on transcription / Q&A.
-                "temperature": 0.2,
-                "topP": 0.9
+                "temperature": 0.4
             ]
         ]
         let json = try await post(model: model, apiKey: apiKey, body: body)
@@ -88,12 +85,7 @@ struct GeminiClient {
             ]],
             "generationConfig": [
                 "maxOutputTokens": maxOutputTokens,
-                // v3.3 — lowered from 0.3 to 0.1 for image-OCR fidelity.
-                // The Gemini 3 family invented currencies, receipt
-                // totals, and table cells at 0.3 — locking it to 0.1
-                // restores faithful transcription.
-                "temperature": 0.1,
-                "topP": 0.9
+                "temperature": 0.3
             ]
         ]
         let json = try await post(model: model, apiKey: apiKey, body: body)

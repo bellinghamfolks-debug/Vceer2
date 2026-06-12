@@ -33,12 +33,7 @@ final class BasirSettings: ObservableObject {
     // MARK: - AI mode + quality presets
     @AppStorage("ai_mode") var aiMode: String = "direct"    // "direct" | "proxy"
     @AppStorage("quick_quality") var quickQuality: String = "balanced"
-    // v3.3 — default flipped to "balanced" (Flash 3.5 GA) because the
-    // "best" default routed through gemini-3.1-pro-preview, whose
-    // preview-tier quotas + partial JSON-mode coverage break the
-    // document conversion pipeline even with billing enabled. Users
-    // who explicitly pick "best" still get Pro.
-    @AppStorage("doc_quality") var docQuality: String = "balanced"
+    @AppStorage("doc_quality") var docQuality: String = "best"
     @AppStorage("ai_server_url") var proxyURL: String = ""
     @AppStorage("ai_app_token") var proxyToken: String = ""
 
@@ -65,17 +60,11 @@ final class BasirSettings: ObservableObject {
     /// Map a quality preset to the actual Gemini model ID. Matches
     /// AiClient.modelForQuality on Android.
     func modelForQuality(_ quality: String) -> String {
-        // v3.3 — defaults promoted to the Gemini 3 family per the
-        // IDs currently available in Google AI Studio. Flash is on
-        // 3.5; Flash Lite + Pro are on 3.1. Pro still carries the
-        // "-preview" suffix until Google flips it to GA — drop the
-        // suffix at that point. Override per-preset via
-        // BasirSettings if the checkpoint rotates.
         switch quality {
-        case "fast":     return "gemini-3.1-flash-lite"
-        case "best":     return "gemini-3.1-pro-preview"
+        case "fast":     return "gemini-2.5-flash-lite"
+        case "best":     return "gemini-2.5-pro"
         case "balanced": fallthrough
-        default:         return "gemini-3.5-flash"
+        default:         return "gemini-2.5-flash"
         }
     }
 
