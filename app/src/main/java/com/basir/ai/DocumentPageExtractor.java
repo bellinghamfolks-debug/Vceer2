@@ -136,19 +136,52 @@ final class DocumentPageExtractor {
                         + correction
                         + "\nRe-read the page from the image/PDF. Return a complete corrected object; do not explain the error.";
             }
+            // v3.3.6 — diagnostic: log every attempt explicitly so
+            // the report shows triple-POST 200s with the EXACT
+            // validator rule that fired between each attempt.
+            ConversionDiagnostic.get().step("validate-attempt",
+                    "page " + pageNumber + " attempt " + attempt + "/" + MAX_ATTEMPTS
+                    + (correction.isEmpty() ? "" : "  correction-hint=" + safeShort(correction, 200)));
             try {
                 JSONObject parsed = requester.request(model, prompt, schema);
+                // Log a compact view of WHAT Gemini returned so the
+                // user can scan it next to the validator verdict.
+                if (parsed != null) {
+                    int sections = parsed.optJSONArray("sections") == null
+                            ? -1 : parsed.optJSONArray("sections").length();
+                    ConversionDiagnostic.get().step("validate-input",
+                            "page " + pageNumber + " attempt " + attempt
+                            + "  page_number=" + parsed.optInt("page_number", -999)
+                            + "  end_page=" + parsed.optInt("end_page", -999)
+                            + "  is_blank=" + parsed.optBoolean("is_blank", false)
+                            + "  visible_table_count=" + parsed.optInt("visible_table_count", -999)
+                            + "  sections.length=" + sections
+                            + "  has_summary=" + parsed.has("summary")
+                            + "  readability=" + parsed.optString("readability", ""));
+                }
                 validateAndNormalize(parsed, pageNumber, mode, visuallyBlankHint);
+                ConversionDiagnostic.get().step("validate-verdict",
+                        "page " + pageNumber + " attempt " + attempt + "  accepted=true");
                 return parsed;
             } catch (Exception e) {
                 last = e;
                 correction = sanitizeForPrompt(e.getMessage());
+                ConversionDiagnostic.get().validatorReject(pageNumber,
+                        "attempt-" + attempt, e.getMessage());
+                ConversionDiagnostic.get().step("validate-verdict",
+                        "page " + pageNumber + " attempt " + attempt
+                        + "  accepted=false  reason=" + e.getMessage());
             }
         }
         String reason = last == null ? "unknown validation failure" : last.getMessage();
         throw new Exception("Page " + pageNumber
                 + " could not pass strict extraction validation after "
                 + MAX_ATTEMPTS + " attempts: " + reason, last);
+    }
+
+    private static String safeShort(String s, int max) {
+        if (s == null) return "";
+        return s.length() > max ? s.substring(0, max) + "…" : s;
     }
 
     static void validateAndNormalize(JSONObject root, int pageNumber,
