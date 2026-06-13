@@ -729,6 +729,18 @@ public final class AiClient {
                             }
                             ConversionDiagnostic.get().validatorPass(
                                     pageNumber, sections, tables);
+                            // v3.3.5 — emit quality flags + a
+                            // verbatim fingerprint so a successful
+                            // page still gets audited for content
+                            // problems (fabricated summary, dropped
+                            // English, table flattened to pipes...).
+                            try {
+                                runQualityAudit(pageNumber, result);
+                            } catch (Throwable auditError) {
+                                ConversionDiagnostic.get().step("audit-skip",
+                                        "page " + pageNumber + " "
+                                        + auditError.getMessage());
+                            }
                             ConversionDiagnostic.get().pageEnd(pageNumber,
                                     true, "sections=" + sections
                                     + " tables=" + tables);
@@ -1360,6 +1372,124 @@ public final class AiClient {
                     }
                 }
             }
+        }
+    }
+
+    /**
+     * v3.3.5 — quality auditor. Walks the per-page JSON the model
+     * returned and emits informational [QUALITY] flags for patterns
+     * that often indicate a successful-but-wrong conversion. Also
+     * emits per-section [FINGERPRINT] lines so the report carries
+     * verbatim text excerpts a maintainer can scan visually.
+     *
+     * Never throws — quality auditing is best-effort and must not
+     * block the conversion when a corner case trips it.
+     */
+    private static void runQualityAudit(int pageNumber, JSONObject pageJson) {
+        if (pageJson == null) return;
+        ConversionDiagnostic diag = ConversionDiagnostic.get();
+        String title = pageJson.optString("title", "");
+        if (!title.isEmpty()) {
+            diag.textFingerprint(pageNumber, "title", title, 120);
+        }
+        JSONArray sections = pageJson.optJSONArray("sections");
+        if (sections == null) return;
+
+        int tables = 0;
+        int paragraphs = 0;
+        boolean sawArabicLetter = false;
+        boolean sawLatinLetter  = false;
+        boolean sawSummaryHeading = false;
+
+        for (int i = 0; i < sections.length(); i++) {
+            JSONObject sec = sections.optJSONObject(i);
+            if (sec == null) continue;
+            String type = sec.optString("type", "");
+            String text = sec.optString("text",
+                    sec.optString("description",
+                    sec.optString("caption", "")));
+
+            // 1) Fingerprint every section so the user can scan the
+            //    report and recognise wrong transcriptions.
+            if (!text.isEmpty() && i < 12) {
+                diag.textFingerprint(pageNumber, type + "[" + i + "]", text, 160);
+            }
+
+            // 2) Track language coverage.
+            for (int c = 0; c < text.length(); c++) {
+                char ch = text.charAt(c);
+                if (ch >= 0x0600 && ch <= 0x06FF) sawArabicLetter = true;
+                if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')) sawLatinLetter = true;
+            }
+
+            // 3) Flag a fabricated summary intro.
+            if ("paragraph".equals(type) && i == 0) {
+                String firstWord = text.split("\\s+", 2)[0];
+                if (firstWord.equals("ملخص") || firstWord.equalsIgnoreCase("summary")
+                        || text.startsWith("هذا السجل") || text.startsWith("هذا المستند")
+                        || text.startsWith("This document") || text.startsWith("This record")) {
+                    diag.quality(pageNumber, "FABRICATED_SUMMARY",
+                            "first paragraph starts with a meta-description "
+                            + "of the document — likely model invention");
+                }
+                sawSummaryHeading = true;
+            }
+
+            // 4) Flag pipe-flattened table inside a paragraph.
+            if ("paragraph".equals(type)
+                    && text.length() > 12
+                    && text.indexOf('|') >= 0) {
+                int pipes = 0;
+                for (int c = 0; c < text.length(); c++) if (text.charAt(c) == '|') pipes++;
+                if (pipes >= 2) {
+                    diag.quality(pageNumber, "TABLE_FLATTENED_TO_PIPES",
+                            "paragraph contains " + pipes
+                            + " '|' separators — likely a collapsed table");
+                }
+            }
+
+            // 5) OCR-noise: a section with only 1–2 characters.
+            if (!type.isEmpty() && text.length() >= 1 && text.length() <= 2) {
+                diag.quality(pageNumber, "OCR_NOISE",
+                        type + "[" + i + "] has only " + text.length()
+                        + " characters: \"" + text + "\"");
+            }
+
+            // 6) Track tables found in this page.
+            if ("table".equals(type)) {
+                tables++;
+                JSONArray rows = sec.optJSONArray("cells");
+                int rowCount = rows == null ? 0 : rows.length();
+                if (rowCount == 1) {
+                    diag.quality(pageNumber, "SINGLE_ROW_TABLE",
+                            "table[" + i + "] has 1 row only — "
+                            + "likely the body rows were dropped");
+                }
+            }
+
+            if ("paragraph".equals(type)) paragraphs++;
+        }
+
+        // 7) Bilingual coverage check.
+        if (sawArabicLetter && !sawLatinLetter) {
+            diag.quality(pageNumber, "MAYBE_DROPPED_ENGLISH",
+                    "page has Arabic content but no Latin letters — "
+                    + "verify the source has no English half");
+        } else if (!sawArabicLetter && sawLatinLetter) {
+            diag.quality(pageNumber, "MAYBE_DROPPED_ARABIC",
+                    "page has Latin content but no Arabic letters — "
+                    + "verify the source has no Arabic half");
+        }
+
+        // 8) Structural-poverty check (mostly empty page despite ink).
+        if (paragraphs == 0 && tables == 0 && !pageJson.optBoolean("is_blank", false)) {
+            diag.quality(pageNumber, "EMPTY_PAGE_BUT_NOT_BLANK",
+                    "model returned 0 paragraphs + 0 tables but did not "
+                    + "mark the page is_blank=true");
+        }
+
+        if (sawSummaryHeading) {
+            // No-op — used above only to keep state consistent.
         }
     }
 

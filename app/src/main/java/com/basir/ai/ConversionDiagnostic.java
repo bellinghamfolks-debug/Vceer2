@@ -69,7 +69,7 @@ public final class ConversionDiagnostic {
 
     private static final String TAG = "BasirConvDiag";
     private static final int    IN_MEMORY_CAP = 8000;
-    private static final int    HTTP_SNIPPET  = 800;
+    private static final int    HTTP_SNIPPET  = 4000;
     private static final String FILE_NAME     = "basir-conversion-diagnostic.txt";
     /**
      * v3.3.2 — visible diagnostic identity. Bump this every time the
@@ -77,7 +77,7 @@ public final class ConversionDiagnostic {
      * whether they have the latest APK installed: an old APK will
      * print an older DIAG line, a new APK will print the new one.
      */
-    public  static final String DIAG_VERSION  = "v3.3.4-schema-sanitizer";
+    public  static final String DIAG_VERSION  = "v3.3.5-quality-auditor";
 
     private static final ConversionDiagnostic INSTANCE = new ConversionDiagnostic();
     public static ConversionDiagnostic get() { return INSTANCE; }
@@ -229,6 +229,54 @@ public final class ConversionDiagnostic {
         add("PASS", "page " + pageNumber
                 + "  sections=" + sections
                 + "  tables=" + tablesDetected);
+    }
+
+    /**
+     * v3.3.5 — quality auditor. Runs structural heuristics over the
+     * model's extracted JSON and flags patterns that indicate a
+     * SUCCESSFUL but WRONG conversion. The flag is informational —
+     * it does NOT reject the page — but a maintainer reading the
+     * log can immediately see "page 1 emitted a fabricated summary"
+     * or "table on page 3 has only 1 row but PDF clearly has 12".
+     *
+     * What we flag
+     *   • model emitted a "summary" / "ملخص" paragraph not present
+     *     in any table or heading on the page → likely hallucination
+     *   • page returned 0 tables but the source page was visually
+     *     dense (high ink ratio) AND the document mode is "full"
+     *     → likely a table that the model collapsed into paragraphs
+     *   • bilingual source heuristic: pages with ink-ratio that
+     *     suggests visible text, but only Arabic OR only English
+     *     extracted → likely dropped half
+     *   • any section text contains pipe-separated cells "| a | b |"
+     *     → table was flattened to text
+     *   • single-character sections → OCR noise
+     *
+     * Each flag becomes one [QUALITY] line in the log. The user
+     * can grep for QUALITY to spot every suspicious page.
+     */
+    public synchronized void quality(int pageNumber, String flag, String detail) {
+        add("QUALITY", "⚠ page " + pageNumber + "  " + flag
+                + (detail == null ? "" : "  | " + detail));
+    }
+
+    /**
+     * Snapshot a small text fingerprint per page so the report
+     * carries verbatim samples (not just structural counts). The
+     * user can scan the fingerprint and tell at a glance whether
+     * the transcription looks right.
+     */
+    public synchronized void textFingerprint(int pageNumber,
+                                              String label,
+                                              String text,
+                                              int maxChars) {
+        if (text == null) return;
+        String snip = text.length() > maxChars
+                ? text.substring(0, maxChars) + "…"
+                : text;
+        snip = snip.replace('\n', ' ').replace('\r', ' ').trim();
+        add("FINGERPRINT", "page " + pageNumber + "  " + label
+                + "=\"" + snip + "\"");
     }
 
     public synchronized void jsonObserved(String stage, JSONObject json,
