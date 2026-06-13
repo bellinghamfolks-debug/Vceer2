@@ -10,8 +10,16 @@ android {
         applicationId 'com.basir.ai'
         minSdk 23
         targetSdk 34
-        versionCode 55
-        versionName '3.3.0'
+        versionCode 56
+        versionName '3.3.2'
+    }
+
+    // v3.3.2 — AGP 8.x stopped generating BuildConfig by default.
+    // The ConversionDiagnostic header was printing "basir-? (code 0)"
+    // because its reflection bridge couldn't find the class. Turn it
+    // back on so version_name / version_code reach the diagnostic.
+    buildFeatures {
+        buildConfig true
     }
 
     buildTypes {

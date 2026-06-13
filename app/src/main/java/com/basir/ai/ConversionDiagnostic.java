@@ -71,6 +71,13 @@ public final class ConversionDiagnostic {
     private static final int    IN_MEMORY_CAP = 8000;
     private static final int    HTTP_SNIPPET  = 800;
     private static final String FILE_NAME     = "basir-conversion-diagnostic.txt";
+    /**
+     * v3.3.2 — visible diagnostic identity. Bump this every time the
+     * diagnostic format / fields change. Lets the user see at a glance
+     * whether they have the latest APK installed: an old APK will
+     * print an older DIAG line, a new APK will print the new one.
+     */
+    public  static final String DIAG_VERSION  = "v3.3.2-summary+http+mem";
 
     private static final ConversionDiagnostic INSTANCE = new ConversionDiagnostic();
     public static ConversionDiagnostic get() { return INSTANCE; }
@@ -126,6 +133,7 @@ public final class ConversionDiagnostic {
         // disk accumulates forever regardless.
         addRaw("");
         addRaw("═══════════════════════ NEW SESSION ═══════════════════════");
+        addRaw("Diag format   : " + DIAG_VERSION);
         addRaw("Session ID    : " + sessionId);
         addRaw("Started at    : " + dateFmt.format(new Date()));
         addRaw("Build         : " + buildLabel());
