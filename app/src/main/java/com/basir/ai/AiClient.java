@@ -554,11 +554,323 @@ public final class AiClient {
             return outFile.getAbsolutePath();
         }
 
-        // ===== PDF strict page-by-page conversion =====
+        // v3.4 — natural Markdown mode for PDF, replacing the strict
+        // per-page JSON+schema+3-attempt pipeline that worked on
+        // Gemini's wire but caused the model to hallucinate when
+        // forced into a complex schema (the v3.3.6 diagnostic showed
+        // the model emitting duplicate empty table stubs with
+        // visible_row_count=92,93,94,95 — classic schema-induced
+        // failure). The user's correct observation: when the same
+        // PDF is dropped into the Gemini app it comes back perfect,
+        // because the Gemini app uses a NATURAL prompt + plain
+        // Markdown response with NO schema. This path does the same.
+        return naturalConvertPdf(ctx, sourceUri, key, model, mode, language, outFile, progress);
+    }
+
+    /**
+     * v3.4 — natural-mode PDF conversion.
+     *
+     * Per page:
+     *   1. Rasterise to JPEG.
+     *   2. Send image + a SHORT natural prompt to Gemini.
+     *      No JSON schema, no response_format, no triple-read voting,
+     *      no strict validator. Just "transcribe this faithfully into
+     *      Markdown." Single call. If it fails we keep the partial
+     *      and continue — the user gets SOMETHING.
+     *   3. Parse the returned Markdown into the DocxBuilder.
+     *
+     * This is what the Gemini app does internally. We mirror it.
+     */
+    private static String naturalConvertPdf(Context ctx, Uri sourceUri,
+                                             String apiKey, String model,
+                                             String mode, String language,
+                                             File outFile,
+                                             ProgressCallback progress) throws Exception {
+        ConversionDiagnostic diag = ConversionDiagnostic.get();
+        diag.step("natural-mode", "starting per-page Markdown transcription");
+
+        PdfPageRasterizer rasterizer = new PdfPageRasterizer(ctx, sourceUri);
+        int totalPages = rasterizer.pageCount();
+        diag.step("pdf-opened", "pageCount=" + totalPages);
+        if (progress != null) progress.onProgress(0, totalPages, "processing");
+
+        boolean arabic = language != null && language.toLowerCase().startsWith("ar");
+        String langName = arabic ? "Arabic" : "English";
+        DocxBuilder doc = new DocxBuilder(arabic ? "ar" : "en");
+
+        String translateTo = translateTargetFromMode(mode);
+        if (translateTo != null) {
+            langName = bcp47Name(translateTo);
+        }
+        String naturalPrompt = buildNaturalPrompt(langName, mode);
+
+        int succeeded = 0;
+        int failed = 0;
+        try {
+            for (int p = 1; p <= totalPages; p++) {
+                if (Thread.currentThread().isInterrupted()) throw new Exception("Cancelled");
+                if (progress != null) progress.onProgress(p, totalPages, "processing");
+                diag.pageStart(p, 0, 0, 0);
+
+                PdfPageRasterizer.PageImage img;
+                try {
+                    img = rasterizer.renderPage(p);
+                    diag.pageRendered(p, img.width, img.height, img.rotationDegrees,
+                            img.visuallyBlank, img.inkRatio,
+                            img.jpegBytes == null ? -1 : img.jpegBytes.length);
+                } catch (Exception rasterErr) {
+                    diag.failure("rasterize-page-" + p, rasterErr);
+                    diag.pageEnd(p, false, "rasterize failed: " + rasterErr.getMessage());
+                    failed++;
+                    continue;
+                }
+
+                String response;
+                try {
+                    diag.step("gemini-natural-call",
+                            "page " + p + " sending image, jpeg=" + img.jpegBytes.length + "B");
+                    String b64 = Base64.encodeToString(img.jpegBytes, Base64.NO_WRAP);
+                    diag.uploadObserved(p, img.jpegBytes.length);
+                    response = GeminiDirectClient.generateText(
+                            apiKey, model,
+                            "You are Basir, a faithful PDF-to-Markdown transcription engine. "
+                                    + "Never paraphrase, never invent.",
+                            naturalPrompt, b64, "image/jpeg");
+                } catch (Exception modelErr) {
+                    diag.failure("gemini-natural-page-" + p, modelErr);
+                    diag.pageEnd(p, false, "gemini failed: " + modelErr.getMessage());
+                    failed++;
+                    continue;
+                }
+
+                if (response == null || response.trim().isEmpty()) {
+                    diag.validatorReject(p, "empty-response", "model returned no text");
+                    diag.pageEnd(p, false, "empty response");
+                    failed++;
+                    continue;
+                }
+
+                diag.textFingerprint(p, "raw-markdown", response, 280);
+                doc.heading(2, (arabic ? "الصفحة " : "Page ") + p);
+                appendMarkdownToDoc(doc, response);
+                runQualityAuditOnMarkdown(p, response);
+                diag.validatorPass(p, -1, -1);
+                diag.pageEnd(p, true, "markdown applied");
+                succeeded++;
+            }
+        } finally {
+            try { rasterizer.close(); } catch (Throwable ignore) {}
+        }
+
+        // v3.4 — even a partial document is shipped to the user.
+        // Strict mode threw away everything when one page failed,
+        // which is what made the user lose trust. The pages that
+        // worked are written and a final notice paragraph names the
+        // failed pages explicitly.
+        if (failed > 0) {
+            doc.heading(2, arabic
+                    ? "ملاحظات النظام"
+                    : "System notes");
+            doc.paragraph(arabic
+                    ? "تعذّر تحويل " + failed + " من " + totalPages
+                        + " صفحة. الصفحات الناجحة محفوظة في هذا الملف. "
+                        + "افتح سجل التشخيص لمعرفة سبب فشل كل صفحة."
+                    : "Could not convert " + failed + " of " + totalPages
+                        + " pages. The successful pages are saved in this file. "
+                        + "Open the diagnostic log for the per-page reason.");
+        }
+
+        if (succeeded == 0) {
+            throw new Exception(arabic
+                    ? "تعذّر تحويل أي صفحة. افتح سجل التشخيص لمعرفة السبب."
+                    : "Could not convert any page. Open the diagnostic log for the cause.");
+        }
+
+        if (progress != null) progress.onProgress(totalPages, totalPages, "finalising");
+        doc.writeTo(outFile);
+        if (progress != null) progress.onProgress(totalPages, totalPages, "done");
+        return outFile.getAbsolutePath();
+    }
+
+    private static String buildNaturalPrompt(String langName, String mode) {
+        boolean wantsTranslate = translateTargetFromMode(mode) != null;
+        StringBuilder p = new StringBuilder();
+        p.append("Transcribe this PDF page into clean GitHub-flavoured Markdown.\n\n");
+        p.append("Rules:\n");
+        p.append("- Output ONLY the Markdown. No code fences, no commentary, no apology.\n");
+        p.append("- Use # for the page title, ## for section headings, ### for sub-headings.\n");
+        p.append("- Format every visible TABLE as a Markdown table with `|` pipes and a separator row `|---|---|`.\n");
+        p.append("- Read EVERY cell, EVERY row, EVERY column. Do not truncate the table.\n");
+        p.append("- Preserve every visible character exactly: course codes, grade letters, numbers, dates, punctuation.\n");
+        p.append("- If the page is bilingual (Arabic + English side-by-side), include BOTH in order. Do not drop the English half.\n");
+        p.append("- Never paraphrase, never summarise, never \"clean up\" the original.\n");
+        p.append("- If a character is unreadable, write [غير واضح] (Arabic) or [unclear] (English).\n");
+        if (wantsTranslate) {
+            p.append("- TRANSLATE every text element into ").append(langName)
+                    .append(" while preserving the table structure, the heading hierarchy, and the row count.\n");
+        } else {
+            p.append("- Respond in ").append(langName).append(" — same language as the source.\n");
+        }
+        return p.toString();
+    }
+
+    /**
+     * Append a Markdown blob produced by the natural-mode Gemini
+     * call into the DocxBuilder. Handles four block types:
+     *   - # / ## / ### / #### headings
+     *   - `|...|` table rows (separator rows like |---|---| are
+     *     skipped)
+     *   - blank line → paragraph boundary
+     *   - everything else → paragraph text
+     */
+    private static void appendMarkdownToDoc(DocxBuilder doc, String markdown) {
+        if (markdown == null) return;
+        String stripped = markdown.trim();
+        // Drop a stray ```markdown fence the model sometimes adds
+        // despite being told not to.
+        if (stripped.startsWith("```")) {
+            int firstNl = stripped.indexOf('\n');
+            if (firstNl > 0) stripped = stripped.substring(firstNl + 1);
+            if (stripped.endsWith("```")) {
+                stripped = stripped.substring(0, stripped.length() - 3);
+            }
+        }
+        String[] lines = stripped.split("\\r?\\n");
+        java.util.List<java.util.List<String>> tableBuf = new java.util.ArrayList<>();
+        StringBuilder pBuf = new StringBuilder();
+
+        for (String raw : lines) {
+            String line = raw.trim();
+            if (isMarkdownTableRow(line)) {
+                flushParagraph(doc, pBuf);
+                if (isMarkdownTableSeparator(line)) continue;
+                java.util.List<String> cells = splitMarkdownRow(line);
+                tableBuf.add(cells);
+                continue;
+            }
+            // Anything else flushes a pending table first.
+            flushTable(doc, tableBuf);
+            if (line.startsWith("#")) {
+                int level = 0;
+                while (level < line.length() && level < 6 && line.charAt(level) == '#') level++;
+                String text = line.substring(level).trim();
+                if (!text.isEmpty()) {
+                    flushParagraph(doc, pBuf);
+                    doc.heading(Math.max(1, Math.min(6, level)), text);
+                }
+            } else if (line.isEmpty()) {
+                flushParagraph(doc, pBuf);
+            } else {
+                if (pBuf.length() > 0) pBuf.append('\n');
+                pBuf.append(line);
+            }
+        }
+        flushTable(doc, tableBuf);
+        flushParagraph(doc, pBuf);
+    }
+
+    private static boolean isMarkdownTableRow(String line) {
+        return line.length() >= 3
+                && line.startsWith("|")
+                && line.endsWith("|")
+                && line.indexOf('|', 1) > 0;
+    }
+
+    private static boolean isMarkdownTableSeparator(String line) {
+        // Separator rows look like |---|---| or |:---|:---:|
+        for (int i = 0; i < line.length(); i++) {
+            char c = line.charAt(i);
+            if (c != '|' && c != '-' && c != ':' && c != ' ') return false;
+        }
+        return line.indexOf('-') >= 0;
+    }
+
+    private static java.util.List<String> splitMarkdownRow(String line) {
+        String inner = line.substring(1, line.length() - 1);
+        java.util.List<String> out = new java.util.ArrayList<>();
+        for (String cell : inner.split("\\|", -1)) {
+            out.add(cell.trim());
+        }
+        return out;
+    }
+
+    private static void flushTable(DocxBuilder doc,
+                                    java.util.List<java.util.List<String>> rows) {
+        if (rows.isEmpty()) return;
+        // Pad ragged rows to the widest row so DocxBuilder doesn't
+        // throw on column-count mismatch.
+        int width = 0;
+        for (java.util.List<String> r : rows) if (r.size() > width) width = r.size();
+        for (java.util.List<String> r : rows) while (r.size() < width) r.add("");
+        boolean rowHeader = looksLikeScheduleFirstColumn(rows);
+        doc.table(rows, true, rowHeader);
+        rows.clear();
+    }
+
+    private static void flushParagraph(DocxBuilder doc, StringBuilder p) {
+        if (p.length() == 0) return;
+        String text = p.toString().trim();
+        if (!text.isEmpty()) doc.paragraph(text);
+        p.setLength(0);
+    }
+
+    private static void runQualityAuditOnMarkdown(int pageNumber, String md) {
+        if (md == null) return;
+        ConversionDiagnostic diag = ConversionDiagnostic.get();
+        boolean sawArabic = false;
+        boolean sawLatin = false;
+        for (int i = 0; i < md.length(); i++) {
+            char ch = md.charAt(i);
+            if (ch >= 0x0600 && ch <= 0x06FF) sawArabic = true;
+            if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')) sawLatin = true;
+            if (sawArabic && sawLatin) break;
+        }
+        if (sawArabic && !sawLatin) {
+            diag.quality(pageNumber, "MAYBE_DROPPED_ENGLISH",
+                    "page has Arabic but no Latin letters");
+        }
+        String first = md.trim();
+        if (first.startsWith("ملخص") || first.startsWith("هذا السجل")
+                || first.startsWith("هذا المستند") || first.startsWith("This document")) {
+            diag.quality(pageNumber, "FABRICATED_SUMMARY",
+                    "page opens with a meta-paragraph not a transcription");
+        }
+    }
+
+    // ===== Legacy strict per-page entry kept for reference =====
+
+    @SuppressWarnings("unused")
+    private static String legacyStrictPdfBranch(Context ctx, Uri sourceUri,
+                                                 String key, String model,
+                                                 String mode, String language,
+                                                 File outFile,
+                                                 ProgressCallback progress,
+                                                 boolean isResume,
+                                                 String mimeType) throws Exception {
+        // Placeholder — the previous strict branch lives below;
+        // this method is just a marker so a future maintainer can
+        // re-enable it for documents the natural mode under-extracts
+        // (the strict mode's ground-truth validation is occasionally
+        // useful, even if it failed on the user's transcript here).
+        throw new UnsupportedOperationException("Use naturalConvertPdf");
+    }
+
+    // The strict per-page implementation below is no longer invoked
+    // by directConvertToDocx. It is left intact for reference / a
+    // future opt-in flag.
+
+    /** @noinspection unused */
+    private static String strictPerPagePdfDeprecated(Context ctx, Uri sourceUri,
+                                                      String key, String model,
+                                                      String mode, String language,
+                                                      File outFile,
+                                                      ProgressCallback progress,
+                                                      boolean isResume,
+                                                      String mimeType) throws Exception {
+        // ===== PDF strict page-by-page conversion (DEPRECATED) =====
         // One page per request is deliberate. Whole-document / multi-page
         // calls can return syntactically valid JSON while silently omitting
         // pages or mixing rows from adjacent tables.
-        final boolean isResume = isResumeAtStart;
         int totalPages;
         String uploadedUri = "";
         String uploadedMime = "application/pdf";
