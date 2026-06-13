@@ -250,14 +250,30 @@ public final class GeminiDirectClient {
         return parseJsonStrict(extractTextStrict(response));
     }
 
-    /** Configure current Gemini REST structured output format. */
+    /**
+     * Configure structured JSON output on a generationConfig block.
+     *
+     * v3.3.3 — root cause fix. The previous shape
+     *     generationConfig.responseFormat.text.mimeType = "application/json"
+     * is rejected by Gemini's v1beta REST endpoint with:
+     *     HTTP 400 INVALID_ARGUMENT
+     *     Invalid value at 'generation_config.response_format.text.mime_type'
+     * because the underlying field is an enum (PLAIN_TEXT / JSON), not a
+     * MIME string. The diagnostic captured this verbatim — every page
+     * failed with that same body.
+     *
+     * The canonical, model-agnostic shape that works for every Gemini
+     * generation including 2.5 and 3.x is the top-level camelCase pair:
+     *
+     *     generationConfig.responseMimeType = "application/json"
+     *     generationConfig.responseSchema   = <schema-object>
+     *
+     * Documented under Generative Language API v1beta GenerationConfig.
+     */
     private static void putJsonResponseFormat(JSONObject generationConfig,
                                               JSONObject schema) throws Exception {
-        JSONObject text = new JSONObject();
-        text.put("mimeType", "application/json");
-        if (schema != null) text.put("schema", schema);
-        generationConfig.put("responseFormat",
-                new JSONObject().put("text", text));
+        generationConfig.put("responseMimeType", "application/json");
+        if (schema != null) generationConfig.put("responseSchema", schema);
     }
 
     private static void configureStrictJson(JSONObject body,
