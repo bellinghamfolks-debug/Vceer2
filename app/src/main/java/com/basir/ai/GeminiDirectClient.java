@@ -273,7 +273,81 @@ public final class GeminiDirectClient {
     private static void putJsonResponseFormat(JSONObject generationConfig,
                                               JSONObject schema) throws Exception {
         generationConfig.put("responseMimeType", "application/json");
-        if (schema != null) generationConfig.put("responseSchema", schema);
+        if (schema != null) {
+            generationConfig.put("responseSchema",
+                    sanitizeGeminiSchema(schema));
+        }
+    }
+
+    /**
+     * Recursively strip schema keywords Gemini's response_schema
+     * subset does NOT recognise. The v3.3.3 diagnostic captured a
+     * 400 INVALID_ARGUMENT for "additionalProperties"; the same
+     * rejection class fires for $schema, definitions, $ref, default,
+     * examples, not, patternProperties, propertyNames, etc. Keeping
+     * the strip-list here means a schema author elsewhere in the
+     * codebase doesn't have to remember every unsupported keyword.
+     *
+     * Strict validation of the model's RESPONSE lives in
+     * DocumentPageExtractor.validateRoot — losing schema-level
+     * additionalProperties does not change the acceptance criteria.
+     */
+    private static JSONObject sanitizeGeminiSchema(JSONObject schema) throws Exception {
+        if (schema == null) return null;
+        JSONObject out = new JSONObject();
+        for (java.util.Iterator<String> it = schema.keys(); it.hasNext(); ) {
+            String key = it.next();
+            if (DROP_KEYS.contains(key)) continue;
+            Object v = schema.opt(key);
+            out.put(key, sanitizeNode(v));
+        }
+        return out;
+    }
+
+    private static Object sanitizeNode(Object v) throws Exception {
+        if (v instanceof JSONObject) return sanitizeGeminiSchema((JSONObject) v);
+        if (v instanceof JSONArray) {
+            JSONArray arr = (JSONArray) v;
+            JSONArray copy = new JSONArray();
+            for (int i = 0; i < arr.length(); i++) {
+                copy.put(sanitizeNode(arr.opt(i)));
+            }
+            return copy;
+        }
+        return v;
+    }
+
+    /**
+     * Schema keywords Gemini's response_schema rejects. The list is
+     * defensive — even though only "additionalProperties" was caught
+     * in the v3.3.3 diagnostic, the same INVALID_ARGUMENT class
+     * fires for every OpenAPI keyword not in Gemini's subset.
+     */
+    private static final java.util.Set<String> DROP_KEYS;
+    static {
+        java.util.HashSet<String> s = new java.util.HashSet<>();
+        s.add("additionalProperties");
+        s.add("patternProperties");
+        s.add("propertyNames");
+        s.add("$schema");
+        s.add("$ref");
+        s.add("$defs");
+        s.add("definitions");
+        s.add("not");
+        s.add("default");
+        s.add("examples");
+        s.add("dependencies");
+        s.add("dependentSchemas");
+        s.add("dependentRequired");
+        s.add("if");
+        s.add("then");
+        s.add("else");
+        s.add("readOnly");
+        s.add("writeOnly");
+        s.add("contentMediaType");
+        s.add("contentEncoding");
+        s.add("contentSchema");
+        DROP_KEYS = java.util.Collections.unmodifiableSet(s);
     }
 
     private static void configureStrictJson(JSONObject body,

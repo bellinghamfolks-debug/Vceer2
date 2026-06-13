@@ -462,9 +462,18 @@ final class DocumentPageExtractor {
     }
 
     private static JSONObject pageResponseSchema(int pageNumber) throws Exception {
-        JSONObject section = new JSONObject()
-                .put("type", "object")
-                .put("additionalProperties", false);
+        // v3.3.4 — Gemini's response_schema accepts a SUBSET of
+        // OpenAPI 3.0 schema. "additionalProperties" is part of
+        // OpenAPI but NOT part of Gemini's subset; v3.3.3's log
+        // captured the rejection verbatim:
+        //   HTTP 400 INVALID_ARGUMENT
+        //   Unknown name "additionalProperties" at
+        //     'generation_config.response_schema': Cannot find field.
+        // Strict validation lives in validateRoot(...) below, so
+        // dropping the schema-level guard does not relax our
+        // acceptance criteria: any extra keys the model emits still
+        // get filtered by the downstream validator.
+        JSONObject section = new JSONObject().put("type", "object");
         JSONObject sectionProperties = new JSONObject();
         sectionProperties.put("type", new JSONObject()
                 .put("type", "string")
@@ -492,9 +501,9 @@ final class DocumentPageExtractor {
         section.put("properties", sectionProperties);
         section.put("required", new JSONArray().put("type").put("page"));
 
-        JSONObject root = new JSONObject()
-                .put("type", "object")
-                .put("additionalProperties", false);
+        // v3.3.4 — same Gemini-subset constraint as the section
+        // schema above. No additionalProperties at the root either.
+        JSONObject root = new JSONObject().put("type", "object");
         JSONObject props = new JSONObject();
         props.put("page_number", boundedInteger(pageNumber));
         props.put("end_page", boundedInteger(pageNumber));
