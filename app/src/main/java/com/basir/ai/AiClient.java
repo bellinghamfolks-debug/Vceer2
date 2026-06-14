@@ -705,6 +705,20 @@ public final class AiClient {
         p.append("- If the page is bilingual (Arabic + English side-by-side), include BOTH in order. Do not drop the English half.\n");
         p.append("- Never paraphrase, never summarise, never \"clean up\" the original.\n");
         p.append("- If a character is unreadable, write [غير واضح] (Arabic) or [unclear] (English).\n");
+        // v3.4.1 — formatting hygiene rules.
+        p.append("- DO NOT add Markdown bold (**...**), italic (*...*), or underline emphasis around labels. ")
+                .append("Plain text only. The Word renderer applies its own styling.\n");
+        p.append("- DO NOT insert horizontal rules (--- or ___). Section boundaries are handled by the ")
+                .append("Word renderer; raw dashes appear as literal text in the output.\n");
+        // v3.4.1 — image / chart description directive (the user
+        // pointed out images were missing). Plain text inside the
+        // Markdown so the on-device parser folds it into a normal
+        // paragraph without special handling.
+        p.append("- If the page contains a CHART, PHOTO, DIAGRAM, LOGO, SIGNATURE, STAMP, BARCODE / QR, ")
+                .append("or any non-text visual: emit a paragraph that starts with the literal label ")
+                .append("\"[وصف الصورة]\" (Arabic) or \"[Image description]\" (English) followed by a short ")
+                .append("factual description (kind, content, position on the page, any visible text or numbers). ")
+                .append("Never identify real people by face.\n");
         if (wantsTranslate) {
             p.append("- TRANSLATE every text element into ").append(langName)
                     .append(" while preserving the table structure, the heading hierarchy, and the row count.\n");
@@ -741,6 +755,14 @@ public final class AiClient {
 
         for (String raw : lines) {
             String line = raw.trim();
+            // v3.4.1 — skip Markdown horizontal rules. Gemini emits
+            // them as section separators; in a Word document they
+            // would appear as literal "---" / "***" / "___" text.
+            if (isMarkdownHorizontalRule(line)) {
+                flushTable(doc, tableBuf);
+                flushParagraph(doc, pBuf);
+                continue;
+            }
             if (isMarkdownTableRow(line)) {
                 flushParagraph(doc, pBuf);
                 if (isMarkdownTableSeparator(line)) continue;
@@ -753,7 +775,7 @@ public final class AiClient {
             if (line.startsWith("#")) {
                 int level = 0;
                 while (level < line.length() && level < 6 && line.charAt(level) == '#') level++;
-                String text = line.substring(level).trim();
+                String text = stripInlineMarkdown(line.substring(level).trim());
                 if (!text.isEmpty()) {
                     flushParagraph(doc, pBuf);
                     doc.heading(Math.max(1, Math.min(6, level)), text);
@@ -762,11 +784,57 @@ public final class AiClient {
                 flushParagraph(doc, pBuf);
             } else {
                 if (pBuf.length() > 0) pBuf.append('\n');
-                pBuf.append(line);
+                pBuf.append(stripInlineMarkdown(line));
             }
         }
         flushTable(doc, tableBuf);
         flushParagraph(doc, pBuf);
+    }
+
+    /**
+     * v3.4.1 — strip inline Markdown emphasis markers (** ** for
+     * bold, __ __ for bold, * * for italic, _ _ for italic) while
+     * KEEPING the wrapped text. The user reported "النص مليان نجوم"
+     * — literal "**" appearing in the Word doc. Gemini emits these
+     * around labels like "**الاسم :**"; the renderer has no native
+     * notion of bold, so we keep just the inner text. Backtick
+     * inline-code markers are dropped too.
+     *
+     * Tables call this on every cell so labels stay clean.
+     */
+    private static String stripInlineMarkdown(String s) {
+        if (s == null || s.isEmpty()) return "";
+        // Order matters: longer markers first.
+        String out = s
+                .replaceAll("\\*\\*([^*]+?)\\*\\*", "$1")
+                .replaceAll("__([^_]+?)__", "$1")
+                .replaceAll("(?<![*\\w])\\*([^*\\n]+?)\\*(?![*\\w])", "$1")
+                .replaceAll("(?<![_\\w])_([^_\\n]+?)_(?![_\\w])", "$1")
+                .replaceAll("`([^`]+?)`", "$1");
+        // Drop any orphan asterisks that survived (e.g. unclosed
+        // "**" at end of line — happens when the model truncates).
+        out = out.replace("**", "").replace("__", "");
+        return out;
+    }
+
+    /**
+     * A Markdown horizontal rule: a line made up only of three or
+     * more `-`, `*`, or `_` characters (with optional spaces).
+     * Returns false for empty strings and for table separator rows
+     * such as |---|---| which start with `|`.
+     */
+    private static boolean isMarkdownHorizontalRule(String line) {
+        if (line == null || line.length() < 3) return false;
+        if (line.startsWith("|")) return false;
+        char marker = line.charAt(0);
+        if (marker != '-' && marker != '*' && marker != '_') return false;
+        int count = 0;
+        for (int i = 0; i < line.length(); i++) {
+            char c = line.charAt(i);
+            if (c == marker) count++;
+            else if (c != ' ' && c != '\t') return false;
+        }
+        return count >= 3;
     }
 
     private static boolean isMarkdownTableRow(String line) {
@@ -789,7 +857,9 @@ public final class AiClient {
         String inner = line.substring(1, line.length() - 1);
         java.util.List<String> out = new java.util.ArrayList<>();
         for (String cell : inner.split("\\|", -1)) {
-            out.add(cell.trim());
+            // v3.4.1 — clean per-cell so labels like "**الاسم**" don't
+            // ship literal asterisks into the Word table.
+            out.add(stripInlineMarkdown(cell.trim()));
         }
         return out;
     }

@@ -77,7 +77,7 @@ public final class ConversionDiagnostic {
      * whether they have the latest APK installed: an old APK will
      * print an older DIAG line, a new APK will print the new one.
      */
-    public  static final String DIAG_VERSION  = "v3.4.0-natural-markdown";
+    public  static final String DIAG_VERSION  = "v3.4.1-format-polish";
 
     private static final ConversionDiagnostic INSTANCE = new ConversionDiagnostic();
     public static ConversionDiagnostic get() { return INSTANCE; }
