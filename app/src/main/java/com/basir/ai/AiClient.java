@@ -120,11 +120,18 @@ public final class AiClient {
         if ("math_extract".equals(task)) {
             return modelForQuality(prefs, QUALITY_BEST);
         }
+        // v3.4.2 — convert now defaults to BALANCED (Flash 3.5) instead
+        // of BEST (Pro 3.1-preview). The v3.4 natural Markdown engine
+        // already gives Gemini full visual context per page with no
+        // strict schema constraint, and Flash handles transcription
+        // cleanly at ~1/30th the per-page cost (≈$0.003/page vs the
+        // $0.06+/page we were billing on Pro). Users who still want
+        // Pro can flip the doc_quality preset in settings.
         boolean quick = "ask".equals(task) || "translate".equals(task)
                     || "reply".equals(task) || "quick".equals(task) || "health".equals(task);
         String preset = quick
                 ? prefs.getString("quick_quality", QUALITY_BALANCED)
-                : prefs.getString("doc_quality",   QUALITY_BEST);
+                : prefs.getString("doc_quality",   QUALITY_BALANCED);
         return modelForQuality(prefs, preset);
     }
 
