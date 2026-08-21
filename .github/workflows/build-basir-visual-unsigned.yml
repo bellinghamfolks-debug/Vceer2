@@ -1,0 +1,177 @@
+name: Build Basir Visual unsigned IPA
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/build-basir-visual-unsigned.yml
+  push:
+    branches:
+      - claude/basir-visual-build-final
+    paths:
+      - .github/workflows/build-basir-visual-unsigned.yml
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build unsigned iPhone IPA
+    runs-on: macos-15
+    timeout-minutes: 35
+
+    steps:
+      - name: Reconstruct verified Basir Visual iOS source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64, hashlib, json, os, urllib.request
+
+          shas = [
+              "2f0ca078b6c8c865f06fda43c5f9afb6aadf3ee3",
+              "93870d6d7b1c0ecb485758417ee97b14e18cebb4",
+              "b8e339317dc1b39d54896b54d04e4f584463abcf",
+              "3034b345d144c3b375a25a1db93d12ec4e7b3dfc",
+              "6fae1551c99610d7f1cae5c89d98833612990783",
+          ]
+          expected = "91a75ed3a86a3055d874e2b2e12c991405817f8795e43336276c9e2187659dba"
+          repo = os.environ["GH_REPOSITORY"]
+          token = os.environ["GH_TOKEN"]
+          out_path = "/tmp/Basir-Visual-iOS-build.tgz"
+
+          with open(out_path, "wb") as out:
+              for sha in shas:
+                  req = urllib.request.Request(
+                      f"https://api.github.com/repos/{repo}/git/blobs/{sha}",
+                      headers={
+                          "Authorization": f"Bearer {token}",
+                          "Accept": "application/vnd.github+json",
+                          "X-GitHub-Api-Version": "2022-11-28",
+                      },
+                  )
+                  with urllib.request.urlopen(req) as response:
+                      payload = json.load(response)
+                  out.write(base64.b64decode(payload["content"]))
+
+          with open(out_path, "rb") as f:
+              actual = hashlib.sha256(f.read()).hexdigest()
+          print("Source SHA256:", actual)
+          if actual != expected:
+              raise SystemExit(f"Source SHA256 mismatch: {actual} != {expected}")
+          PY
+
+          mkdir -p "$RUNNER_TEMP/basir-visual-src"
+          tar -xzf /tmp/Basir-Visual-iOS-build.tgz -C "$RUNNER_TEMP/basir-visual-src"
+          test -f "$RUNNER_TEMP/basir-visual-src/ios/project.yml"
+          test -f "$RUNNER_TEMP/basir-visual-src/ios/Basir/ContentView.swift"
+          test -f "$RUNNER_TEMP/basir-visual-src/ios/Basir/Helpers/BasirVisualAccessibility.swift"
+
+      - name: Verify Visual-only accessibility behavior
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/basir-visual-src/ios"
+          grep -Fq '.accessibilityHidden(true)' "$ROOT/Basir/ContentView.swift"
+          grep -Fq 'intentionally disabled' "$ROOT/Basir/Helpers/BasirVisualAccessibility.swift"
+          grep -Fq 'PRODUCT_BUNDLE_IDENTIFIER: com.basir.visual' "$ROOT/project.yml"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$ROOT/Basir/Info.plist" | grep -Fx 'بصير المرئي'
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$ROOT/Basir/Info.plist" | grep -Fx '4.4.1'
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$ROOT/Basir/Info.plist" | grep -Fx '65'
+
+      - name: Install XcodeGen
+        run: |
+          set -euo pipefail
+          if ! command -v xcodegen >/dev/null 2>&1; then
+            brew install xcodegen
+          fi
+          xcodegen --version
+          xcodebuild -version
+
+      - name: Generate Xcode project
+        working-directory: ${{ runner.temp }}/basir-visual-src/ios
+        run: |
+          set -euo pipefail
+          xcodegen generate
+          test -d Basir.xcodeproj
+          xcodebuild -project Basir.xcodeproj -scheme Basir -showBuildSettings >/tmp/basir-build-settings.txt
+
+      - name: Build unsigned device application
+        working-directory: ${{ runner.temp }}/basir-visual-src/ios
+        run: |
+          set -euo pipefail
+          rm -rf build
+          mkdir -p build
+
+          xcodebuild build \
+            -project Basir.xcodeproj \
+            -scheme Basir \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$PWD/build/DerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY='' \
+            DEVELOPMENT_TEAM='' \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            ONLY_ACTIVE_ARCH=NO
+
+          APP="$PWD/build/DerivedData/Build/Products/Release-iphoneos/Basir.app"
+          test -d "$APP"
+          test -f "$APP/Basir"
+          echo "APP_PATH=$APP" >> "$GITHUB_ENV"
+
+      - name: Validate and package unsigned IPA
+        working-directory: ${{ runner.temp }}/basir-visual-src/ios
+        run: |
+          set -euo pipefail
+          APP="$APP_PATH"
+
+          BUNDLE_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist")
+          DISPLAY_NAME=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP/Info.plist")
+          VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist")
+          BUILD=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Info.plist")
+
+          echo "Bundle ID: $BUNDLE_ID"
+          echo "Display name: $DISPLAY_NAME"
+          echo "Version: $VERSION ($BUILD)"
+
+          test "$BUNDLE_ID" = 'com.basir.visual'
+          test "$DISPLAY_NAME" = 'بصير المرئي'
+          test "$VERSION" = '4.4.1'
+          test "$BUILD" = '65'
+
+          file "$APP/Basir"
+          lipo -info "$APP/Basir" | tee /tmp/basir-arch.txt
+          grep -q 'arm64' /tmp/basir-arch.txt
+
+          if [ -d "$APP/_CodeSignature" ]; then
+            echo 'Unexpected _CodeSignature directory in unsigned build.' >&2
+            exit 1
+          fi
+
+          rm -rf build/Payload
+          mkdir -p build/Payload
+          ditto "$APP" build/Payload/Basir.app
+
+          IPA="$PWD/build/Basir-Visual-v4.4.1-build65-unsigned.ipa"
+          rm -f "$IPA"
+          (cd build && /usr/bin/zip -qry "$(basename "$IPA")" Payload)
+          test -s "$IPA"
+          unzip -t "$IPA"
+          shasum -a 256 "$IPA" | tee build/Basir-Visual-v4.4.1-build65-unsigned.sha256
+          echo "IPA_PATH=$IPA" >> "$GITHUB_ENV"
+
+      - name: Upload Basir Visual unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Basir-Visual-v4.4.1-build65-unsigned
+          path: |
+            ${{ runner.temp }}/basir-visual-src/ios/build/Basir-Visual-v4.4.1-build65-unsigned.ipa
+            ${{ runner.temp }}/basir-visual-src/ios/build/Basir-Visual-v4.4.1-build65-unsigned.sha256
+          if-no-files-found: error
+          retention-days: 14
